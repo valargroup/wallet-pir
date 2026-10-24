@@ -1,4 +1,5 @@
 //! Role-specific HTTP routes, authority checks and router-worker handover.
+use super::peers::{Binding, Health, ProviderStatus, Role};
 use super::{
     serving::{evaluate, query, shared_bytes, Evaluator, HttpState},
     telemetry, Service,
@@ -10,7 +11,6 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use status_query_server::distributed::{Binding, Health, ProviderStatus, Role};
 use status_shared::{
     now_ms,
     protocol::{Hash, Manifest},

@@ -5,7 +5,7 @@
 //!
 //! This package reads and writes only the prepared files it is handed.
 //! HTTP listeners, admission, publication synchronization, peer coordination
-//! and roles stay in `enhance-query-server`; chain observation, journals and
+//! and roles stay in `pir-query-server`; chain observation, journals and
 //! publication stay in `enhance-publisher`. Neither may be a dependency here.
 //!
 //! Record types and constants are exported at the crate root. The serving

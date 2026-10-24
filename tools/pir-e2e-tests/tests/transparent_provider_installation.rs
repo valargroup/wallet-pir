@@ -17,6 +17,8 @@ mod install;
 #[allow(dead_code)] // Only the wallet transport is used here.
 #[path = "../../../src/pir-query-server/tests/support/status_http.rs"]
 mod status_http;
+// Both publisher fixtures use this terminator. One declaration keeps the test
+// from loading the same file as two modules.
 #[path = "support/status_publisher.rs"]
 mod status_publisher;
 #[path = "../../../src/pir-query-server/tests/support/status_tls.rs"]

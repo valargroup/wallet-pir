@@ -415,6 +415,27 @@ def run_package(args, inventory, executor, layout, github, out):
 def main(argv=None, executor=None, out=print, package_layout=None, package_github=None, **options):
     """`executor` and `options` (passed to `Deployer`) let tests substitute a fake fleet and clock."""
     args = parser().parse_args(argv)
+    from .deployment_alerts import Notifications
+    # Read-only commands never open a window. Existing deploy handlers keep their
+    # own single validation pass and production lock.
+    deploying = not args.command.startswith('ops-package-') and (
+        args.command in ('deploy', 'rollback', 'publisher-cutover-continue',
+                         'publisher-cutover-reconcile', 'publisher-cutover-repair-release',
+                         'publisher-cutover-repair-sandbox') or args.command.endswith(
+            ('-deploy', '-rollback', '-restart', '-verify')))
+    if not deploying:
+        return run(args, executor, out, package_layout, package_github, **options)
+    try:
+        with Notifications(getattr(args, 'service', None)) as notifications:
+            code = run(args, executor, out, package_layout, package_github, **options)
+            notifications.finish(failed=code != 0)
+            return code
+    except (RemoteError, ValueError, OSError, subprocess.TimeoutExpired) as error:
+        out('error: ' + str(error))
+        return 1
+
+
+def run(args, executor, out, package_layout, package_github, **options):
     def error_result(message, phase='failed'):
         if args.json:
             out(json.dumps({'service': getattr(args, 'service', None), 'operation': args.command,

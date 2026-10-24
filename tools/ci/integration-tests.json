@@ -32,7 +32,7 @@
     "fast": ["object_access_http"],
     "full": []
   },
-  "status-query-server": {
+  "status-shared": {
     "fast": [],
     "full": [
       "status_wallet"

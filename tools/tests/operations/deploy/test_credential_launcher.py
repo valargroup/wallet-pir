@@ -54,6 +54,22 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(self.ex.probe_unit('coordinator', 'pir-apm.service')['exe_sha256'], sha256(b'old sidecar'))
         self.assertEqual(Journal.load(self.root, 'apm', journal.id).status, 'rolled-back')
 
+    def test_managed_settings_survive_binary_replacement_and_rollback(self):
+        path = '/etc/systemd/system/pir-apm.service.d/' + units.MANAGED_DROP_IN
+        original = ('[Service]\nEnvironment="PIR_APM_PUBLISHER_URL=http://127.0.0.1:18080"\n'
+                    'MemoryMax=2G\nExecStart=\nExecStart=' + ' '.join(LAUNCHER) +
+                    ' /opt/old/pir-apm --retain-state\n')
+        self.ex.put('coordinator', path, original.encode())
+        self.ex.systemctl('coordinator', 'daemon-reload')
+        self.deployer.capture_baseline()
+        journal = self.deployer.deploy(sha256(self.binary.read_bytes()), self.binary)
+        self.assertEqual(journal.status, 'committed')
+        effective = units.effective(t for _, t in self.ex._disk('coordinator', 'pir-apm.service'))
+        self.assertEqual(effective['Service']['Environment']['PIR_APM_PUBLISHER_URL'], 'http://127.0.0.1:18080')
+        self.assertEqual(effective['Service']['MemoryMax'], '2G')
+        self.deployer.rollback()
+        self.assertEqual(self.ex.read('coordinator', path), original)
+
     def test_changed_loader_is_refused_before_restart(self):
         self.ex.put('coordinator', LAUNCHER[1], b'changed loader')
         with self.assertRaisesRegex(DeployError, 'credential launcher changed'):

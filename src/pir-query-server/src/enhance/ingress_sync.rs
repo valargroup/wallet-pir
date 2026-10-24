@@ -92,11 +92,16 @@ struct Inner {
     retained: Vec<Arc<Loaded>>,
     retired: Vec<Retired>,
     cursor: usize,
+    /// Why the latest publication cannot be served here, for `/internal/health`.
+    blocked: Option<String>,
 }
 #[derive(Clone)]
 pub struct QueryIngress {
     config: Config,
     routers: BTreeMap<u64, Vec<RouterEndpoint>>,
+    /// The combined role's ingress: its routers are the one packing router in
+    /// this process, so it can answer only the shards configured here.
+    local: bool,
     root: PathBuf,
     authority: Authority,
     inner: Arc<Mutex<Inner>>,
@@ -113,6 +118,27 @@ pub struct QueryIngress {
     _ownership: Arc<File>,
 }
 type ApiError = (StatusCode, String);
+
+/// A combined role owning fewer shards than the publication covers. Wallets
+/// learn every published shard from `/init` and query all of them at this one
+/// origin, so such a host could never answer them: the configuration must own
+/// every published shard, or the host must run distributed roles.
+#[derive(Debug, PartialEq, Eq)]
+pub struct CoverageMismatch {
+    pub owned: BTreeSet<u64>,
+    pub published: BTreeSet<u64>,
+}
+impl std::fmt::Display for CoverageMismatch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "combined role owns shards {:?} but the publication covers {:?}; \
+             assign every published shard to this host or run distributed roles",
+            self.owned, self.published
+        )
+    }
+}
+impl std::error::Error for CoverageMismatch {}
 fn unavailable(e: impl ToString) -> ApiError {
     (StatusCode::SERVICE_UNAVAILABLE, e.to_string())
 }
@@ -141,7 +167,7 @@ impl QueryIngress {
                 )
             })
             .collect();
-        Self::open_with(root, config, routers, requests, uploads)
+        Self::open_with(root, config, routers, false, requests, uploads)
     }
 
     /// An ingress forwarding to the packing router in this process, which it
@@ -168,13 +194,14 @@ impl QueryIngress {
                 )
             })
             .collect();
-        Self::open_with(root, config, routers, requests, uploads)
+        Self::open_with(root, config, routers, true, requests, uploads)
     }
 
     fn open_with(
         root: &Path,
         config: Config,
         routers: BTreeMap<u64, Vec<RouterEndpoint>>,
+        local: bool,
         requests: usize,
         uploads: usize,
     ) -> Result<Self, Error> {
@@ -203,6 +230,7 @@ impl QueryIngress {
             root: root.into(),
             config,
             routers,
+            local,
             authority,
             inner: Default::default(),
             http: crate::enhance::internal_auth::client_builder()
@@ -259,7 +287,20 @@ impl QueryIngress {
             .route("/internal/metrics", get(metrics))
             .with_state(self.clone())
     }
+    /// The shards a combined role would have to own for `manifest` but does
+    /// not. Distributed ingresses name routers per shard and are not checked.
+    pub(crate) fn coverage_mismatch(&self, manifest: &Manifest) -> Option<CoverageMismatch> {
+        if !self.local {
+            return None;
+        }
+        let published: BTreeSet<u64> = manifest.coverage.shards.iter().map(|s| s.id).collect();
+        let owned: BTreeSet<u64> = self.routers.keys().copied().collect();
+        (!published.is_subset(&owned)).then_some(CoverageMismatch { owned, published })
+    }
     async fn peers(&self, manifest: &Manifest) -> Result<Option<BTreeMap<u64, Vec<Peer>>>, Error> {
+        if let Some(mismatch) = self.coverage_mismatch(manifest) {
+            return Err(Box::new(mismatch));
+        }
         let mut requests = tokio::task::JoinSet::new();
         for domain in &manifest.coverage.shards {
             let Some(endpoints) = self.routers.get(&domain.id) else {
@@ -465,7 +506,19 @@ impl Synchronizer {
             }
         }
         self.ingress.maintain().await;
-        let Some(peers) = self.ingress.peers(&manifest).await? else {
+        let peers = match self.ingress.peers(&manifest).await {
+            Ok(peers) => {
+                self.ingress.inner.lock().unwrap().blocked = None;
+                peers
+            }
+            Err(error) => {
+                if let Some(mismatch) = error.downcast_ref::<CoverageMismatch>() {
+                    self.ingress.inner.lock().unwrap().blocked = Some(mismatch.to_string());
+                }
+                return Err(error);
+            }
+        };
+        let Some(peers) = peers else {
             return Ok(());
         };
         let lease = self.client.authority(&manifest).await?;
@@ -499,11 +552,22 @@ impl SyncTask for Synchronizer {
     }
     fn report(&self, result: &Result<(), Error>) {
         if let Err(error) = result {
-            tracing::warn!(%error, "Enhance ingress synchronization deferred");
+            if error.downcast_ref::<CoverageMismatch>().is_some() {
+                tracing::error!(%error, "Enhance combined role cannot serve this publication");
+            } else {
+                tracing::warn!(%error, "Enhance ingress synchronization deferred");
+            }
         }
     }
+    /// A publisher incompatibility always stops the role. A combined role that
+    /// owns fewer shards than the publication covers stops too while it has
+    /// never served, so a misconfigured host fails at startup instead of
+    /// idling unready; one already serving an earlier generation keeps it
+    /// until that authority ends and reports the mismatch in its health.
     fn terminal(&self, error: &Error) -> bool {
         pir_sync_manager::is_incompatible(error.as_ref())
+            || (error.downcast_ref::<CoverageMismatch>().is_some()
+                && self.ingress.inner.lock().unwrap().active.is_none())
     }
 }
 impl QueryIngress {
@@ -525,7 +589,7 @@ impl QueryIngress {
         let ready = self.ready();
         let inner = self.inner.lock().unwrap();
         serde_json::json!({ "binary_sha256": pir_control::Identity::process().binary_sha256, "incarnation": self.incarnation, "active": inner.active.as_ref().map(|v| digest(&v.manifest)), "generation": inner.active.as_ref().map(|v| v.manifest.generation),
-        "ready": ready })
+        "ready": ready, "blocked": inner.blocked })
     }
     pub(crate) fn metrics_text(&self) -> String {
         self.metrics.render()

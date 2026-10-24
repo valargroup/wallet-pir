@@ -6,12 +6,11 @@ Status, Transparent history, and transaction details. The host crate is
 reserves listeners and owns process shutdown. The host owns Status roles
 directly: role configuration, HTTP routes, admission, telemetry, the generation
 controller and publisher synchronization live in `pir_query_server::status`.
-`status-shared` supplies generation material and the wire protocol, and
-`status-query-server` supplies only the private router-worker messages; the
+`status-shared` supplies generation material and the wire protocol. The
+private router-worker messages live in `pir_query_server::status`, and the
 root owns the public route mounts of every product. Enhance roles,
-synchronization and HTTP surfaces live in `pir_query_server::enhance` in the
-same way, over `enhance-shared` material and `enhance-query-server` evaluation
-messages. Transparent roles, publication managers, activation, validation,
+synchronization, HTTP surfaces and private evaluation messages live in
+`pir_query_server::enhance`, over `enhance-shared` material. Transparent roles, publication managers, activation, validation,
 archive forwarding and HTTP surfaces live in `pir_query_server::transparent`
 over `transparent-shared` material. A Transparent provider selects its own
 holdings (the whole recent tier within its cache budget); fleet planning, file
@@ -148,7 +147,11 @@ optional `max_objects` (default 6) and `requests` (default 4). A `combined`
 Enhance role runs a query ingress, packing router and worker for the worker's
 `shards` in one process, calling each other directly instead of over private
 HTTP, so it names no routers or workers and needs no bearer token between
-them. It takes the worker's `synchronization`, `sealed_shards` and `matvec`, the
+them. Its `shards` must name every shard the publication covers: wallets
+learn all of them from `init` and query them at this one origin, so a host
+owning fewer refuses the publication by name in its log and `/internal/health`
+(`ingress.blocked`), and stops before it has served any generation rather than
+idling unready. Hosts that split shards run the distributed roles. It takes the worker's `synchronization`, `sealed_shards` and `matvec`, the
 ingress's `requests` and `uploads`, the router's `max_objects` and
 `packing_requests` (the router's `requests`), an absolute `data_dir` holding
 `worker`, `router` and `ingress` state directories and the private

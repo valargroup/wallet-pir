@@ -178,6 +178,8 @@ class Routing:
                 journal.set_status('committed')
                 self.persist(journal)
             except Exception:
+                from wallet_pir_ops.deploy.deployment_alerts import failed
+                failed()
                 try:
                     self.restore(journal)
                 except Exception as error:

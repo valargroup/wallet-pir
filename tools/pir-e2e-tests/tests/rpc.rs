@@ -73,11 +73,10 @@ fn answer(state: &Rpc, request: &Value) -> Value {
     let (raw, hash) = &state.blocks[state.selected.load(Ordering::SeqCst)];
     let result = match request["method"].as_str().unwrap() {
         "getblockcount" => json!(ACTIVATION_HEIGHT),
-        "getblockhash" => match request["params"][0].as_u64().unwrap() {
-            0 => json!("00".repeat(32)),
-            ACTIVATION_HEIGHT => json!(hash),
-            height => panic!("unexpected block height {height}"),
-        },
+        "getblockhash" => {
+            assert_eq!(request["params"], json!([ACTIVATION_HEIGHT]));
+            json!(hash)
+        }
         "getblock" => match request["params"][1].as_u64().unwrap() {
             0 => {
                 assert_eq!(request["params"][0], ACTIVATION_HEIGHT.to_string());
@@ -329,6 +328,10 @@ async fn canonical_cli_ingests_rpc_rewinds_reorg_and_restarts_without_duplicatio
     rpc_task.abort();
 }
 
+/// The root scheduler drives the Enhance journal: a refused publication keeps
+/// its acquisition, a restarted writer resumes in place, and a node that now
+/// reports a different block at the committed height withdraws and rewinds the
+/// journal before anything is appended.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn collection_commits_survive_withdrawal_restart_and_reorg_without_consumers() {
     use enhance_publisher::{
@@ -340,10 +343,28 @@ async fn collection_commits_survive_withdrawal_restart_and_reorg_without_consume
     use pir_pipeline::ingestion::{
         catch_up, BlockId, CanonicalChain, ChainFuture, ChainObservation,
     };
-    struct CanonicalRpc(ZakuraClient);
-    impl CanonicalChain for CanonicalRpc {
+    /// The node as the root follower reads it: canonical hashes by height.
+    struct Node(ZakuraClient);
+    impl CanonicalChain for Node {
         fn hash_at(&self, height: u64) -> ChainFuture<'_, String> {
-            Box::pin(async move { Ok(self.0.block_hash_display(height).await?) })
+            Box::pin(async move {
+                self.0
+                    .block_hash_display(height)
+                    .await
+                    .map_err(|error| error.to_string().into())
+            })
+        }
+    }
+    /// One follower pass: the node's current tip.
+    async fn observe(rpc: &ZakuraClient, pass: u64) -> ChainObservation {
+        let height = rpc.tip_height().await.unwrap();
+        ChainObservation {
+            genesis: String::new(),
+            tip: BlockId {
+                height,
+                hash: rpc.block_hash_display(height).await.unwrap(),
+            },
+            pass,
         }
     }
     let tx = hex::decode(include_str!("fixtures/ironwood-fee-expiry.hex").trim()).unwrap();
@@ -366,32 +387,30 @@ async fn collection_commits_survive_withdrawal_restart_and_reorg_without_consume
     let root = tempfile::tempdir().unwrap();
     std::fs::write(root.path().join("cookie"), "test:test").unwrap();
     let rpc = ZakuraClient::from_cookie_file(&url, root.path().join("cookie")).unwrap();
-    let chain = CanonicalRpc(rpc.clone());
-    let height = rpc.tip_height().await.unwrap();
-    let mut observation = ChainObservation {
-        genesis: rpc.block_hash_display(0).await.unwrap(),
-        tip: BlockId {
-            height,
-            hash: rpc.block_hash_display(height).await.unwrap(),
-        },
-        pass: 1,
-    };
+    let chain = Node(rpc.clone());
     let publisher_root = root.path().join("publication");
-    let publisher = EnhancePublisher::open(&publisher_root, rpc.clone()).unwrap();
-    let (mut ingestion, mut pending) = EnhanceIngestion::new(
-        EnhanceJournal::open(root.path()).unwrap(),
-        publisher.clone(),
-        CanonicalSource {
-            rpc: rpc.clone(),
-            prevouts: Prevouts::new(100),
-        },
-    );
-    catch_up(&mut ingestion, &chain, &observation)
+    let open = || {
+        EnhanceIngestion::new(
+            EnhanceJournal::open(root.path()).unwrap(),
+            EnhancePublisher::open(&publisher_root, rpc.clone()).unwrap(),
+            CanonicalSource {
+                rpc: rpc.clone(),
+                prevouts: Prevouts::new(100),
+            },
+        )
+    };
+    let (mut ingestion, _pending) = open();
+    catch_up(&mut ingestion, &chain, &observe(&rpc, 1).await)
         .await
         .unwrap();
-    let work = pending.borrow_and_update().clone().unwrap();
-    publisher.revoke_after(0).unwrap();
-    assert!(publisher
+    let work = ingestion
+        .publisher
+        .work(ingestion.journal.records())
+        .unwrap()
+        .unwrap();
+    ingestion.publisher.revoke_after(0).unwrap();
+    assert!(ingestion
+        .publisher
         .publish(work, pir_publisher::publisher::PublisherEngine)
         .await
         .is_err());
@@ -407,40 +426,42 @@ async fn collection_commits_survive_withdrawal_restart_and_reorg_without_consume
         expected[84..]
     );
     drop(ingestion);
-    drop(publisher);
-    let publisher = EnhancePublisher::open(&publisher_root, rpc.clone()).unwrap();
-    let (mut ingestion, mut pending) = EnhanceIngestion::new(
-        EnhanceJournal::open(root.path()).unwrap(),
-        publisher.clone(),
-        CanonicalSource {
-            rpc: rpc.clone(),
-            prevouts: Prevouts::new(100),
-        },
-    );
-    catch_up(&mut ingestion, &chain, &observation)
+    let (mut ingestion, _pending) = open();
+    catch_up(&mut ingestion, &chain, &observe(&rpc, 2).await)
         .await
         .unwrap();
-    let work = pending.borrow_and_update().clone().unwrap();
     assert_eq!(ingestion.journal.tree_size(), 2);
-    publisher
+    let work = ingestion
+        .publisher
+        .work(ingestion.journal.records())
+        .unwrap()
+        .unwrap();
+    ingestion
+        .publisher
         .publish(work, pir_publisher::publisher::PublisherEngine)
         .await
         .unwrap();
+    // The node now reports another block at the committed height whose tree
+    // does not continue the journal: everything is withdrawn and rewound, and
+    // nothing from the new block is committed.
     state.selected.store(1, Ordering::SeqCst);
     state.tree_size.store(3, Ordering::SeqCst);
-    observation.tip.hash = rpc.block_hash_display(height).await.unwrap();
-    observation.pass += 1;
-    assert!(catch_up(&mut ingestion, &chain, &observation)
+    assert!(catch_up(&mut ingestion, &chain, &observe(&rpc, 3).await)
         .await
         .is_err());
     assert_eq!(ingestion.journal.tree_size(), 0);
     state.tree_size.store(2, Ordering::SeqCst);
-    catch_up(&mut ingestion, &chain, &observation)
+    catch_up(&mut ingestion, &chain, &observe(&rpc, 4).await)
         .await
         .unwrap();
-    let work = pending.borrow_and_update().clone().unwrap();
     assert_eq!(ingestion.journal.tree_size(), 2);
-    publisher
+    let work = ingestion
+        .publisher
+        .work(ingestion.journal.records())
+        .unwrap()
+        .unwrap();
+    ingestion
+        .publisher
         .publish(work, pir_publisher::publisher::PublisherEngine)
         .await
         .unwrap();

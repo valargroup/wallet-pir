@@ -12,8 +12,11 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import time
 import tomllib
+
+import doctor
 
 
 def configuration(cwd, env):
@@ -31,12 +34,22 @@ def execute(command, receipt, *, cwd=Path.cwd(), rust=True):
     env = dict(os.environ, PATH=str(Path.home() / '.cargo/bin') + os.pathsep + os.environ['PATH'])
     toolchain = tomllib.loads((cwd / 'rust-toolchain.toml').read_text())['toolchain']['channel']
     env['RUSTUP_TOOLCHAIN'] = toolchain
+    protoc = version = None
     if rust:
-        for program in ('cargo', 'rustc', 'clang', 'protoc'):
+        for program in ('cargo', 'rustc', 'clang'):
             if not shutil.which(program, path=env['PATH']):
                 raise ValueError(f'missing validation prerequisite: {program}')
+        protoc, ok, version = doctor.protoc_status(env)
+        if not protoc:
+            raise ValueError('missing validation prerequisite: protoc')
+        if not ok:
+            raise ValueError(f'validation prerequisite unusable: protoc at {protoc}: {version}')
+        env['PROTOC'] = protoc
         subprocess.run(['rustc', '--version'], cwd=cwd, env=env, check=True)
         subprocess.run(['cargo', '--version'], cwd=cwd, env=env, check=True)
+    if missing := doctor.missing_python_modules():
+        raise ValueError(f'validation prerequisite unusable: {sys.executable} cannot import '
+                         + '; '.join(f'{name} ({error})' for name, error in missing.items()))
     git = lambda *args: subprocess.check_output(['git', *args], cwd=cwd, text=True).strip()
     sha, state = git('rev-parse', 'HEAD'), git('status', '--porcelain')
     if state:
@@ -52,7 +65,7 @@ def execute(command, receipt, *, cwd=Path.cwd(), rust=True):
                  and config == configuration(cwd, env))
     result = {'sha': sha, 'toolchain': toolchain, 'started_at': started,
               'seconds': round(time.monotonic() - begin, 3), 'exit': code,
-              'configuration_sha256': config,
+              'configuration_sha256': config, 'protoc_path': protoc, 'protoc_version': version,
               'source_unchanged': unchanged, 'passed': code == 0 and unchanged}
     temporary = receipt.with_suffix(receipt.suffix + '.partial')
     temporary.write_text(json.dumps(result, sort_keys=True) + '\n')

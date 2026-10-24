@@ -22,7 +22,10 @@ make check-full   # comprehensive local validation, not the default inner loop
 Prerequisites: Rust 1.97.1 with rustfmt/clippy, Python 3.11+, Git, Clang/libclang,
 protoc, jq, shellcheck, Node and make. Linux additionally needs the standard C/C++
 build tools, pkg-config and OpenSSL development headers. macOS uses Xcode Command
-Line Tools. `make doctor NETWORK=1` checks authenticated GitHub/dependency access;
+Line Tools. `make doctor` runs the protoc that builds will use (`PROTOC` when set,
+else the first on `PATH`) and imports the Python test suites' third-party modules
+(`cryptography`); when a Homebrew protoc fails to load its libraries, set
+`PROTOC` to a working one or repair it. `make doctor NETWORK=1` checks authenticated GitHub/dependency access;
 it suppresses subprocess output and never prints tokens. Missing dependencies are
 fixed explicitly, not by interactive repair in a test command.
 
@@ -45,8 +48,11 @@ lists each permitted edge and `tools/ci/chain_graph.py` checks its fresh
 consumers. Fast feedback resolves those consumers and applies the graph rules.
 The standalone tool also type-checks each one; that compile stays out of the
 fast job. Fast feedback runs the Enhance and Transparent reader RPC targets.
-Receiver, status and RocksDB reader targets stay in full qualification so a
-fast compile does not toggle those features and rebuild every consumer.
+Those targets stay named on every fast compile, including `testing-node`,
+the RPC transport, and the pipeline. A diff that does not touch the reader
+must not drop them: that toggles feature unification and rebuilds every
+consumer. Receiver, status and RocksDB reader targets stay in full
+qualification so a fast compile does not toggle those features either.
 Each `zakura-server-chain` consumer selects its product (`transparent`, `enhance`,
 `status` or `receiver`) with default features disabled. Test dependencies add
 `testing` alongside that same product; fixture support alone does not enable an
@@ -62,8 +68,9 @@ those features link the same library again.
 Publisher fixtures stay off this
 command. The publisher and query hosts stay on that command for every diff. The
 in-process Enhance hint graph stays on a separate command and does not join
-it; moving the hosts onto that command rebuilds the closure. Chain-node
-fixtures for Enhance and Status stay in qualification. A binary with no
+it; moving the hosts onto that command rebuilds the closure. Publisher
+chain-node fixtures stay in qualification, as do the reader's receiver, status,
+and RocksDB targets. A binary with no
 unit tests is left out of that compile; qualification still builds every binary.
 There are no named slow-unit exclusions.
 Required CLI features are enabled for binary unit targets. Ordinary cache,

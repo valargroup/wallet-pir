@@ -26,7 +26,7 @@ class CudaBuildTests(unittest.TestCase):
         self.artifacts = [
             {'reason': 'compiler-artifact', 'target': {'name': 'pir-query-server'},
              'features': ['enhance', 'cuda', 'native-reinspiring'], 'executable': str(self.binary)},
-            {'reason': 'compiler-artifact', 'target': {'name': 'enhance_query_server'},
+            {'reason': 'compiler-artifact', 'target': {'name': 'enhance_shared'},
              'features': ['cuda', 'native-reinspiring']},
             {'reason': 'compiler-artifact', 'target': {'name': 'pir_cuda'},
              'features': ['cuda']},

@@ -333,8 +333,15 @@ class ProductionLock(hostlock.PinnedHostLock):
     PATH = Path(LOCK_PATH)
 
 
+@contextlib.contextmanager
 def production_lock(inventory, executor):
     """The production lock the inventory names, as a context manager yielding an object with `verify()`."""
-    if inventory.lock['type'] == 'pinned_host':
-        return ProductionLock({'type': 'pinned_host', 'machine_id': inventory.lock['machine_id']})
-    return executor.hold_lock(inventory.lock['host'], LOCK_PATH)
+    from .deployment_alerts import CURRENT
+    lock = (ProductionLock({'type': 'pinned_host', 'machine_id': inventory.lock['machine_id']})
+            if inventory.lock['type'] == 'pinned_host'
+            else executor.hold_lock(inventory.lock['host'], LOCK_PATH))
+    with lock as held:
+        notification = CURRENT.get()
+        if notification is not None:
+            notification.begin(inventory, executor)
+        yield held

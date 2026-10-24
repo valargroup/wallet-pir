@@ -5,7 +5,7 @@
 //!
 //! This package performs no I/O beyond reading prepared files it is handed.
 //! HTTP, listeners, controllers, peer coordination and admission stay in
-//! `status-query-server`; chain observation and publication stay in
+//! `pir-query-server`; chain observation and publication stay in
 //! `status-publisher`.
 pub mod fixture;
 mod generation;

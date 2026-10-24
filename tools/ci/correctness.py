@@ -26,7 +26,7 @@ from stage import ROOT, run, install_cancellation, stop
 from fast import HELPERS, local_target
 
 FEATURES = ','.join([
-    'enhance-query-server/native-reinspiring', 'status-query-server/native-reinspiring',
+    'enhance-shared/native-reinspiring', 'status-shared/native-reinspiring',
     'enhance-publisher/native-reinspiring', 'status-publisher/native-reinspiring', 'status-publisher/cli',
     'enhance-pir-client/native-reinspiring', 'enhance-pir-load-test/native-reinspiring',
     'native-certificate/native-reinspiring', 'pir-query-server/status',
@@ -94,8 +94,6 @@ def rust_checks(env, temporary, offline):
                      '--features', 'enhance-tests', '--test', 'ci_hint'],
                      env=env, stage='compile:reference', collect_tests=True, test_details=True)
     reference += run(['cargo', 'test', '--no-run', *options, '-p', 'status-shared', '--lib'],
-                     env=env, stage='compile:reference', collect_tests=True, test_details=True)
-    reference += run(['cargo', 'test', '--no-run', *options, '-p', 'status-query-server', '--lib', '--tests'],
                      env=env, stage='compile:reference', collect_tests=True, test_details=True)
     reference_plan = programs(reference, metadata)
     for program in reference_plan:

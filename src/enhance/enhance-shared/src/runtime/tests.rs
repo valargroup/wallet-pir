@@ -160,7 +160,7 @@ fn hint_artifact_excludes_partial_misaligned_and_status_layouts() {
     }
 
     // A real persisted unit with the Status row layout (12288-byte rows,
-    // `status_query_server::protocol::ROW_BYTES`) has a different output width, even though
+    // `status_shared::protocol::ROW_BYTES`) has a different output width, even though
     // its degree and plaintext profile agree.
     let layout = DatabaseLayout {
         record_bytes: 12288,

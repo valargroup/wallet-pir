@@ -82,8 +82,9 @@ class Coordinator(FakeFleet):
 
     def run(self, host, argv, timeout):
         if argv[:2] == ['python3', '-c']:
+            from wallet_pir_ops.deploy.deployment_alerts import CONTROL
             from tools.enhance.lib.deploy_prerequisites import PROGRAM
-            if argv[2] == PROGRAM:
+            if argv[2] in (PROGRAM, CONTROL):
                 return super().run(host, argv, timeout)
         self.runs.append((host, argv))
         if argv[:2] == ['stat', '-c']:

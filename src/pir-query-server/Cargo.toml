@@ -77,7 +77,6 @@ default = []
 # Scoped record-write injection for integration tests; absent in service builds.
 test-support = []
 enhance = [
-    "dep:enhance-query-server",
     "dep:enhance-shared",
     "dep:pir-control",
     "dep:pir-observability",
@@ -93,7 +92,6 @@ enhance = [
     "dep:tokio-stream",
 ]
 status = [
-    "dep:status-query-server",
     "dep:status-shared",
     "dep:pir-control",
     "dep:pir-publication",
@@ -134,23 +132,19 @@ transparent-detail = [
 # Reproduce the existing non-AVX-512 Transparent backend on newer benchmark CPUs.
 portable-kernel = ["transparent-shared?/portable-kernel"]
 native-reinspiring = [
-    "enhance-query-server?/native-reinspiring",
-    "status-query-server?/native-reinspiring",
     "status-shared?/native-reinspiring",
     "enhance-shared?/native-reinspiring",
 ]
-cuda = ["enhance-query-server?/cuda", "enhance-shared?/cuda"]
+cuda = ["enhance-shared?/cuda"]
 
 [dependencies]
 pir-sync-manager = { path = "../shared/pir-sync-manager" }
-enhance-query-server = { path = "../enhance/enhance-query-server", optional = true }
-status-query-server = { path = "../status/status-query-server", optional = true }
 # Transparent roles: verified shard sets, display publications and prepared
 # runtimes come from transparent-shared; the host owns their serving.
 transparent-shared = { path = "../transparent/transparent-shared", optional = true }
 pir-pipeline = { path = "../shared/pir-pipeline" }
 # Enhance roles: records, protocol and prepared runtimes come from
-# enhance-shared, evaluation messages from enhance-query-server.
+# enhance-shared. The host owns evaluation messages.
 enhance-shared = { path = "../enhance/enhance-shared", optional = true }
 pir-observability = { path = "../shared/pir-observability", features = ["http"], optional = true }
 pir-runtime = { path = "../shared/pir-runtime", optional = true }
@@ -160,8 +154,8 @@ http-body = { version = "1", optional = true }
 prometheus = { version = "0.13", default-features = false, features = ["process"], optional = true }
 sha2 = { version = "0.10", optional = true }
 tokio-stream = { version = "0.1", optional = true }
-# Status roles: product material comes from status-shared, peer messages from
-# status-query-server; the host owns their HTTP, admission and synchronization.
+# Status roles: product material comes from status-shared. The host owns peer
+# messages, HTTP, admission and synchronization.
 status-shared = { path = "../status/status-shared", optional = true }
 pir-control = { path = "../shared/pir-control", features = ["admission"], optional = true }
 pir-publication = { path = "../shared/pir-publication", optional = true }

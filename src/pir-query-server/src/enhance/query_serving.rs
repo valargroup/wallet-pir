@@ -1,11 +1,11 @@
 //! Shared worker-evaluation contract for remote and compatibility serving.
+use super::evaluation::{Evaluate, Intermediate};
 use crate::enhance::{peers::WorkerEndpoint, worker_sync::EvaluationFailure};
 use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
     Json,
 };
-use enhance_query_server::worker::{Evaluate, Intermediate};
 use enhance_shared::protocol::{Manifest, QueryBinding};
 
 pub(crate) type Error = (StatusCode, String);

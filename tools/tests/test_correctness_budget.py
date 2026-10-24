@@ -126,7 +126,7 @@ class CorrectnessSelectionTests(unittest.TestCase):
         self.assertTrue(any('enhance-shared' in command and '--lib' in command
                             for command in calls))
         self.assertFalse(any('routing_contract' in command for command in calls))
-        self.assertTrue(any('status-query-server' in command and '--tests' in command for command in calls))
+        self.assertTrue(any('status-shared' in command and '--lib' in command for command in calls))
         self.assertTrue(any('--doc' in command and '--workspace' in command for command in calls))
         self.assertTrue(any(command[:2] == ['cargo', 'clippy'] and '--all-targets' in command
                             and 'warnings' in command for command in calls))

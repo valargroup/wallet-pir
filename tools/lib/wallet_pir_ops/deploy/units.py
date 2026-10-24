@@ -179,9 +179,13 @@ def adoptable(path, patterns):
     return any(fnmatch.fnmatchcase(os.path.basename(path), pattern) for pattern in patterns)
 
 
-def managed_drop_in(prefix, binary, tail):
+def managed_drop_in(prefix, binary, tail, previous=None):
     command = prefix + binary + (' ' + tail if tail else '')
-    return MANAGED_HEADER + '[Service]\nExecStart=\nExecStart=' + command + '\n'
+    preserved = ''
+    for section, key, value in entries(previous or ''):
+        if (section, key) != ('Service', 'ExecStart'):
+            preserved += '[%s]\n%s=%s\n' % (section, key, value)
+    return MANAGED_HEADER + preserved + '[Service]\nExecStart=\nExecStart=' + command + '\n'
 
 
 def render(template, values):
