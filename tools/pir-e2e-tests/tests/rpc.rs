@@ -328,14 +328,45 @@ async fn canonical_cli_ingests_rpc_rewinds_reorg_and_restarts_without_duplicatio
     rpc_task.abort();
 }
 
+/// The root scheduler drives the Enhance journal: a refused publication keeps
+/// its acquisition, a restarted writer resumes in place, and a node that now
+/// reports a different block at the committed height withdraws and rewinds the
+/// journal before anything is appended.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn collection_commits_survive_withdrawal_restart_and_reorg_without_consumers() {
     use enhance_publisher::{
-        application::{collect, CanonicalSource},
+        application::{CanonicalSource, EnhanceIngestion},
         chain_source::{Prevouts, ZakuraClient},
         ingest::EnhanceJournal,
         publisher::EnhancePublisher,
     };
+    use pir_pipeline::ingestion::{
+        catch_up, BlockId, CanonicalChain, ChainFuture, ChainObservation,
+    };
+    /// The node as the root follower reads it: canonical hashes by height.
+    struct Node(ZakuraClient);
+    impl CanonicalChain for Node {
+        fn hash_at(&self, height: u64) -> ChainFuture<'_, String> {
+            Box::pin(async move {
+                self.0
+                    .block_hash_display(height)
+                    .await
+                    .map_err(|error| error.to_string().into())
+            })
+        }
+    }
+    /// One follower pass: the node's current tip.
+    async fn observe(rpc: &ZakuraClient, pass: u64) -> ChainObservation {
+        let height = rpc.tip_height().await.unwrap();
+        ChainObservation {
+            genesis: String::new(),
+            tip: BlockId {
+                height,
+                hash: rpc.block_hash_display(height).await.unwrap(),
+            },
+            pass,
+        }
+    }
     let tx = hex::decode(include_str!("fixtures/ironwood-fee-expiry.hex").trim()).unwrap();
     let state = Rpc {
         blocks: Arc::new(vec![
@@ -356,60 +387,87 @@ async fn collection_commits_survive_withdrawal_restart_and_reorg_without_consume
     let root = tempfile::tempdir().unwrap();
     std::fs::write(root.path().join("cookie"), "test:test").unwrap();
     let rpc = ZakuraClient::from_cookie_file(&url, root.path().join("cookie")).unwrap();
-    let source = CanonicalSource {
-        rpc: rpc.clone(),
-        prevouts: Prevouts::new(100),
-    };
+    let chain = Node(rpc.clone());
     let publisher_root = root.path().join("publication");
-    let publisher = EnhancePublisher::open(&publisher_root, rpc.clone()).unwrap();
-    let mut journal = EnhanceJournal::open(root.path()).unwrap();
-    let work = collect(&mut journal, &publisher, &source)
+    let open = || {
+        EnhanceIngestion::new(
+            EnhanceJournal::open(root.path()).unwrap(),
+            EnhancePublisher::open(&publisher_root, rpc.clone()).unwrap(),
+            CanonicalSource {
+                rpc: rpc.clone(),
+                prevouts: Prevouts::new(100),
+            },
+        )
+    };
+    let (mut ingestion, _pending) = open();
+    catch_up(&mut ingestion, &chain, &observe(&rpc, 1).await)
         .await
+        .unwrap();
+    let work = ingestion
+        .publisher
+        .work(ingestion.journal.records())
         .unwrap()
         .unwrap();
-    publisher.revoke_after(0).unwrap();
-    assert!(publisher
+    ingestion.publisher.revoke_after(0).unwrap();
+    assert!(ingestion
+        .publisher
         .publish(work, pir_publisher::publisher::PublisherEngine)
         .await
         .is_err());
     assert_eq!(
-        journal.tree_size(),
+        ingestion.journal.tree_size(),
         2,
         "publication refusal preserves acquisition"
     );
     let expected =
         hex::decode(include_str!("fixtures/ironwood-canonical-record-0.hex").trim()).unwrap();
     assert_eq!(
-        journal.records().read_records(0, 1).unwrap(),
+        ingestion.journal.records().read_records(0, 1).unwrap(),
         expected[84..]
     );
-    drop(journal);
-    drop(publisher);
-    let publisher = EnhancePublisher::open(&publisher_root, rpc).unwrap();
-    let mut journal = EnhanceJournal::open(root.path()).unwrap();
-    let work = collect(&mut journal, &publisher, &source)
+    drop(ingestion);
+    let (mut ingestion, _pending) = open();
+    catch_up(&mut ingestion, &chain, &observe(&rpc, 2).await)
         .await
+        .unwrap();
+    assert_eq!(ingestion.journal.tree_size(), 2);
+    let work = ingestion
+        .publisher
+        .work(ingestion.journal.records())
         .unwrap()
         .unwrap();
-    assert_eq!(journal.tree_size(), 2);
-    publisher
+    ingestion
+        .publisher
         .publish(work, pir_publisher::publisher::PublisherEngine)
         .await
         .unwrap();
+    // The node now reports another block at the committed height whose tree
+    // does not continue the journal: everything is withdrawn and rewound, and
+    // nothing from the new block is committed.
     state.selected.store(1, Ordering::SeqCst);
     state.tree_size.store(3, Ordering::SeqCst);
-    assert!(collect(&mut journal, &publisher, &source).await.is_err());
-    assert_eq!(journal.tree_size(), 0);
-    state.tree_size.store(2, Ordering::SeqCst);
-    let work = collect(&mut journal, &publisher, &source)
+    assert!(catch_up(&mut ingestion, &chain, &observe(&rpc, 3).await)
         .await
+        .is_err());
+    assert_eq!(ingestion.journal.tree_size(), 0);
+    state.tree_size.store(2, Ordering::SeqCst);
+    catch_up(&mut ingestion, &chain, &observe(&rpc, 4).await)
+        .await
+        .unwrap();
+    assert_eq!(ingestion.journal.tree_size(), 2);
+    let work = ingestion
+        .publisher
+        .work(ingestion.journal.records())
         .unwrap()
         .unwrap();
-    assert_eq!(journal.tree_size(), 2);
-    publisher
+    ingestion
+        .publisher
         .publish(work, pir_publisher::publisher::PublisherEngine)
         .await
         .unwrap();
-    assert_eq!(journal.highest_committed().unwrap().1, state.blocks[1].1);
+    assert_eq!(
+        ingestion.journal.highest_committed().unwrap().1,
+        state.blocks[1].1
+    );
     node.abort();
 }
