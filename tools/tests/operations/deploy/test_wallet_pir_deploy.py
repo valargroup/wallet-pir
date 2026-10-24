@@ -1114,6 +1114,9 @@ class UnitTests(unittest.TestCase):
         SERVICES = descriptors.load_descriptors(ROOT / 'tools/deploy/services.toml')
         inventory = descriptors.load_inventory(DEPLOY / 'deploy-inventory.example.json')
         for name, service in SERVICES.items():
+            if name not in inventory.services:
+                self.assertTrue(all(role.optional for role in service.roles.values()))
+                continue
             keys = [t.key for t in descriptors.targets(service, inventory)]
             self.assertEqual(len(keys), len(set(keys)))
         self.assertEqual(SERVICES['enhance'].order,
