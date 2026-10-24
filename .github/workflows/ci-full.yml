@@ -30,8 +30,8 @@ on:
         description: Build and check a unified publisher candidate from this exact ref, without deploying
         type: boolean
         default: false
-      query-only:
-        description: Build and check the unified CPU query candidate from this exact ref, without deploying
+      query-candidate:
+        description: Also build and check the unified CPU query candidate from this exact ref, without deploying
         type: boolean
         default: false
 
@@ -57,7 +57,7 @@ defaults:
 jobs:
   select:
     name: Select full checks
-    if: ${{ !inputs.publisher-only && !inputs.query-only }}
+    if: ${{ !inputs.publisher-only }}
     runs-on: ubuntu-24.04
     outputs:
       test_matrix: ${{ steps.matrix.outputs.matrix }}
@@ -559,7 +559,7 @@ jobs:
 
   query-candidate:
     name: Unified query candidate
-    if: github.event_name == 'workflow_dispatch' && inputs.query-only
+    if: github.event_name == 'workflow_dispatch' && inputs.query-candidate
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4

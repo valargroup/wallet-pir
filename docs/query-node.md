@@ -84,8 +84,8 @@ lock and production variables. Provisioning never activates a query application.
 
 ## Application deployment
 
-Dispatch the full-CI workflow's `query-only` candidate build on the pinned branch.
-It builds a CPU native binary with
+Dispatch the full-CI workflow with `query-candidate=true` on the pinned branch.
+It runs full qualification and also builds a CPU native binary with
 `enhance,status,transparent-history,transparent-detail,native-reinspiring`, renders
 the node settings and runs the binary's offline configuration check. It packages
 the query executable and operations release from the same revision. An artifact
