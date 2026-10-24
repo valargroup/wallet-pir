@@ -44,12 +44,34 @@ HTTPS transfer progress and shutdown completion on the candidate.
 
 ## Provisioning from a branch
 
-The installed production Terraform root must already use the reviewed service
-module layout. Follow its separate [activation procedure](../tools/infra/digitalocean/fleet/activation.md)
-first if it still uses the old flat layout. Establish a fresh no-change baseline;
-the query-node plan guard refuses state-address moves and imports, even when
-their provider actions are no-ops. Do not combine that fleet migration with
-creating this node.
+The query module can be added to the installed Terraform root without moving
+existing fleet addresses. Prefer this additive path when the installed root
+still uses the flat layout. Under the production lock, copy its configuration,
+templates, provider lock and operator variable files into a private staging
+root, then add only `fleet/query-serving.tf` and its sibling `query-serving`
+module. Initialize and save a fresh plan with the query role enabled. The plan
+must contain exactly the six approved creations, no existing-resource actions,
+no state moves and no drift. Reconcile unrelated drift separately; never apply
+a broader fleet migration as part of this operation.
+
+Use `wallet-pir-deploy.py query-node-plan` and `query-node-preflight` on the
+coordinator with a private request and receipt path. The request binds the
+coordinator machine ID, exact query-extension source SHA, staged root, saved plan
+path and digest, Wallet PIR project ID and the installed configuration's file
+hashes (`wallet_pir_ops.deploy.query_provision.inputs`). Both commands return a
+plan digest. Run `query-node-provision --expect-plan-sha256 <digest>` through the
+coordinator's existing encrypted runtime credential loader. It rechecks the
+source and inputs under the production lock, adds only the query module and its
+enabled setting to the maintained root, initializes that root and applies the
+pinned plan. The existing backend, variables, resource addresses and services
+remain in place. `query-node-status` reads the retained receipt after a lost
+connection. An interrupted apply retains source and reports `needs-reconcile`;
+do not remove that source or retry creation blindly. Persistent storage has no
+automatic destruction rollback.
+
+The broader [service-module activation](../tools/infra/digitalocean/fleet/activation.md)
+remains a separate operation with its own moves-only comparator. Its source and
+interface gates do not need to be waived to create this candidate.
 
 The fleet root includes `../query-serving` only when
 `query_serving_enabled=true`. Defaults provision nothing. The module reuses the
@@ -76,14 +98,12 @@ wallet paths to loopback; management and private APIs stay inaccessible publicly
    It prints only the digest and allowed creation addresses. Saved plans contain
    sensitive inputs and must remain private. The guard rejects drift, partial
    plans, replacements and changes to existing resources.
-4. Before applying, make the reviewed module source and enabled candidate setting
-   part of the maintained canonical Terraform root through its locked activation
-   path. An ephemeral staging tree alone is insufficient: the next autoscaling
-   or regular fleet operation must use source that knows about the new node.
-   Apply that exact saved plan through the locked wrapper. If the guard refuses,
-   stop; do not target resources to evade a fleet change. Retain Terraform output
-   privately and enable the candidate in the maintained production variables so
-   the next regular fleet plan does not propose removing it.
+4. Use the query-node deployment transaction above to install the additive source
+   and enabled setting and apply that exact saved plan under one production lock.
+   An ephemeral staging tree alone is insufficient: the next autoscaling or
+   regular fleet operation must know about the new node. If the guard refuses,
+   stop; do not target resources to evade a fleet change. Retain the transaction
+   receipt and saved plan privately.
 5. Verify cloud-init completion, actual 192 GiB/24 CPU capacity, volume identity,
    mount, free space and TLS before staging the application. Obtain the new host's
    SSH pins through the trusted provisioning channel; never use unverified
