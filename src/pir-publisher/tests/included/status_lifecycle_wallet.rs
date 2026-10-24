@@ -122,7 +122,6 @@ async fn shared_status_lifecycle_collects_publishes_and_advances_over_real_roles
         network_hex: hex::encode(observed.snapshot.network),
         state_dir: root.path().join(state),
         listen,
-        query_listen: None,
         publisher: tls.origin.clone(),
         publisher_ca: Some(tls.certificate.clone()),
         worker_origin: worker_origin.clone(),
