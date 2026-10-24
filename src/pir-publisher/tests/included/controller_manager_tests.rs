@@ -400,6 +400,32 @@ async fn manager(tls: &Tls, root: &Path) -> Manager {
     .await
     .unwrap()
 }
+
+// Staging explicitly refuses a pass while the source collector owns its lock.
+// Retry only that nonacceptance, never transport, authority or preparation errors.
+#[cfg(feature = "qualification-tests")]
+async fn poll_after_collection(
+    manager: &mut Manager,
+) -> pir_query_server::transparent::routing::manager::Progress {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
+    loop {
+        match manager.poll_once().await {
+            Ok(progress) => return progress,
+            Err(error)
+                if error
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|error| error.kind() == std::io::ErrorKind::WouldBlock) =>
+            {
+                assert!(
+                    tokio::time::Instant::now() < deadline,
+                    "source collection must release staging promptly: {error}"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+            }
+            Err(error) => panic!("publication synchronization failed: {error}"),
+        }
+    }
+}
 // In-process retirement can outlive the last manager or listener handle while
 // spawned work unwinds. A real process exit closes those ownership descriptors.
 // Bound that harness-only wait; never retry another startup failure.
@@ -540,14 +566,13 @@ async fn query_with_reply(origin: &str, set: &ShardSet) -> (Vec<u8>, Vec<u8>) {
         .unwrap();
     assert_eq!(shard.geometry, &transparent_shard::layout::DECOUPLED_2K_8K);
     let profile = query_profile();
-    let setup: serde_json::Value = get(
+    let setup = get(
         origin,
         &format!("/v2/shards/1/revisions/{}/setup/directory/0", shard.digest),
     )
-    .await
-    .json()
-    .await
-    .unwrap();
+    .await;
+    assert_eq!(setup.status(), StatusCode::OK, "setup for {}", shard.digest);
+    let setup: serde_json::Value = setup.json().await.unwrap();
     let params = base64::Engine::decode(
         &base64::engine::general_purpose::STANDARD,
         setup["public_params"].as_str().unwrap(),
@@ -673,7 +698,7 @@ async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
     let tls = tls(root.path(), owner.clone()).await;
     let state = root.path().join("provider");
     let mut follow = manager(&tls, &state).await;
-    let first = follow.poll_once().await.unwrap();
+    let first = poll_after_collection(&mut follow).await;
     assert!(first.downloaded_files > 0);
     let stages = first.stages.expect("a changed pass reports its stages");
     assert!(stages.transfer_seconds > 0.0 && stages.prewarm_seconds > 0.0);
@@ -693,7 +718,7 @@ async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
     assert_eq!(observed["archive_reachability"], serde_json::Value::Null);
     let original_answer = CheckedAnswer::new(&origin, &set).await;
     let count = artifact_requests(&tls);
-    let unchanged = follow.poll_once().await.unwrap();
+    let unchanged = poll_after_collection(&mut follow).await;
     assert!(unchanged.unchanged);
     assert!(unchanged.stages.is_none());
     assert_eq!(unchanged.downloaded_bytes, 0);
@@ -709,7 +734,7 @@ async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
     assert!(change["stages"]["activation_seconds"].as_f64().is_some());
     // Missing many revisions does not require a retained delta base.
     owner.0.distribution_revision.store(40, Ordering::Release);
-    let reused = follow.poll_once().await.unwrap();
+    let reused = poll_after_collection(&mut follow).await;
     assert_eq!(reused.revision, 40);
     assert_eq!(reused.downloaded_files, 0);
     assert_eq!(count, artifact_requests(&tls));
@@ -751,7 +776,7 @@ async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
     let (origin, task) = worker(live.clone()).await;
     original_answer.check(&origin).await;
     std::fs::write(&tls.control, "").unwrap();
-    let updated = follow.poll_once().await.unwrap();
+    let updated = poll_after_collection(&mut follow).await;
     assert!(updated.downloaded_files > 0);
     assert!(
         updated.downloaded_files < first.downloaded_files,
@@ -769,7 +794,7 @@ async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
     owner.0.distribution_revision.fetch_add(5, Ordering::AcqRel);
     owner.0.invalidated_from.store(4, Ordering::Release);
     *rpc.hash.write().unwrap() = Some("77".repeat(32));
-    follow.poll_once().await.unwrap();
+    poll_after_collection(&mut follow).await;
     next_answer.check(&origin).await;
     assert_eq!(
         get(
@@ -785,7 +810,7 @@ async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
     );
     // A later good same-revision answer cannot resurrect that retired view.
     *rpc.hash.write().unwrap() = Some(set.map.shards.last().unwrap().terminal_block_hash.clone());
-    assert!(follow.poll_once().await.unwrap().unchanged);
+    assert!(poll_after_collection(&mut follow).await.unchanged);
     assert_eq!(
         get(
             &origin,
@@ -815,7 +840,7 @@ async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
     std::fs::write(state.join("active.invalid.json"), b"[]").unwrap();
     let mut restarted = restart_manager(&tls, &state).await;
     assert!(restarted.live().is_none());
-    let restored = restarted.poll_once().await.unwrap();
+    let restored = poll_after_collection(&mut restarted).await;
     assert_eq!(restored.downloaded_files, 0);
     let status = restarted
         .live()
@@ -1023,6 +1048,20 @@ async fn manager_checks_inventory_and_required_files_on_unchanged_maps() {
     // truncated download cannot borrow a resident runtime to pass.
     // Objects are read-only inodes shared with staged trees; replace the cache
     // entry rather than write through the active publication's runtime.
+    // Finish the initial checker first: replacing its pending primary path
+    // would instead exercise artifact withdrawal, which has separate coverage.
+    tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        loop {
+            let status = live.command(Command::Status).await.unwrap();
+            assert_eq!(status["artifact_validation"]["failed"], 0);
+            if status["artifact_validation"]["pending"] == 0 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        }
+    })
+    .await
+    .expect("active artifacts finish their initial validation");
     let object = state.join("objects").join(&runtime.sha256);
     assert!(std::fs::metadata(&object).unwrap().permissions().readonly());
     std::fs::remove_file(&object).unwrap();
