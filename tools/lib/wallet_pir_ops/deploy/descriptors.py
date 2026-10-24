@@ -428,22 +428,40 @@ def template_values(service, inventory, sha):
 
 
 def exact_check(service, inventory):
-    """The post-deploy exact-answer command, `{"host", "argv", "timeout"}`, or None."""
+    """Validate independent acceptance commands before deployment can mutate hosts."""
     check = inventory.services.get(service.name, {}).get('exact_check')
-    if service.name == 'publisher' and isinstance(check, dict) and 'products' in check:
-        products = inventory.services['publisher']['managed_products']
+    if service.name == 'query-server' and check is not None:
+        require(isinstance(check, dict) and 'products' in check,
+                'query-server exact checks must cover every configured product')
+    if service.name in ('publisher', 'query-server') and isinstance(check, dict) and 'products' in check:
+        if service.name == 'query-server':
+            from ..query_role import PRODUCTS
+            products = PRODUCTS
+        else:
+            products = inventory.services['publisher']['managed_products']
         require(set(check) == {'products'} and isinstance(check['products'], dict)
-                and set(check['products']) == set(products), 'publisher exact checks must cover every managed product')
+                and set(check['products']) == set(products),
+                service.name + ' exact checks must cover every ' +
+                ('managed' if service.name == 'publisher' else 'configured') + ' product')
         for product, command in check['products'].items():
             require(isinstance(command, dict) and set(command) == {'host', 'argv', 'timeout'}
+                    and isinstance(command['host'], str)
                     and command['host'] in inventory.hosts and command['host'] not in inventory.retired_hosts
                     and isinstance(command['argv'], list) and command['argv']
                     and all(isinstance(a, str) and a for a in command['argv'])
                     and type(command['timeout']) is int and 1 <= command['timeout'] <= 900,
-                    'invalid publisher exact check: ' + product)
+                    'invalid ' + service.name + ' exact check: ' + product)
         return check
     if check is not None:
         require(check.get('host') not in inventory.retired_hosts, '%s.exact_check names a retired host' % service.name)
         require(check.get('host') in inventory.hosts and isinstance(check.get('argv'), list) and check['argv'],
                 '%s.exact_check needs a known host and a non-empty argv' % service.name)
     return check
+
+
+def exact_check_hosts(check):
+    """All acceptance hosts must accept the deploy identity before any side effect."""
+    if check is None:
+        return []
+    commands = check['products'].values() if 'products' in check else [check]
+    return list(dict.fromkeys(command['host'] for command in commands))
