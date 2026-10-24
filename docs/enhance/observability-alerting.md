@@ -711,12 +711,17 @@ The `host` family has its own mode (`mode` in `/etc/pir-apm/observers.json`)
 and keys `host:<host>:check:<check>` and `host:<host>:coverage`. Sidecars decide
 each check; the APM propagates status and reason. Built-in checks: `disk:<mount>`
 per writable local block filesystem (deduplicated by device, root-reserved
-blocks excluded; below 15% available warns at once), `volume:<path>` per
+blocks excluded; below 15% available warns at once). Mount paths outside the
+check-name alphabet use `disk:path-<sha256>`, with an escaped path in the reason.
+Explicit required-volume paths must fit a lowercase `volume:<path>` identifier
+of at most 128 bytes; invalid paths are refused before installation.
+`volume:<path>` reports each
 required volume bound to its filesystem UUID (absent, replaced by its parent
 directory, another filesystem or read-only is critical from the first
 observation), `memory` (< 15% available for 120 s warns), `swap`,
 `unit:<unit>:{active,restarts,oom}` (an automatic restart warns and a new OOM
-kill is critical for 5 minutes), `certificate` (serving certificate expires in
+kill is critical for 5 minutes for service units; socket and timer units report
+active state only), `certificate` (serving certificate expires in
 < 30 days warns, < 7 critical), `hook:<name>` and `edge`. A check older than
 45 s, a missing configured check, an unreachable, unauthenticated, malformed,
 other-schema, other-host or other-configuration document is unknown and never
@@ -735,6 +740,9 @@ satisfy enrollment for hosts also listed in the monitoring roster, taking
 precedence over its endpoint records. Other enrolled
 or draining roster members need a sidecar enrollment record; a missing record
 keeps collection readiness false even when the rest of the fleet reports.
+Additional expected or activated volumes never replace the coordinator's three
+mandatory data-volume checks. Coverage also includes each Terraform load
+generator's paired public/private addresses.
 
 ## Monitoring deployment and rebuild
 
