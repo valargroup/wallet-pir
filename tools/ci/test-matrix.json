@@ -173,7 +173,8 @@
       "native:pir-e2e-tests:test:enhance_wallet_native",
       "native:pir-e2e-tests:test:note_recovery",
       "native:pir-e2e-tests:test:cache_recovery_http",
-      "native:pir-e2e-tests:test:rpc"
+      "native:pir-e2e-tests:test:rpc",
+      "native:pir-e2e-tests:test:reorg_recovery"
     ]
   },
   "enhance-reference": {

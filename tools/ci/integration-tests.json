@@ -103,7 +103,8 @@
       "transparent_provider_installation",
       "unified_http_sync_campaign",
       "wallet_revision_reuse",
-      "publication_renewal"
+      "publication_renewal",
+      "reorg_recovery"
     ]
   },
   "zakura-server-chain": {
