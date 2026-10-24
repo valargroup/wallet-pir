@@ -193,10 +193,13 @@ def monitoring_view(inv):
 
     Retired members stay listed as retired: the actuator's deliberate
     retirement is the explicit decommission that ends their monitoring.
+    Roles select the collector's main unit for each host's capacity snapshot.
     """
     view = []
     for m in inv['members']:
         entry = {'id': m['id'], 'intent': m['intent']}
+        if 'role' in m:
+            entry['role'] = m['role']
         if m.get('monitoring') and m['intent'] in ROUTABLE:
             entry['monitoring'] = m['monitoring']
         view.append(entry)

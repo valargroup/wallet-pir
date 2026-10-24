@@ -1497,6 +1497,99 @@ mod tests {
     }
 
     #[test]
+    fn exported_monitoring_roles_select_snapshot_units_and_counters() {
+        let record = serde_json::json!({"address":"10.0.0.9:9443", "config_digest":format!("sha256:{}", "0".repeat(64)), "checks":["disk:/"]});
+        let inventory = serde_json::json!({"members":[
+            {"id":"recent", "intent":"enrolled", "role":"recent-replica", "monitoring":record},
+            {"id":"archive", "intent":"draining", "role":"archive-owner", "monitoring":record},
+            {"id":"default", "intent":"enrolled", "monitoring":record}
+        ]});
+        // Exercise the actual actuator export, rather than a separately written
+        // JSON fixture that could accidentally keep fields the exporter drops.
+        let exporter = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../tools/transparent/scripts/transparent-fleet-inventory.py");
+        let output = std::process::Command::new("python3")
+            .args([
+                "-c",
+                r#"
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location('fleet_inventory', sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+print(json.dumps(module.monitoring_view(json.loads(sys.argv[2]))))
+"#,
+            ])
+            .arg(exporter)
+            .arg(inventory.to_string())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "roster exporter failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let roster = dir.path().join("roster.json");
+        std::fs::write(&roster, output.stdout).unwrap();
+        let spec = RosterSnapshot {
+            unit: "fallback.service".into(),
+            role_units: BTreeMap::from([
+                ("recent-replica".into(), "recent.service".into()),
+                ("archive-owner".into(), "archive.service".into()),
+            ]),
+            data_path: "/".into(),
+            size: None,
+        };
+        let hosts = roster_hosts(&roster, Some(&spec)).unwrap().hosts;
+        let mut tracker = Tracker::new(1000);
+        for (index, (id, unit)) in [
+            ("recent", "recent.service"),
+            ("archive", "archive.service"),
+            ("default", "fallback.service"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let Poll::Valid(mut document) = doc(id, 1040, Status::Healthy) else {
+                unreachable!()
+            };
+            for (kind, value_name, value) in [
+                ("restarts", "restarts", index + 1),
+                ("oom", "oom_kills", index + 2),
+            ] {
+                document.checks.push(Check {
+                    name: format!("unit:{unit}:{kind}"),
+                    status: Status::Healthy,
+                    reason: "ok".into(),
+                    observed_at: 1040,
+                    values: vec![pir_host_observations::Value {
+                        name: value_name.into(),
+                        value: value as f64,
+                        unit: pir_host_observations::Unit::Count,
+                    }],
+                });
+            }
+            tracker.record(id, Poll::Valid(document), 1040);
+        }
+        let out = dir.path().join("hosts.json");
+        write_snapshot(&out, &tracker, &hosts, 1041).unwrap();
+        let written: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(out).unwrap()).unwrap();
+        for (index, (id, unit)) in [
+            ("recent", "recent.service"),
+            ("archive", "archive.service"),
+            ("default", "fallback.service"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            assert_eq!(written[id]["unit"], unit);
+            assert_eq!(written[id]["restarts"], index + 1);
+            assert_eq!(written[id]["oom_kills"], index + 2);
+        }
+    }
+
+    #[test]
     fn snapshots_omit_stale_checks_and_map_dynamic_workers() {
         let host = settings(&["w1"], &[]).hosts.remove(0);
         let snapshot = Snapshot {
