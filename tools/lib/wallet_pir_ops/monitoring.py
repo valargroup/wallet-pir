@@ -268,10 +268,10 @@ def observers_revision(document):
 
 
 def _addresses(record):
-    """IP addresses named by one host record's `*ipv4*` or `ssh_host` fields."""
+    """IPs in a host record, including the fleet load-generator public/private pair."""
     found = set()
     for key, value in record.items():
-        if isinstance(value, str) and ('ipv4' in key or key == 'ssh_host'):
+        if isinstance(value, str) and ('ipv4' in key or key in ('ssh_host', 'public', 'private')):
             try:
                 found.add(str(ipaddress.ip_address(value)))
             except ValueError:
@@ -282,7 +282,7 @@ def _addresses(record):
 def provisioned_hosts(outputs):
     """Hosts in `terraform output -json`, each as `(label, addresses)`.
 
-    A host is any object carrying `*ipv4*` fields (worker groups, routers,
+    A host is any object carrying `*ipv4*` or `public`/`private` fields (worker groups, routers,
     roster members in a JSON-string output) or a family of scalar or list
     outputs sharing a prefix (`X_public_ipv4`, `X_private_ipv4`, `X_ipv4`),
     whose list elements pair by position. One host's public and private
@@ -305,8 +305,8 @@ def provisioned_hosts(outputs):
                 if isinstance(child, (dict, list)):
                     walk(label, child)
         elif isinstance(value, list):
-            for child in value:
-                walk(label, child)
+            for index, child in enumerate(value):
+                walk('%s[%d]' % (label, index), child)
 
     for name, output in sorted(outputs.items()):
         value = output.get('value') if isinstance(output, dict) else None
