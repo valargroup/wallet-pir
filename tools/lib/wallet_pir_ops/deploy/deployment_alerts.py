@@ -51,7 +51,7 @@ class Notifications:
                          if config.get('machine_id') == inventory.lock.get('machine_id')), None)
         if host is None:
             raise ValueError('deployment notifications need the coordinator in the inventory')
-        services = self.services or sorted(inventory.services)
+        services = self.services or sorted(inventory.services) or ['fleet']
         self.control(executor, host, ['begin', *services])
         self.executor, self.host = executor, host
 
