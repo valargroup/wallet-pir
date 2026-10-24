@@ -359,12 +359,14 @@ def coverage(inventory, *, terraform_outputs=None, external_hosts=(), roster=Non
     entries = observer_entries(inventory)
     enrolled = {host: sidecar_document(settings) for host, settings in entries}
     covered = {}
+    static_addresses = {}
     dialed = {host: str(ipaddress.ip_address(settings['address'])) for host, settings in entries}
     for host, document in enrolled.items():
         addresses = {document['listen'].rsplit(':', 1)[0].strip('[]'), dialed[host]}
         entry = inventory['hosts'].get(host) or {}
         if entry.get('address'):
             addresses.add(entry['address'])
+        static_addresses[host] = frozenset(addresses)
         for address in addresses:
             covered[address] = host
     members = [m for m in roster or [] if m.get('intent', 'enrolled') in ('enrolled', 'draining')]
@@ -373,6 +375,8 @@ def coverage(inventory, *, terraform_outputs=None, external_hosts=(), roster=Non
         host = member['id']
         if not isinstance(host, str) or not NAME.fullmatch(host):
             raise ValueError('invalid dynamic observer host id')
+        if host in static_addresses:
+            continue
         record = _roster_enrollment(member)
         if record is not None:
             address, checks = record
@@ -384,7 +388,11 @@ def coverage(inventory, *, terraform_outputs=None, external_hosts=(), roster=Non
                 covered[address] = host
     provisioned = provisioned_hosts(terraform_outputs or {})
     provisioned += [(name, frozenset(addresses)) for name, addresses in dict(external_hosts).items()]
-    provisioned += [(m['id'], _addresses(m) | dynamic_addresses.get(m['id'], frozenset())) for m in members]
+    # Static declarations satisfy roster enrollment without dynamic metadata,
+    # using the same endpoint precedence as the collector. Cloud records above
+    # still need their own address match and cannot be covered by ID alone.
+    provisioned += [(m['id'], static_addresses.get(m['id'], _addresses(m) | dynamic_addresses.get(m['id'], frozenset())))
+                    for m in members]
     missing = sorted({label for label, addresses in provisioned if not addresses & covered.keys()})
     seen = {covered[a] for _, addresses in provisioned for a in addresses if a in covered}
     volumes = dict(expected_volumes or {})
