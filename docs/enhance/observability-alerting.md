@@ -725,7 +725,10 @@ without a new fresh document, including hosts never observed; a cached or
 frozen document served again does not renew it. Each configured check also
 has `host:<host>:coverage:<check>`, warning after 45 s without a fresh known
 status while the host itself still reports. Recovery needs two distinct
-healthy observations. Enrollment persists until the host is retired in the deployment
+healthy observations. Removing a unit, hook, required volume or edge declaration
+retires that check's incidents and check-coverage incident; removing a hook also
+retires its structured subchecks. A missing discovered filesystem remains unknown.
+Enrollment persists until the host is retired in the deployment
 inventory (`decommissioned`) or by the scaler (roster `intent: retired`).
 
 ## Monitoring deployment and rebuild

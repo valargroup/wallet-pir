@@ -14,6 +14,8 @@
 //! observations: a repeated document carries the same timestamps and counts
 //! once. Enrollment is persisted and survives a host's removal from the
 //! inventory; only an explicit `decommissioned` entry retires its incidents.
+//! Removing a declared unit, hook, required volume or edge check retires that
+//! check's incidents. Missing discovered filesystems remain unknown.
 use crate::incidents::{Condition, Incident, Store};
 use anyhow::{Context, Result};
 use pir_host_observations::{
@@ -628,6 +630,38 @@ impl Tracker {
                     sample: check.map(|c| c.observed_at).unwrap_or(0),
                 });
             }
+            if let Some(host) = host {
+                // Removing an explicit unit, hook, volume or edge declaration
+                // retires its saved conditions, including after an APM restart.
+                // A disappeared discovered filesystem is never retirement.
+                for incident in existing {
+                    let Some(c) = &incident.condition else {
+                        continue;
+                    };
+                    let name = c
+                        .key
+                        .strip_prefix(&format!("host:{host_id}:check:"))
+                        .or_else(|| c.key.strip_prefix(&format!("host:{host_id}:coverage:")));
+                    let Some(name) = name else { continue };
+                    let declared = name.starts_with("unit:")
+                        || name.starts_with("hook:")
+                        || name.starts_with("volume:")
+                        || name == "edge";
+                    let retained = host.checks.iter().any(|configured| {
+                        name == configured
+                            || (configured.starts_with("hook:")
+                                && name.starts_with(&format!("{configured}:")))
+                    });
+                    if declared && !retained {
+                        let mut retired = c.clone();
+                        retired.retired = true;
+                        retired.sample = now;
+                        retired.observed = "check removed from the observer configuration".into();
+                        out.retain(|condition| condition.key != retired.key);
+                        out.push(retired);
+                    }
+                }
+            }
         }
         for host_id in &expected.decommissioned {
             let prefix = format!("host:{host_id}:");
@@ -991,6 +1025,80 @@ mod tests {
 
     const DISK: &str = "host:w1:check:disk:/";
     const COVERAGE: &str = "host:w1:coverage";
+
+    #[test]
+    fn removed_configured_checks_retire_but_missing_filesystem_alerts_remain_after_restart() {
+        let mut s = settings(&["w1"], &[]);
+        let name = "unit:old.service:active";
+        let key = format!("host:w1:check:{name}");
+        let coverage = format!("host:w1:coverage:{name}");
+        s.hosts[0].checks.push(name.into());
+        let mut h = Harness::new();
+        let Poll::Valid(mut document) = doc("w1", 1000, Status::Critical) else {
+            unreachable!()
+        };
+        let mut check = document.checks[0].clone();
+        check.name = name.into();
+        document.checks.push(check);
+        let mut filesystem = document.checks[0].clone();
+        filesystem.name = "disk:/data".into();
+        document.checks.push(filesystem);
+        h.tracker.record("w1", Poll::Valid(document), 1000);
+        h.tick(&s, 1000);
+        h.tracker
+            .record("w1", doc("w1", 1046, Status::Critical), 1046);
+        h.tick(&s, 1046);
+        assert!(h.active(&key));
+        assert!(h.active(&coverage));
+        s.hosts[0].checks.retain(|c| c != name);
+        h.tracker = Tracker::new(1050);
+        h.tracker
+            .record("w1", doc("w1", 1050, Status::Critical), 1050);
+        h.tick(&s, 1050);
+        assert!(!h.active(&key));
+        assert!(!h.active(&coverage));
+        assert!(h.active(DISK), "unremoved filesystem alerts must survive");
+        assert!(
+            h.active("host:w1:check:disk:/data"),
+            "a disappeared filesystem is not retired"
+        );
+        assert_eq!(
+            h.outbox().iter().filter(|m| m.contains("RETIRED")).count(),
+            2
+        );
+        h.tick(&s, 1055);
+        assert_eq!(
+            h.outbox().iter().filter(|m| m.contains("RETIRED")).count(),
+            2
+        );
+    }
+
+    #[test]
+    fn hook_removal_retires_subchecks_but_a_missing_host_does_not() {
+        let mut s = settings(&["w1"], &[]);
+        s.hosts[0].checks.push("hook:probe".into());
+        let mut h = Harness::new();
+        let Poll::Valid(mut document) = doc("w1", 1000, Status::Critical) else {
+            unreachable!()
+        };
+        for name in ["hook:probe", "hook:probe:queue"] {
+            let mut check = document.checks[0].clone();
+            check.name = name.into();
+            document.checks.push(check);
+        }
+        h.tracker.record("w1", Poll::Valid(document), 1000);
+        h.tick(&s, 1000);
+        s.hosts.clear();
+        h.tracker = Tracker::new(1005);
+        h.tick(&s, 1005);
+        assert!(h.active("host:w1:check:hook:probe:queue"));
+        h.tracker
+            .record("w1", doc("w1", 1010, Status::Critical), 1010);
+        h.tick(&settings(&["w1"], &[]), 1010);
+        assert!(!h.active("host:w1:check:hook:probe"));
+        assert!(!h.active("host:w1:check:hook:probe:queue"));
+        assert!(h.active(DISK));
+    }
 
     #[test]
     fn warning_propagates_and_two_distinct_healthy_samples_recover() {
