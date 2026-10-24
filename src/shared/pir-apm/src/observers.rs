@@ -45,8 +45,9 @@ pub struct Settings {
     pub hosts: Vec<Host>,
     #[serde(default)]
     pub decommissioned: Vec<String>,
-    /// Dynamic Transparent workers: each enrolled or draining roster member is
-    /// an expected host, enrolled with the `monitoring` record its bootstrap wrote.
+    /// Every enrolled or draining roster member is expected. Static `hosts`
+    /// declarations take precedence; other members need the `monitoring` record
+    /// their bootstrap wrote.
     #[serde(default)]
     pub roster: Option<PathBuf>,
     /// Host resources in the former sampler's `hosts.json` shape, for the
@@ -293,7 +294,8 @@ pub struct Roster {
     pub retired: Vec<String>,
 }
 
-/// Every host expected this round: the inventory's and the roster's.
+/// Every host expected this round: static declarations take precedence over
+/// roster records, and only members without either declaration are unenrolled.
 pub struct Expected {
     pub hosts: Vec<Host>,
     pub unenrolled: Vec<String>,
@@ -316,7 +318,11 @@ impl Expected {
                     .into_iter()
                     .filter(|h| !known.contains(&h.host_id)),
             );
-            expected.unenrolled = roster.unenrolled;
+            expected.unenrolled = roster
+                .unenrolled
+                .into_iter()
+                .filter(|id| !known.contains(id))
+                .collect();
             expected.decommissioned.extend(roster.retired);
         }
         expected
@@ -1264,6 +1270,72 @@ mod tests {
         h.tick(&s, 1015);
         assert_eq!(h.outbox().len(), pending);
         assert!(h.outbox()[0].contains("critical"));
+    }
+
+    #[test]
+    fn mixed_fleet_readiness_uses_static_enrollment_and_requires_dynamic_enrollment() {
+        let dir = tempfile::tempdir().unwrap();
+        let roster = dir.path().join("roster.json");
+        let s = settings(&["w1", "w2", "w4"], &[]);
+        for missing_dynamic in [false, true] {
+            let record = serde_json::json!({
+                "address": "10.0.0.9:9443",
+                "config_digest": format!("sha256:{}", "0".repeat(64)),
+                "checks": ["disk:/"]
+            });
+            let mut members = vec![
+                serde_json::json!({"id": "w1", "intent": "enrolled"}),
+                serde_json::json!({"id": "w2", "intent": "draining"}),
+                serde_json::json!({"id": "w3", "intent": "enrolled", "monitoring": record}),
+                serde_json::json!({"id": "w4", "intent": "enrolled", "monitoring": record}),
+                serde_json::json!({"id": "w5", "intent": "retired"}),
+            ];
+            if missing_dynamic {
+                members.push(serde_json::json!({"id": "w6", "intent": "draining"}));
+            }
+            std::fs::write(&roster, serde_json::to_vec(&members).unwrap()).unwrap();
+            let expected = Expected::of(&s, Some(roster_hosts(&roster, None).unwrap()));
+            let mut h = Harness::new();
+            for host in &expected.hosts {
+                // A host alert does not invalidate its successful collection.
+                h.tracker.record(
+                    &host.host_id,
+                    doc(&host.host_id, 1046, Status::Critical),
+                    1046,
+                );
+            }
+            let report = round_readiness(&s, &h.tracker, &expected, 1, 1046);
+            assert_eq!(report.valid_hosts, 4);
+            assert_eq!(
+                report.ready, !missing_dynamic,
+                "static declarations satisfy enrollment, but an unconfigured dynamic host does not"
+            );
+            assert_eq!(expected.decommissioned, ["w5"]);
+            assert_eq!(
+                expected
+                    .hosts
+                    .iter()
+                    .find(|h| h.host_id == "w4")
+                    .unwrap()
+                    .address,
+                s.hosts[2].address,
+                "a roster record does not replace the static declaration"
+            );
+            if missing_dynamic {
+                assert_eq!(expected.unenrolled, ["w6"]);
+                let enrolled = enrollment(&h.store, &expected).unwrap();
+                let conditions = h.tracker.conditions(&expected, &enrolled, &[], 1046);
+                let gap = conditions
+                    .iter()
+                    .find(|c| c.key == "host:w6:coverage")
+                    .unwrap();
+                assert_eq!(gap.firing, Some(true));
+                assert_eq!(gap.observed, "roster member has no sidecar enrollment");
+            } else {
+                assert!(expected.unenrolled.is_empty());
+                assert!(!current_readiness(report, 1092).ready);
+            }
+        }
     }
 
     #[test]
