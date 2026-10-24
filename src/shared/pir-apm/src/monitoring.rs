@@ -140,6 +140,7 @@ fn fresh(t: u64, now: u64) -> bool {
 pub fn start(dashboard: SharedDashboard, config: Config) -> Result<()> {
     let scaling = crate::scaling::Settings::from_env()?;
     let observers = pir_apm::observers::from_env()?;
+    let observers_enabled = observers.is_some();
     let Some(path) = std::env::var_os("PIR_APM_STATE_PATH").map(PathBuf::from) else {
         anyhow::ensure!(!enabled(), "active alerting requires PIR_APM_STATE_PATH");
         anyhow::ensure!(
@@ -235,6 +236,14 @@ pub fn start(dashboard: SharedDashboard, config: Config) -> Result<()> {
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             interval.tick().await;
+            if observers_enabled {
+                // A failed or stalled observer task must also fail the public
+                // progress contract the independent monitor already checks.
+                eval_dashboard.write().await.monitoring.loops.insert(
+                    "host_observers".into(),
+                    pir_apm::observers::readiness().evaluated_at,
+                );
+            }
             let now = incidents::unix_time();
             let mut snapshot = eval_dashboard.read().await.clone();
             // Read delivery configuration before evaluating, including the first tick.
@@ -1032,6 +1041,9 @@ fn progress_ok(d: &DashboardData, now: u64) -> bool {
     if d.packing_enabled {
         required.push("routers");
     }
+    if d.monitoring.loops.contains_key("host_observers") {
+        required.push("host_observers");
+    }
     fresh(d.monitoring.evaluated_at, now)
         && (!d.quality.enabled
             || (fresh(d.quality.collected_at, now)
@@ -1165,6 +1177,40 @@ mod tests {
         let (code, Json(r)) = observers_ready().await;
         assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE);
         assert!(!r.ready);
+
+        let mut d = view(now);
+        d.monitoring.evaluated_at = now;
+        d.monitoring.delivery.worker_at = now;
+        for name in ["coordinator", "entrypoints", "host_observers"] {
+            d.monitoring.loops.insert(name.into(), now);
+        }
+        assert!(progress_ok(&d, now));
+        d.monitoring.loops.insert("host_observers".into(), now - 60);
+        assert!(
+            !progress_ok(&d, now),
+            "stopped host collection must reach the independent monitor"
+        );
+        let shared = std::sync::Arc::new(tokio::sync::RwLock::new(d));
+        assert_eq!(status(State(shared.clone())).await.0["progress_ok"], false);
+        // A store-open failure can stop collection before its first heartbeat.
+        pir_apm::observers::set_readiness(Default::default());
+        let settings = serde_json::from_value(serde_json::json!({"mode":"shadow", "hosts":[],
+            "collector":{"cert":"unused", "key":"unused", "ca":"unused"}}))
+        .unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        assert!(pir_apm::observers::run(
+            settings,
+            directory.path().join("missing/state.db"),
+            "test".into(),
+            "".into()
+        )
+        .await
+        .is_err());
+        shared.write().await.monitoring.loops.insert(
+            "host_observers".into(),
+            pir_apm::observers::readiness().evaluated_at,
+        );
+        assert_eq!(status(State(shared)).await.0["progress_ok"], false);
     }
 
     fn view(now: u64) -> DashboardData {
