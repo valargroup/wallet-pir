@@ -42,7 +42,7 @@ dev-dependency. The publisher host does not enable them, and the publisher
 library does not depend on that host, because either edge links the same
 libraries again. Fast diagnostic binaries leave `transparent-tools/query-host`
 off for the same reason. The in-process Enhance hint graph compiles on a
-second command and does not take the hosts with it. Chain-node fixtures stay in qualification so they do not rebuild the shared graph.
+second command and does not take the hosts with it. The chain reader stays on that command with its Enhance and Transparent targets. Receiver, status, and RocksDB chain-node targets stay in qualification so they do not rebuild the shared graph.
 Executables
 then run with at most three programs active and one case per program. The fast
 compile leaves out binaries that declare no unit tests; qualification still
@@ -158,16 +158,19 @@ and stale ancestry cannot leave unchecked changes behind.
 Rust feedback compiles the selected unit tests, CLI test binaries and named fast
 integration targets together in one `release-fast` Cargo invocation. That command
 also names the stable fast dev-dependency roots, including the publisher and
-query hosts, so a smaller affected set does
-not drop chain `testing` or reqwest `blocking` and rebuild a second copy of the
-dependency graph. The hosts stay on this command for every diff. Taking them
-off for an Enhance change and putting them back afterwards changes feature
-unification and rebuilds the closure. Transparent publication tests are part of this command, and
+query hosts, the chain reader, its RPC transport, and the pipeline, so a
+smaller affected set does not drop chain `testing-node` or reqwest `blocking`
+and rebuild a second copy of the dependency graph. The hosts and the reader
+stay on this command for every diff. Taking them off for one change and putting
+them back afterwards changes feature unification and rebuilds the closure.
+Transparent publication tests are part of this command, and
 the publisher host is not relinked with history and detail. A second
 invocation is only the in-process Enhance hint graph, which must not unify
-into the stable graph. Chain-node fixtures stay in qualification. The reader's receiver and status RPC targets stay in full
-qualification; those features are not part of the closure, and enabling them
-rebuilds every cached consumer. Only the affected packages' programs run. Campaign
+into the stable graph. Publisher chain-node fixtures stay in qualification.
+The reader's receiver, status, and RocksDB targets stay in full qualification;
+those features are not part of the closure, and enabling them rebuilds every
+cached consumer. The reader's Enhance and Transparent targets stay on the
+stable command. Only the affected packages' programs run. Campaign
 targets are excluded from that build. Local and CI checks then execute at most
 three Cargo-reported test programs concurrently. The publisher library builds
 full archive runtimes on every core of a 4-core hosted runner, so it runs alone

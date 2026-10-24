@@ -7,8 +7,9 @@ live in those libraries. Enabling history and detail on the host binary links
 the publisher again and is not part of this command. Moving the hosts onto
 another command changes that unification and rebuilds the closure. The
 in-process Enhance hint graph stays on a second command and never joins the
-first. Chain-node fixtures stay in qualification: they pull the wallet client
-and node stack into every crate on their command. Campaign targets are never
+first. Receiver, status, and RocksDB chain-node targets stay in qualification.
+The Enhance and Transparent reader targets stay on this command: dropping
+`testing-node` rebuilds every consumer. Campaign targets are never
 selected. Test programs retain their package directory and Cargo environment.
 Enhance publication fixtures run alone, as does the filter library on fewer than
 eight cores. The remaining programs share a pool of at most three processes.
@@ -44,6 +45,11 @@ def publisher_runs_alone(name, kinds):
 # Receiver and Status libraries stay named here: adding them only on a diff
 # that touches them changes feature unification and rebuilds wallet-libraries
 # crates, which leaves the fast job on the plain three-minute budget.
+# The chain reader, its RPC transport, and the pipeline stay named for the same
+# reason. Their fast reader targets require `testing-node`. Naming those
+# packages only on a diff that touches them, then dropping them on the next
+# diff, rebuilds every consumer of the cached graph. Receiver, status, and
+# RocksDB reader targets are not fast targets and stay out of this set.
 # Only affected packages are executed.
 FAST_FEATURE_ROOTS = frozenset({
     'enhance-pir-client',
@@ -53,6 +59,8 @@ FAST_FEATURE_ROOTS = frozenset({
     'enhance-query-server',
     'pir-e2e-tests',
     'pir-monitor',
+    'pir-node-rpc',
+    'pir-pipeline',
     'pir-publisher',
     'pir-query-server',
     'receiver-indexer',
@@ -63,6 +71,7 @@ FAST_FEATURE_ROOTS = frozenset({
     'transparent-query-server',
     'transparent-shared',
     'transparent-tools',
+    'zakura-server-chain',
 })
 
 
