@@ -45,6 +45,14 @@ def inventory(*observers, retired=()):
 
 
 class ObserverInventory(unittest.TestCase):
+    def test_required_volume_paths_must_fit_observation_identifiers(self):
+        for path in ('/srv/Data Set', '/srv/a b', '/' + 'x' * 121, '/srv/tab\t'):
+            with self.subTest(path=path), self.assertRaises(ValueError):
+                monitoring.sidecar_document(dict(WORKER, required_volumes=[{'path': path, 'uuid': 'aaaa'}]))
+        path = '/' + 'x' * 120
+        document = monitoring.sidecar_document(dict(WORKER, required_volumes=[{'path': path, 'uuid': 'aaaa'}]))
+        self.assertIn('volume:' + path, monitoring.expected_checks(document))
+
     def test_coverage_cli_accepts_static_enrollment_in_the_exported_monitoring_roster(self):
         import importlib.util
         spec = importlib.util.spec_from_file_location(

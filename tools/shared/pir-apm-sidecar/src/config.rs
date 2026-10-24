@@ -112,8 +112,11 @@ impl Config {
         }
         for v in &self.required_volumes {
             ensure!(
-                v.path.starts_with('/') && v.path != "/" && !v.path.contains(".."),
-                "required volume path must be an absolute non-root mount path"
+                v.path.starts_with('/')
+                    && v.path != "/"
+                    && !v.path.contains("..")
+                    && valid_name(&format!("volume:{}", v.path), 128),
+                "required volume path must be an absolute non-root path fitting a check identifier"
             );
             ensure!(
                 !v.uuid.is_empty() && v.uuid.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-'),
@@ -175,4 +178,36 @@ pub fn credential(path: &Path) -> PathBuf {
         .map(PathBuf::from)
         .unwrap_or_default()
         .join(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn required_volume_paths_must_fit_observation_identifiers() {
+        let config = |path: &str| -> Config {
+            serde_json::from_value(serde_json::json!({
+                "host_id":"test", "tls":{"cert":"c", "key":"k", "client_ca":"a", "collector_identity":"collector"},
+                "required_volumes":[{"path":path,"uuid":"aaaa"}], "state_path":"/tmp/state.json"
+            })).unwrap()
+        };
+        for path in [
+            "/srv/Data Set".into(),
+            "/srv/a b".into(),
+            format!("/{}", "x".repeat(121)),
+            "/srv/tab\t".into(),
+        ] {
+            assert!(
+                config(&path).validate().is_err(),
+                "invalid observation identifier for {path:?}"
+            );
+        }
+        let valid = config(&format!("/{}", "x".repeat(120)));
+        valid.validate().unwrap();
+        assert!(valid
+            .expected_checks()
+            .iter()
+            .all(|name| pir_host_observations::valid_name(name, 128)));
+    }
 }

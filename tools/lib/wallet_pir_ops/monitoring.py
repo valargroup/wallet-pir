@@ -59,8 +59,9 @@ def _volumes(value):
         if (not isinstance(volume, dict) or set(volume) != {'path', 'uuid'}
                 or not isinstance(volume['path'], str) or not volume['path'].startswith('/')
                 or volume['path'] == '/' or '..' in volume['path'] or volume['path'] in seen
+                or not re.fullmatch(r'[a-z0-9@._:/-]{1,128}', 'volume:' + volume['path'])
                 or not isinstance(volume['uuid'], str) or not UUID.match(volume['uuid'])):
-            raise ValueError('each required volume is a unique {"path", "uuid"} below /')
+            raise ValueError('each required volume is a unique {"path", "uuid"} below / with a valid check identifier')
         seen.add(volume['path'])
     return value
 
