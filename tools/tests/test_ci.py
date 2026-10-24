@@ -62,6 +62,14 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(selected['helpers'], ['check-ops-contracts', 'check-tools'])
         self.assertEqual(set(selected['groups']), fast.FULL_GROUPS)
 
+    def test_preflight_definition_does_not_rebuild_the_workspace(self):
+        selected = fast.plan(self.packages, ['.github/preflight.json'])
+        self.assertEqual(selected['packages'], [])
+        self.assertEqual(selected['helpers'], ['check-ops-contracts', 'check-tools'])
+        self.assertEqual(set(selected['groups']), fast.FULL_GROUPS)
+        narrowed = fast.plan(self.packages, ['.github/preflight.json', 'crates/server/src/lib.rs'])
+        self.assertEqual(narrowed['packages'], ['server'])
+
     def test_unknown_changes_still_select_all_helpers(self):
         selected = fast.plan(self.packages, ['tools/ci/fast.py', 'unknown.file'])
         self.assertEqual(set(selected['packages']), {'core', 'client', 'server', 'other'})
