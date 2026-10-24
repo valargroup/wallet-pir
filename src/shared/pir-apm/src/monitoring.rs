@@ -608,6 +608,31 @@ pub fn conditions(d: &DashboardData, now: u64, p: &Policy) -> Vec<Condition> {
         && !d.placement_error
         && d.placement.as_ref().is_some_and(|p| !p.domains.is_empty());
     sources.insert("placement".into(), topology);
+    for (severity, hold) in [
+        ("warning", p.publication_warning_seconds),
+        ("critical", p.publication_critical_seconds),
+    ] {
+        let generations = d
+            .placement
+            .as_ref()
+            .and_then(|placement| Some((placement.revision?, placement.published_revision?)));
+        add(
+            format!("publication_handover_{severity}"),
+            "placement".into(),
+            severity,
+            generations
+                .filter(|_| topology)
+                .map(|(active, published)| active < published),
+            generations
+                .map(|(active, published)| {
+                    format!("serving generation {active}; publisher generation {published}")
+                })
+                .unwrap_or_else(|| "unavailable".into()),
+            format!("serving generation behind publisher for {hold}s"),
+            hold,
+            coordinator_sample.min(epoch(d.placement_success)),
+        );
+    }
     if let Some(placement) = &d.placement {
         for (domain, workers) in &placement.domains {
             let sample = coordinator_sample.min(epoch(d.placement_success));
@@ -1007,8 +1032,21 @@ pub async fn status(State(d): State<SharedDashboard>) -> Json<serde_json::Value>
     let d = d.read().await;
     let now = incidents::unix_time();
     let progress = progress_ok(&d, now);
+    let serving = serde_json::json!({
+        "placement": d.placement,
+        "sampled_at": epoch(d.placement_success),
+        "observation_available": fresh(epoch(d.placement_success),now) && !d.placement_error,
+        "routers": d.packing_routers.iter().map(|(name, router)| {
+            serde_json::json!({
+                "name": name,
+                "sampled_at": epoch(router.sample.success),
+                "observation_available": fresh(epoch(router.sample.success),now) && router.sample.error.is_none(),
+                "handover": router.placement.as_ref().and_then(|report|report.handover.as_ref()),
+            })
+        }).collect::<Vec<_>>(),
+    });
     Json(
-        serde_json::json!({"progress_ok":progress,"evaluated_at":d.monitoring.evaluated_at,"shadow":d.monitoring.shadow,"delivery":d.monitoring.delivery,"incidents":d.monitoring.incidents,"chain":d.monitoring.chain,"peer":d.monitoring.peer,"publication":d.monitoring.publication,"quality":{"enabled":d.quality.enabled,"collected_at":d.quality.collected_at,"persisted_at":d.quality.persisted_at,"storage_error":d.quality.storage_error,"dropped_batches":d.quality.dropped_batches,"inventory_error":d.quality.inventory_error}}),
+        serde_json::json!({"progress_ok":progress,"evaluated_at":d.monitoring.evaluated_at,"shadow":d.monitoring.shadow,"delivery":d.monitoring.delivery,"incidents":d.monitoring.incidents,"chain":d.monitoring.chain,"peer":d.monitoring.peer,"publication":d.monitoring.publication,"serving":serving,"quality":{"enabled":d.quality.enabled,"collected_at":d.quality.collected_at,"persisted_at":d.quality.persisted_at,"storage_error":d.quality.storage_error,"dropped_batches":d.quality.dropped_batches,"inventory_error":d.quality.inventory_error}}),
     )
 }
 pub async fn readyz(State(d): State<SharedDashboard>) -> (StatusCode, Json<serde_json::Value>) {
@@ -1434,6 +1472,7 @@ mod tests {
         d.placement = Some(crate::placement::Placement {
             domains: BTreeMap::from([(0, vec!["w".into()])]),
             revision: Some(1),
+            published_revision: Some(1),
         });
         d.placement_success = d.last_scrape;
         d.placement_error = false;
