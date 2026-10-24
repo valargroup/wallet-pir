@@ -740,6 +740,8 @@ def dispatch(args, executor=None, **_options):
         try:
             return target.deploy(binary, args.expect_plan_sha256, args.serving_binary)
         except Exception:
+            from .deployment_alerts import failed
+            failed()
             latest = target.latest()
             if latest and latest['request'] == request and latest['phase'] not in FINAL:
                 target.rollback()

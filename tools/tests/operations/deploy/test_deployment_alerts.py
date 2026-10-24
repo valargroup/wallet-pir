@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[4] / 'tools/lib'))
 from wallet_pir_ops.deploy import deployment_alerts, remote
@@ -74,3 +75,39 @@ class DeploymentNotificationsTests(unittest.TestCase):
         with remote.production_lock(self.inventory, self.monitor):
             pass
         self.assertFalse(self.monitor.calls)
+
+    def test_publisher_recovery_commands_bracket_the_existing_operation(self):
+        from wallet_pir_ops.deploy import cli
+        for command in ('publisher-cutover-continue', 'publisher-cutover-reconcile',
+                        'publisher-cutover-repair-release', 'publisher-cutover-repair-sandbox'):
+            with self.subTest(command=command):
+                self.monitor.calls.clear()
+                def operation(*_args, **_kwargs):
+                    with remote.production_lock(self.inventory, self.monitor):
+                        self.assertIsNotNone(deployment_alerts.CURRENT.get())
+                    return 0
+                with patch.object(cli, 'parser') as parser, patch.object(cli, 'run', side_effect=operation):
+                    parser.return_value.parse_args.return_value = SimpleNamespace(command=command, service='publisher')
+                    self.assertEqual(cli.main([]), 0)
+                self.assertEqual(self.monitor.calls, [(True, ['begin', 'publisher']), (False, ['finish'])])
+
+    def test_publisher_dispatch_restores_alerts_before_automatic_rollback(self):
+        from wallet_pir_ops.deploy import publisher
+        args = SimpleNamespace(command='publisher-cutover-deploy', request='request', request_sha256='hash',
+                               state_dir='state', archive='archive', expect_plan_sha256='plan', serving_binary=None)
+        request = {'release': {'git_sha': 'revision', 'binary_sha256': 'digest'}}
+        def extract(_archive, bundle, *_args):
+            bundle.mkdir()
+            (bundle / 'candidate.json').write_text(json.dumps({'source_dirty': False}))
+        with patch.object(publisher, 'load_request', return_value=(request, self.inventory)), \
+                patch.object(publisher, 'Cutover') as cutover, \
+                patch.object(publisher.release, 'extract', side_effect=extract), \
+                patch.object(publisher, 'file_sha256', return_value='digest'), \
+                patch.object(deployment_alerts, 'failed') as resumed:
+            target = cutover.return_value
+            target.deploy.side_effect = RuntimeError('validation failed')
+            target.latest.return_value = {'request': request, 'phase': 'verifying'}
+            target.rollback.side_effect = lambda: resumed.assert_called_once_with()
+            with self.assertRaisesRegex(RuntimeError, 'validation failed'):
+                publisher.dispatch(args, executor=self.monitor)
+            target.rollback.assert_called_once_with()

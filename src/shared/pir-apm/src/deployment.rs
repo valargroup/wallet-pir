@@ -144,6 +144,15 @@ impl Store {
             outcome: None,
         };
         save(&tx, &deployment)?;
+        // Allocate the announcement while queued IDs still exist. A delivery worker
+        // may be awaiting Slack with one of those IDs; its acknowledgement must
+        // never delete or retry this new announcement under a reused row ID.
+        announce(
+            &tx,
+            &deployment,
+            now,
+            "🔧 Deployment starting; normal alerts paused for up to one hour",
+        )?;
         // Events remain in history; notifications from before the boundary must not leak into it.
         tx.execute(
             "DELETE FROM outbox WHERE incident NOT LIKE 'deployment:%'",
@@ -166,12 +175,6 @@ impl Store {
                 )?;
             }
         }
-        announce(
-            &tx,
-            &deployment,
-            now,
-            "🔧 Deployment starting; normal alerts paused for up to one hour",
-        )?;
         tx.commit()?;
         Ok(deployment)
     }
@@ -333,6 +336,32 @@ mod tests {
         );
         drop(s);
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn in_flight_acknowledgement_cannot_remove_the_deployment_announcement() {
+        let mut s = store();
+        evaluate(&mut s, 99, true);
+        let selected: i64 =
+            s.db.query_row("SELECT id FROM outbox", [], |r| r.get(0))
+                .unwrap();
+        s.begin_deployment("one", vec!["publisher".into()], 100)
+            .unwrap();
+        // Complete either outcome of a send selected before deployment began.
+        s.db.execute(
+            "UPDATE outbox SET attempts=attempts+1,due=999 WHERE id=?",
+            [selected],
+        )
+        .unwrap();
+        s.db.execute("DELETE FROM outbox WHERE id=?", [selected])
+            .unwrap();
+        assert_eq!(messages(&s).len(), 1);
+        let (attempts, due): (u64, u64) =
+            s.db.query_row("SELECT attempts,due FROM outbox", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap();
+        assert_eq!((attempts, due), (0, 100));
     }
 
     #[test]

@@ -411,8 +411,10 @@ def main(argv=None, executor=None, out=print, package_layout=None, package_githu
     # Read-only commands never open a window. Existing deploy handlers keep their
     # own single validation pass and production lock.
     deploying = not args.command.startswith('ops-package-') and (
-        args.command in ('deploy', 'rollback') or args.command.endswith(
-            ('-deploy', '-rollback', '-restart', '-continue-installation', '-verify')))
+        args.command in ('deploy', 'rollback', 'publisher-cutover-continue',
+                         'publisher-cutover-reconcile', 'publisher-cutover-repair-release',
+                         'publisher-cutover-repair-sandbox') or args.command.endswith(
+            ('-deploy', '-rollback', '-restart', '-verify')))
     if not deploying:
         return run(args, executor, out, package_layout, package_github, **options)
     try:
