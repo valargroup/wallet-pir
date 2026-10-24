@@ -55,11 +55,12 @@ const WITHDRAWAL_BUDGET: Duration = Duration::from_secs(10);
 /// Preparing one deployed-geometry publication took 24-34 s on 3 CPUs for the
 /// existing qualification cases; the bound leaves room for a loaded runner.
 const PREPARATION_BUDGET: Duration = Duration::from_secs(240);
-/// From a replacement publication to its first public answer: each role
-/// polls once per second while deferred, so three layers, a 600 MB packing
-/// download and hashing fit far inside this bound. The removed failure
-/// backoff alone reached 40 s on a layer after three refused passes.
-const ADOPTION_BUDGET: Duration = Duration::from_secs(30);
+/// From a replacement publication to its first public answer. Each role
+/// polls once per second while deferred, so the time is the router's packing
+/// download and load plus at most one steady poll at the ingress: 7-11 s
+/// (native) and 21-22 s (reference) on the 6-CPU qualification slice. The
+/// removed failure backoff waited 40 s on a layer after three refused passes.
+const ADOPTION_BUDGET: Duration = Duration::from_secs(45);
 /// Ordinary advancement keeps serving the previous generation, so each layer
 /// polls at the steady five-second cadence: three polls, the router's packing
 /// load (up to 25 s measured here with four wallets querying on 3 CPUs) and
@@ -1322,18 +1323,20 @@ async fn publication_advances_past_retained_generations_under_live_wallets() {
         }
         (most_retained, outcomes)
     };
-    assert!(most_retained < enhance_shared::protocol::RETAINED_GENERATIONS);
-    assert!(
-        outcomes
-            .keys()
-            .all(|outcome| outcome == "Answered" || outcome.contains("409")),
-        "{outcomes:?}"
-    );
-    stack.assert_legitimate();
     stack.report(
         "retained_generations",
         json!({"publications": results, "router_most_retained": most_retained,
             "wallet_outcomes": outcomes}),
+    );
+    stack.assert_legitimate();
+    assert!(most_retained < enhance_shared::protocol::RETAINED_GENERATIONS);
+    // A stale binding (409) or admission shedding (429) is an ordinary
+    // refusal; an unavailable or failed request is not.
+    assert!(
+        outcomes.keys().all(|outcome| outcome == "Answered"
+            || outcome.contains("409")
+            || outcome.contains("429")),
+        "{outcomes:?}"
     );
     stack.shutdown().await;
 }
