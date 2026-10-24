@@ -472,6 +472,75 @@ async fn a_backfill_target_the_chain_moved_past_is_replanned_without_withdrawal(
 }
 
 #[tokio::test]
+async fn a_tip_that_grows_past_a_backfill_target_is_still_caught_up() {
+    let tip = 10 + BACKFILL_BLOCKS;
+    let chain = Chain::new(tip, "a");
+    let mut harness = Harness::start(chain.clone(), 0, Some(10));
+    let hold = Hold::at(tip);
+    *harness.hold.lock().unwrap() = Some(hold.clone());
+    harness.observe();
+    hold.entered.notified().await;
+    // The fixed target ends here. The remaining gap is one block larger than
+    // the live scheduler ingests itself, so only a second backfill target
+    // reaches the new tip.
+    let grown = tip + LIVE_BLOCKS + 1;
+    chain.extend(grown, "a");
+    hold.gate.add_permits(1);
+    let events = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            harness.observe();
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            let events = harness.events.lock().unwrap().clone();
+            if caught_up(&events, grown) {
+                return events;
+            }
+        }
+    })
+    .await
+    .expect("growth beyond the fixed target was ingested");
+    assert_eq!(events.last(), Some(&Event::CaughtUp(grown)));
+    harness.stop().await;
+}
+
+#[tokio::test]
+async fn release_target_keeps_a_replacement_published_into_the_empty_slot() {
+    let (targets, mut pending) = watch::channel(Some(observation(1, 10)));
+    let _ = pending.borrow_and_update();
+    let publisher = targets.clone();
+    let mut slot = publisher.subscribe();
+    let _ = slot.borrow_and_update();
+    let live = tokio::spawn(async move {
+        slot.changed().await.unwrap();
+        assert!(publisher.send_if_modified(|slot| {
+            let idle = slot.is_none();
+            if idle {
+                *slot = Some(observation(2, 30));
+            }
+            idle
+        }));
+    });
+    tokio::task::yield_now().await;
+    let kept = schedule::release_target(&targets, &mut pending).await;
+    live.await.unwrap();
+    assert_eq!(kept.unwrap().tip.height, 30);
+    assert!(
+        !targets.send_if_modified(|slot| slot.is_none()),
+        "an occupied slot is not published again"
+    );
+}
+
+fn observation(pass: u64, height: u64) -> ChainObservation {
+    ChainObservation {
+        genesis: "g".into(),
+        tip: BlockId {
+            height,
+            hash: format!("h{height}"),
+        },
+        pass,
+    }
+}
+
+#[tokio::test]
 async fn a_retired_backfill_target_is_replanned_from_the_latest_observation() {
     let tip = 10 + BACKFILL_BLOCKS * 3;
     let chain = Chain::new(tip, "a");

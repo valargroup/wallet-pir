@@ -298,38 +298,58 @@ async fn backfill<I: Ingestion>(
         // A fixed target: the observation that found the gap. Each batch first
         // checks it is still canonical; a target the chain moved past, or a
         // batch the source no longer reports, is retired for the live
-        // scheduler to replan from its latest observation.
-        let Some(fixed) = pending.borrow_and_update().clone() else {
-            continue;
-        };
-        let target = &fixed.tip;
-        while !shutdown.requested() {
-            let mut writer = writer.lock().await;
-            let batch = async {
-                match reconcile(&mut *writer, &*feed.chain, &fixed).await? {
-                    Coverage::Missing { from } => {
-                        let through = target.height.min(from + BACKFILL_BLOCKS - 1);
-                        Ok(!anchored(&mut *writer, &*feed.chain, from, through).await?)
+        // scheduler to replan from its latest observation. A replacement
+        // published into the slot as this target is cleared is adopted here;
+        // the live scheduler will not send it a second time.
+        let mut next = pending.borrow_and_update().clone();
+        while let Some(fixed) = next {
+            let target = fixed.tip.clone();
+            while !shutdown.requested() {
+                let mut writer = writer.lock().await;
+                let batch = async {
+                    match reconcile(&mut *writer, &*feed.chain, &fixed).await? {
+                        Coverage::Missing { from } => {
+                            let through = target.height.min(from + BACKFILL_BLOCKS - 1);
+                            Ok(!anchored(&mut *writer, &*feed.chain, from, through).await?)
+                        }
+                        Coverage::Current | Coverage::Ahead | Coverage::Stale => Ok(true),
                     }
-                    Coverage::Current | Coverage::Ahead | Coverage::Stale => Ok(true),
                 }
-            }
-            .await;
-            match batch {
-                Ok(true) => break,
-                Ok(false) => {}
-                Err(outcome) => {
-                    // A failed batch returns control to the live scheduler's next observation.
-                    settle(&mut *writer, outcome)?;
-                    break;
+                .await;
+                match batch {
+                    Ok(true) => break,
+                    Ok(false) => {}
+                    Err(outcome) => {
+                        // A failed batch returns control to the live scheduler's next observation.
+                        settle(&mut *writer, outcome)?;
+                        break;
+                    }
                 }
+                drop(writer);
+                tokio::task::yield_now().await;
             }
-            drop(writer);
-            tokio::task::yield_now().await;
+            if shutdown.requested() {
+                // The process is draining; drop the slot without waiting for a
+                // replacement the live scheduler will not run.
+                targets.send_replace(None);
+                return Ok(());
+            }
+            next = release_target(&targets, &mut pending).await;
         }
-        // Release the fixed target. The live scheduler reconciles it with its
-        // latest observation before the product may publish again.
-        targets.send_replace(None);
-        pending.borrow_and_update();
     }
+}
+
+/// Clear the fixed backfill target and return a replacement published into the
+/// emptied slot. The returned value is already marked seen, so the caller must
+/// ingest it: the live scheduler publishes only into an empty slot and will
+/// not send this replacement again.
+pub(super) async fn release_target(
+    targets: &watch::Sender<Option<ChainObservation>>,
+    pending: &mut watch::Receiver<Option<ChainObservation>>,
+) -> Option<ChainObservation> {
+    targets.send_replace(None);
+    // One yield lets the live scheduler, which may already be waiting to
+    // observe this clear, publish before the read below marks the slot seen.
+    tokio::task::yield_now().await;
+    pending.borrow_and_update().clone()
 }
