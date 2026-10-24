@@ -18,8 +18,10 @@ on:
       - tools/ci/test-matrix.json
       - .github/workflows/ci-full.yml
       - .github/workflows/ci-cache.yml
+  # Frequent, cheap when main's snapshots are fresh: an evicted or day-old
+  # snapshot is rebuilt within two hours instead of the next day.
   schedule:
-    - cron: '37 3 * * *'
+    - cron: '37 */2 * * *'
   workflow_dispatch:
 
 permissions:

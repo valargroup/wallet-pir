@@ -298,7 +298,7 @@ Whole-repository **CI full** runs nightly at 04:17 UTC and on explicit dispatch.
 **Qualify services** is dispatch-only and pins its main revision. It retains
 full service suites and exact-SHA artifact checks; a green fast gate cannot
 replace it. Hosted cache priming runs after main dependency/build-configuration
-changes, nightly at 03:37 UTC or on request, without
+changes, every two hours (minute 37) or on request, without
 launching qualification or holding the main result open. Dependency/toolchain
 validation and cold preparation belong before landing an upgrade. Unexpected
 missing prerequisites must fail visibly rather than skip required tests.
@@ -373,8 +373,8 @@ caps remain enforced. `OOMPolicy=kill`, `KillMode=control-group`, and
 `Restart=always` clean up the entire service group and reconnect the runner after
 an out-of-memory failure. Service stops allow 30 seconds before forced cleanup.
 Both services set `CARGO_BUILD_JOBS=4`. That variable is hashed into the
-persistent target identity, so the fast compile step overrides it to one
-after setup. Two concurrent release-fast rustc processes still exceed the
+persistent target identity, so on main's runner the fast compile step overrides
+it to one after setup; hosted PR runners (4 CPUs, 16 GB) keep four. Two concurrent release-fast rustc processes still exceed the
 fast 6 GiB cap and the OOM kill drops the runner; one stays inside the cap
 and reuses the existing target. A build cannot occupy the fast service's queue, but both services
 share the host CPU and disk, so latency must also be measured under contention.
@@ -516,7 +516,12 @@ routine limits remain unchanged.
 Main uses persistent targets; the separate
 [Prime hosted Cargo caches](../.github/workflows/ci-cache.yml) workflow can prepare
 one successful main fast snapshot for hosted PRs. It compiles fast units only
-when the exact key is missing, runs no tests and is not a gate. Full qualification
+when main holds no snapshot for the current lockfile saved in the last 20
+hours, runs no tests and is not a gate. Only main and PR fast checks save
+hosted workspace snapshots, and only main saves other lanes: PRs can read only
+main's entries, and branch or shard entries would evict them from the 10 GB
+repository cache. A PR that restores nothing prints a "Cold Cargo cache"
+warning. Full qualification
 retains persistent build lanes. A missing cache never relaxes validation or the
 180-second warm feedback target.
 

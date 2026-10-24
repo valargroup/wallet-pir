@@ -14,7 +14,7 @@ inputs:
 outputs:
   cache-hit:
     description: An exact hosted entry exists for this compatibility identity
-    value: ${{ steps.workspace.outputs.cache-hit || steps.restore.outputs.cache-hit }}
+    value: ${{ steps.workspace.outputs.cache-hit || steps.workspace-restore.outputs.cache-hit || steps.restore.outputs.cache-hit }}
 runs:
   using: composite
   steps:
@@ -97,13 +97,30 @@ runs:
         cache-workspace-crates: true
         cache-on-failure: true
         lookup-only: ${{ inputs.lookup-only }}
+        # Branch and PR entries crowd main's out of the 10 GB repository cache.
+        save-if: ${{ github.ref == 'refs/heads/main' }}
     # Source trees get distinct immutable snapshots, with fallback only inside
     # the existing compatibility partition. Save only completed successful jobs:
     # cancellation can leave Cargo writers alive during post-action archiving.
+    # Only main and PR fast checks save: PRs read main's entries, and branch
+    # dispatches or full-test shards elsewhere would evict them from the 10 GB
+    # repository cache.
     - name: Restore hosted workspace snapshot
       id: workspace
-      if: runner.environment != 'self-hosted' && (inputs.lane == 'fast' || inputs.lane == 'full-test')
+      if: runner.environment != 'self-hosted' && (inputs.lane == 'fast' || inputs.lane == 'full-test') && (github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && inputs.lane == 'fast'))
       uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target/${{ inputs.lane }}
+        key: ${{ steps.identity.outputs.workspace-key }}
+        restore-keys: ${{ steps.identity.outputs.workspace-prefix }}
+        lookup-only: ${{ inputs.lookup-only }}
+    - name: Restore hosted workspace snapshot without saving
+      id: workspace-restore
+      if: runner.environment != 'self-hosted' && (inputs.lane == 'fast' || inputs.lane == 'full-test') && !(github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && inputs.lane == 'fast'))
+      uses: actions/cache/restore@v4
       with:
         path: |
           ~/.cargo/registry
@@ -116,5 +133,5 @@ runs:
       shell: bash
       env:
         LANE: ${{ inputs.lane }}
-        CACHE_HIT: ${{ steps.workspace.outputs.cache-hit || steps.restore.outputs.cache-hit }}
+        CACHE_HIT: ${{ steps.workspace.outputs.cache-hit || steps.workspace-restore.outputs.cache-hit || steps.restore.outputs.cache-hit }}
       run: python3 tools/ci/cargo_cache.py restored --lane "$LANE" --cache-hit "$CACHE_HIT"

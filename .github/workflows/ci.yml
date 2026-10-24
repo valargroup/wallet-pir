@@ -88,9 +88,9 @@ jobs:
           # Job count is not part of compiler output, but cargo_cache hashes
           # every CARGO_BUILD_* variable into the persistent target identity.
           # Keep four on the setup step so this relink reuses the warm cache.
-          # Two rustc processes still cross the fast runner's 6 GiB cgroup, so
-          # the compile step uses one.
-          CARGO_BUILD_JOBS: '1'
+          # Two rustc processes still cross main's 6 GiB fast-runner cgroup, so
+          # its compile step uses one; hosted runners (16 GB) keep all four.
+          CARGO_BUILD_JOBS: ${{ runner.environment == 'self-hosted' && '1' || '4' }}
         run: umask 022 && TMPDIR="$RUNNER_TEMP" python3 tools/ci/fast.py --committed-only --base "$BASE" --unit-jobs 3
       - name: Report Cargo cache reuse
         if: always() && steps.affected.outputs.rust == 'true'
