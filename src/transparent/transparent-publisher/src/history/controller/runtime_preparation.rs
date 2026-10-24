@@ -9,7 +9,7 @@ use super::*;
 /// table that fails verification fails the publication. Each runtime is
 /// linked from the active publication or a retained candidate that holds a
 /// completed file of its identity, and built otherwise; a runtime that
-/// cannot be built or written is reported and left to the workers. An
+/// cannot be built or written is reported and fails preparation. An
 /// invalidation stops the preparation between segments, and the candidate
 /// is then never offered. A candidate under the publication root stores its
 /// runtimes; what that and the table verification cost is added to `storage`.

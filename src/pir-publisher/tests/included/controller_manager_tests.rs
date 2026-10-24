@@ -853,7 +853,11 @@ async fn manager_persists_invalidation_and_refuses_equal_revision_reenable_after
     owner.0.withdrawn.store(true, Ordering::Release);
     // An intent-write failure must still fence memory and the owner's own
     // durable record. Startup then reconciles the two records conservatively.
-    std::fs::create_dir(state.join("revocation-floor.tmp")).unwrap();
+    let records = std::fs::canonicalize(&state).unwrap();
+    let refused = pir_query_server::transparent::test_support::record_writer(
+        &records.join("revocation-floor.json"),
+        |_, _| Err(std::io::Error::other("record directory write refused")),
+    );
     assert!(follow.poll_once().await.is_err());
     assert_eq!(
         get(&origin, "/v2/shards/init").await.status(),
@@ -864,7 +868,7 @@ async fn manager_persists_invalidation_and_refuses_equal_revision_reenable_after
         serde_json::from_slice(&std::fs::read(state.join("revocation-floor.json")).unwrap())
             .unwrap();
     assert_eq!(intent["revision"], 0);
-    std::fs::remove_dir(state.join("revocation-floor.tmp")).unwrap();
+    drop(refused);
     task.stop().await;
     drop(live);
     drop(follow);
@@ -1015,15 +1019,15 @@ async fn manager_checks_inventory_and_required_files_on_unchanged_maps() {
     std::fs::write(&tls.control, "").unwrap();
     owner.0.distribution_revision.fetch_add(1, Ordering::AcqRel);
     follow.poll_once().await.unwrap();
-    // Rehash cached files, then charge the actual replacement transfer. A bad
-    // cache object plus bad download cannot borrow a resident runtime to pass.
+    // Check cached lengths, then charge the actual replacement transfer. A
+    // truncated download cannot borrow a resident runtime to pass.
     // Objects are read-only inodes shared with staged trees; replace the cache
     // entry rather than write through the active publication's runtime.
     let object = state.join("objects").join(&runtime.sha256);
     assert!(std::fs::metadata(&object).unwrap().permissions().readonly());
     std::fs::remove_file(&object).unwrap();
     std::fs::write(&object, b"corrupt").unwrap();
-    std::fs::write(&tls.control, "corrupt").unwrap();
+    std::fs::write(&tls.control, "truncated").unwrap();
     owner.0.distribution_revision.fetch_add(1, Ordering::AcqRel);
     assert!(follow.poll_once().await.is_err());
     query(&origin, &set).await;
@@ -1583,6 +1587,10 @@ async fn manager_bounds_memory_while_retaining_admitted_upload() {
         4,
         "held oldest plus three recent"
     );
+    assert!(
+        held.exists(),
+        "the admitted request's tree survived collection"
+    );
     writer.write_all(&body).await.unwrap();
     drop(writer);
     let response = admitted.await.unwrap();
@@ -1604,8 +1612,8 @@ async fn manager_bounds_memory_while_retaining_admitted_upload() {
     );
     query(&origin, &set).await;
     assert!(state.join("objects").is_dir());
-    // Eleven activations leave the active tree, three retained predecessors,
-    // the tree the admitted request held and three unused trees on disk.
+    // After admission ends, collection retains the active tree, three
+    // predecessors and three unused trees. The old request no longer pins one.
     let trees: Vec<_> = std::fs::read_dir(&state)
         .unwrap()
         .filter_map(Result::ok)
@@ -1617,10 +1625,10 @@ async fn manager_bounds_memory_while_retaining_admitted_upload() {
                 .starts_with("staging-")
         })
         .collect();
-    assert_eq!(trees.len(), 8, "{trees:?}");
+    assert_eq!(trees.len(), 7, "{trees:?}");
     assert!(
-        trees.contains(&held),
-        "the admitted request's tree survived"
+        !held.exists(),
+        "the released request no longer pins its tree"
     );
     let active = live.command(Command::Status).await.unwrap()["active"]["directory"]
         .as_str()
@@ -1826,9 +1834,16 @@ async fn manager_double_intent_write_failure_retains_exact_negative_revision() {
     follow.poll_once().await.unwrap();
     let (origin, task) = worker(follow.live().unwrap()).await;
     let encrypted = query_and_upload(&origin, &set).await;
-    for name in ["revocation-floor.tmp", "revocation-fallback.tmp"] {
-        std::fs::create_dir(state.join(name)).unwrap();
-    }
+    let records = std::fs::canonicalize(&state).unwrap();
+    let refused: Vec<_> = ["revocation-floor.json", "revocation-fallback.json"]
+        .into_iter()
+        .map(|name| {
+            pir_query_server::transparent::test_support::record_writer(
+                &records.join(name),
+                |_, _| Err(std::io::Error::other("record directory write refused")),
+            )
+        })
+        .collect();
     owner.0.distribution_revision.store(100, Ordering::Release);
     std::fs::write(&tls.control, "pause-anchor").unwrap();
     let work = tokio::spawn(async move {
@@ -1862,9 +1877,7 @@ async fn manager_double_intent_write_failure_retains_exact_negative_revision() {
         get(&origin, "/v2/shards/init").await.status(),
         StatusCode::SERVICE_UNAVAILABLE
     );
-    for name in ["revocation-floor.tmp", "revocation-fallback.tmp"] {
-        std::fs::remove_dir(state.join(name)).unwrap();
-    }
+    drop(refused);
     *rpc.hash.write().unwrap() = Some(set.map.shards.last().unwrap().terminal_block_hash.clone());
     assert!(
         follow.poll_once().await.is_err(),
@@ -2015,11 +2028,13 @@ async fn http_consumers_answer_from_successive_stored_publications() {
             &owner,
             |geometry| {
                 let mut policy = DecoupledPolicy::for_geometry(geometry);
-                policy.scripts.target = 2;
+                if !cfg!(feature = "qualification-tests") {
+                    policy.scripts.target = 2;
+                }
                 policy
             },
-            None,
-            None,
+            cfg!(feature = "qualification-tests").then(|| config.archive_geometry.clone()),
+            cfg!(feature = "qualification-tests").then_some(config.recent_from),
         )
         .await
         .unwrap();
