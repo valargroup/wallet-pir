@@ -1,13 +1,14 @@
-//! Router-owned domain assignments and eligibility for the published generation.
+//! Router-owned serving assignments, separate from latest-publication adoption.
 use std::{
     collections::{BTreeMap, BTreeSet},
     time::SystemTime,
 };
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Serialize)]
 pub struct Placement {
     pub domains: BTreeMap<u64, Vec<String>>,
     pub revision: Option<u64>,
+    pub published_revision: Option<u64>,
 }
 
 #[derive(Clone, Debug, serde::Deserialize)]
@@ -36,6 +37,7 @@ pub struct Report {
     pub generation: u64,
     pub active: String,
     pub domains: BTreeMap<u64, BTreeMap<String, bool>>,
+    pub handover: Option<serde_json::Value>,
 }
 impl Report {
     pub fn parse(body: &str) -> Option<Self> {
@@ -88,12 +90,14 @@ impl Report {
             generation,
             active: active.into(),
             domains,
+            handover: value.get("handover").cloned(),
         })
     }
 }
 
 /// Keep the last valid placement for display, but never refresh it from stale,
-/// inconsistent or unconfigured serving observations.
+/// inconsistent or unconfigured serving observations. A coherent older serving
+/// generation is observable, but never described as the newest publication.
 pub fn update(data: &mut crate::dashboard::DashboardData, now: SystemTime) {
     if let Some((placement, replicas, at)) = collect(data, now) {
         data.placement = Some(placement);
@@ -130,6 +134,7 @@ fn collect(
         return None;
     }
     let mut at = data.last_scrape?;
+    let mut serving: Option<(u64, &str)> = None;
     let mut assignments: BTreeMap<u64, BTreeSet<String>> = BTreeMap::new();
     let mut eligible: BTreeMap<u64, BTreeSet<String>> = BTreeMap::new();
     for router in data.packing_routers.values() {
@@ -139,9 +144,14 @@ fn collect(
         }
         at = at.min(sampled);
         let report = router.placement.as_ref()?;
-        if report.generation != published.generation || report.active != published.manifest_sha256 {
+        if report.generation > published.generation
+            || (report.generation == published.generation
+                && report.active != published.manifest_sha256)
+            || serving.is_some_and(|s| s != (report.generation, report.active.as_str()))
+        {
             return None;
         }
+        serving = Some((report.generation, report.active.as_str()));
         for (domain, workers) in &report.domains {
             for (origin, ready) in workers {
                 let names: Vec<_> = data
@@ -180,7 +190,8 @@ fn collect(
     Some((
         Placement {
             domains,
-            revision: Some(generation as u64),
+            revision: serving.map(|s| s.0),
+            published_revision: Some(generation as u64),
         },
         replicas,
         at,
@@ -260,6 +271,141 @@ mod tests {
         update(&mut d, at(1000));
         assert!(!d.placement_error);
         assert_eq!(d.domain_ready_replicas[&0], 2.);
+    }
+    #[test]
+    fn coherent_older_serving_is_observable_and_has_a_separate_lag_alert() {
+        let now = pir_apm::incidents::unix_time();
+        let mut d = view(now);
+        let report = d
+            .packing_routers
+            .get_mut("router")
+            .unwrap()
+            .placement
+            .as_mut()
+            .unwrap();
+        report.generation -= 1;
+        report.active = "ab".repeat(32);
+        update(&mut d, at(now + 1));
+        assert!(!d.placement_error);
+        assert_eq!(d.placement.as_ref().unwrap().revision, Some(28048));
+        assert_eq!(
+            d.placement.as_ref().unwrap().published_revision,
+            Some(28049)
+        );
+        let conditions = monitoring::conditions(&d, now + 1, &Policy::default());
+        for key in [
+            "coverage_placement_warning",
+            "coverage_domain_0_eligibility_warning",
+            "domain_0_unavailable",
+        ] {
+            assert_eq!(
+                conditions.iter().find(|c| c.key == key).unwrap().firing,
+                Some(false),
+                "{key}"
+            );
+        }
+        let lag = conditions
+            .iter()
+            .find(|c| c.key == "publication_handover_warning")
+            .unwrap();
+        assert_eq!(lag.firing, Some(true));
+        assert_eq!(
+            lag.hold_seconds,
+            Policy::default().publication_warning_seconds
+        );
+        d.packing_routers.get_mut("router").unwrap().sample.error = Some("unreachable".into());
+        update(&mut d, at(now + 2));
+        let conditions = monitoring::conditions(&d, now + 2, &Policy::default());
+        assert_eq!(
+            conditions
+                .iter()
+                .find(|c| c.key == "publication_handover_warning")
+                .unwrap()
+                .firing,
+            None
+        );
+        assert_eq!(
+            conditions
+                .iter()
+                .find(|c| c.key == "coverage_placement_warning")
+                .unwrap()
+                .firing,
+            Some(true)
+        );
+    }
+    #[test]
+    fn future_generations_and_conflicting_older_manifests_are_unknown() {
+        for future in [false, true] {
+            let mut d = view(1000);
+            let mut second = d.packing_routers["router"].clone();
+            if future {
+                second.placement.as_mut().unwrap().generation += 1;
+            } else {
+                for r in [&mut second, d.packing_routers.get_mut("router").unwrap()] {
+                    r.placement.as_mut().unwrap().generation -= 1;
+                }
+                second.placement.as_mut().unwrap().active = "ab".repeat(32);
+            }
+            d.packing_routers.insert("second".into(), second);
+            update(&mut d, at(1001));
+            assert!(d.placement_error);
+        }
+    }
+    #[test]
+    fn handover_alert_waits_for_the_existing_budget_and_recovers_on_current_reports() {
+        let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
+        let evaluate = |store: &mut Store, t, behind| {
+            let mut d = view(t);
+            if behind {
+                d.packing_routers
+                    .get_mut("router")
+                    .unwrap()
+                    .placement
+                    .as_mut()
+                    .unwrap()
+                    .generation -= 1;
+            }
+            update(&mut d, at(t));
+            let conditions = monitoring::conditions(&d, t, &Policy::default())
+                .into_iter()
+                .filter(|c| c.key == "publication_handover_warning")
+                .collect::<Vec<_>>();
+            store.evaluate(&conditions, t, true, "test", "").unwrap();
+        };
+        for t in (1000..1120).step_by(5) {
+            evaluate(&mut store, t, true);
+            assert!(!store.incidents().unwrap()[0].active);
+        }
+        evaluate(&mut store, 1120, true);
+        assert!(store.incidents().unwrap()[0].active);
+        evaluate(&mut store, 1125, false);
+        assert!(store.incidents().unwrap()[0].active);
+        evaluate(&mut store, 1130, false);
+        assert!(!store.incidents().unwrap()[0].active);
+    }
+    #[test]
+    fn an_older_generation_with_no_eligible_workers_is_known_unavailability() {
+        let mut d = view(1000);
+        let r = d.packing_routers.get_mut("router").unwrap();
+        let report = r.placement.as_mut().unwrap();
+        report.generation -= 1;
+        report
+            .domains
+            .get_mut(&0)
+            .unwrap()
+            .values_mut()
+            .for_each(|ready| *ready = false);
+        r.sample.values.insert("domain_eligible_0".into(), 0.);
+        update(&mut d, at(1000));
+        let conditions = monitoring::conditions(&d, 1000, &Policy::default());
+        assert_eq!(
+            conditions
+                .iter()
+                .find(|c| c.key == "domain_0_unavailable")
+                .unwrap()
+                .firing,
+            Some(true)
+        );
     }
     #[test]
     fn stale_wrong_generation_or_conflicting_publications_cannot_refresh_placement() {

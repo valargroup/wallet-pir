@@ -781,6 +781,37 @@ impl SyncTask for Synchronizer {
     }
 }
 
+/// Snapshot only: collecting diagnostics never expires a pin or releases material.
+fn handover_observation(inner: &Inner, now: Instant) -> serde_json::Value {
+    let retained = inner
+        .retained
+        .iter()
+        .map(|(id, view)| {
+            serde_json::json!({
+                "manifest_sha256":id,"generation":view.manifest.generation,
+                // Other references include requests and synchronization maintenance.
+                "additional_references":Arc::strong_count(view).saturating_sub(1),
+            })
+        })
+        .collect::<Vec<_>>();
+    let pins = inner
+        .pins
+        .iter()
+        .filter(|(_, deadline)| **deadline > now)
+        .map(|((holder, id), deadline)| {
+            serde_json::json!({"holder":holder,"manifest_sha256":id,
+            "expires_in_ms":deadline.saturating_duration_since(now).as_millis() as u64})
+        })
+        .collect::<Vec<_>>();
+    let retired = inner.retired.iter().filter(|view|view.view.strong_count()>0)
+        .map(|view|serde_json::json!({"generation":view.manifest.generation,
+            "manifest_sha256":digest(&view.manifest),"remaining_references":view.view.strong_count()}))
+        .collect::<Vec<_>>();
+    serde_json::json!({"retained_limit":protocol::RETAINED_GENERATIONS-1,
+        "retention_slots_full":inner.retained.len()>=protocol::RETAINED_GENERATIONS-1,
+        "retained":retained,"pins":pins,"retired":retired})
+}
+
 impl PackingRouter {
     /// Waits until admitted packing has ended, including work and response
     /// bodies whose wallet request was cancelled.
@@ -835,6 +866,7 @@ impl PackingRouter {
         "generation": inner.active.as_ref().map(|view| view.manifest.generation),
         "domain_workers": domain_workers,
         "packing_charged_bytes": self.budget.charged_bytes(),
+        "handover": handover_observation(&inner, now),
         "ready": ready})
     }
     /// Router metrics; `memory` adds this process's memory observation.
@@ -1194,6 +1226,35 @@ async fn release_pin(
 #[cfg(test)]
 mod observation_tests {
     use super::*;
+    #[test]
+    fn handover_snapshot_reports_live_pin_owners_and_expiry_without_mutation() {
+        let now = Instant::now();
+        let mut inner = Inner::default();
+        inner
+            .pins
+            .insert(("expired-holder".into(), "ab".repeat(32)), now);
+        inner.pins.insert(
+            ("live-holder".into(), "cd".repeat(32)),
+            now + Duration::from_secs(7),
+        );
+        let report = handover_observation(&inner, now);
+        assert_eq!(report["retained_limit"], 4);
+        assert_eq!(report["retention_slots_full"], false);
+        assert_eq!(report["pins"].as_array().unwrap().len(), 1);
+        assert_eq!(report["pins"][0]["holder"], "live-holder");
+        assert_eq!(report["pins"][0]["expires_in_ms"], 7000);
+        assert_eq!(
+            inner.pins.len(),
+            2,
+            "health observation must not collect expired pins"
+        );
+        assert!(
+            handover_observation(&inner, now + Duration::from_secs(8))["pins"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+    }
     #[test]
     fn eligibility_requires_an_unexpired_promise_for_the_active_view() {
         let now = Instant::now();
