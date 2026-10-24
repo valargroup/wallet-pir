@@ -6,11 +6,15 @@ renderers and templates; only hosts are fake. Adoption's rollback must bring
 back the legacy unit, its drop-ins and its credential launcher.
 """
 import dataclasses
+import contextlib
+import importlib.util
+import io
 import json
 from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(ROOT / 'tools/lib'))
@@ -261,6 +265,139 @@ class LegacyAdoption(unittest.TestCase):
         self.dir = tempfile.TemporaryDirectory()
         self.addCleanup(self.dir.cleanup)
         self.fleet = LaunchedFleet()
+
+    def bootstrap_case(self):
+        case = RoleCase(self, 'apm')
+        case.case = {**case.case, 'legacy_drop_ins': {
+            name: path for name, path in case.case['legacy_drop_ins'].items() if name != '80-observers.conf'}}
+        case.install_legacy()
+        case.service = case.pin_launcher()
+        patch = mock.patch.object(monitoring_certs, '_legacy_launcher', return_value=case.pins())
+        patch.start()
+        self.addCleanup(patch.stop)
+        original = self.fleet.http_get
+
+        def http_get(host, url):
+            if url == monitoring_certs.COLLECTOR_READY:
+                env = effective(self.fleet, host, case.unit)['Service'].get('Environment', {})
+                if 'PIR_APM_OBSERVERS' not in env:
+                    return 404, 'not found'
+            return original(host, url)
+        self.fleet.http_get = http_get
+        return case
+
+    def prepare(self, case, directory, files, **options):
+        return monitoring_certs.install(
+            self.fleet, self.fleet.hold_lock(case.host, descriptors.LOCK_PATH), case.host, files,
+            state_dir=case.root / 'files', directory=directory, unit=case.unit,
+            prepare_adoption=True, ready_timeout=0, sleep=lambda _: None, **options)
+
+    def test_legacy_prerequisites_are_prepared_without_restarting_then_adopted_and_restored(self):
+        case = self.bootstrap_case()
+        old = self.fleet.probe_unit(case.host, case.unit)
+        observers = {'observers.json': b'{"revision":"sha256:first","hosts":[]}'}
+        self.prepare(case, '/etc/pir-apm', observers, identity={'revision': 'sha256:first'})
+        self.prepare(case, monitoring_certs.COLLECTOR_CREDENTIALS,
+                     {name: b'test credential' for name in monitoring_certs.COLLECTOR_FILES})
+        self.prepare(case, monitoring_roles.APM_ALERTING, {'slack-webhook': HOOK.encode()})
+        self.assertEqual(self.fleet.probe_unit(case.host, case.unit), old)
+        self.assertEqual(self.fleet.http_get(case.host, monitoring_certs.COLLECTOR_READY)[0], 404)
+        self.assertEqual(self.prepare(case, '/etc/pir-apm', observers, identity={'revision': 'sha256:first'}), [])
+        deployer, journal = case.deploy(b'rendered release', retire_historical=True, allow_drift=True)
+        self.assertEqual(journal.status, 'committed')
+        # Prepared-file rollback must not remove files a newly adopted unit is using.
+        options = dict(state_dir=case.root / 'files', directory='/etc/pir-apm', ready_timeout=0,
+                       sleep=lambda _: None)
+        with self.assertRaisesRegex(RuntimeError, 'legacy APM'):
+            monitoring_certs.rollback(self.fleet, self.fleet.hold_lock(case.host, descriptors.LOCK_PATH),
+                                      case.host, **options)
+        self.assertIsNotNone(self.fleet.read(case.host, monitoring_roles.APM_OBSERVERS))
+        deployer.rollback(journal.id)
+        monitoring_certs.reconcile(self.fleet, self.fleet.hold_lock(case.host, descriptors.LOCK_PATH),
+                                   case.host, **options)
+        self.assertIsNone(self.fleet.read(case.host, monitoring_roles.APM_OBSERVERS))
+        self.assertEqual(self.fleet.probe_unit(case.host, case.unit)['exe_sha256'], old['exe_sha256'])
+
+    def test_prepare_refuses_replacement_and_an_observer_aware_or_changed_legacy_unit(self):
+        case = self.bootstrap_case()
+        path = monitoring_roles.APM_OBSERVERS
+        self.fleet.put(case.host, path, b'existing')
+        with self.assertRaisesRegex(RuntimeError, 'existing'):
+            self.prepare(case, '/etc/pir-apm', {'observers.json': b'other'})
+        self.assertEqual(self.fleet.read(case.host, path), 'existing')
+        self.fleet.remove(case.host, path)
+        self.fleet.put(case.host, case.launcher[1], b'changed loader')
+        with self.assertRaisesRegex(RuntimeError, 'legacy APM'):
+            self.prepare(case, '/etc/pir-apm', {'observers.json': b'new'})
+        self.assertIsNone(self.fleet.read(case.host, path))
+
+    def test_unprepared_first_install_is_refused_before_touching_a_legacy_unit(self):
+        case = self.bootstrap_case()
+        old = self.fleet.probe_unit(case.host, case.unit)
+        with self.assertRaisesRegex(RuntimeError, 'prepare-adoption'):
+            monitoring_certs.install(
+                self.fleet, self.fleet.hold_lock(case.host, descriptors.LOCK_PATH), case.host,
+                {'observers.json': b'new'}, state_dir=case.root / 'files', directory='/etc/pir-apm',
+                unit=case.unit, ready_timeout=0, sleep=lambda _: None)
+        self.assertEqual(self.fleet.probe_unit(case.host, case.unit), old)
+        self.assertIsNone(self.fleet.read(case.host, monitoring_roles.APM_OBSERVERS))
+
+    def test_preparation_cli_and_failed_fresh_collection_restore_the_legacy_health_contract(self):
+        case = self.bootstrap_case()
+        spec = importlib.util.spec_from_file_location('prepare_monitoring_cli', ROOT / 'tools/scripts/wallet-pir-monitoring.py')
+        cli = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cli)
+        source = case.root / 'source.json'
+        source.write_text(json.dumps({'hosts': {case.host: {}}, 'services': {
+            'apm-sidecar': {'roles': {'observer': [{'host': case.host, 'install': True,
+                                                  'settings': {'host_id': case.host, 'address': '10.0.0.1'}}]}}}}))
+        credential_source = case.root / 'credentials'
+        credential_source.mkdir()
+        for name in monitoring_certs.COLLECTOR_FILES:
+            (credential_source / name).write_bytes(b'nonsecret fixture')
+        with mock.patch.object(cli, '_executor', side_effect=lambda _: (
+                self.fleet, self.fleet.hold_lock(case.host, descriptors.LOCK_PATH))), \
+                mock.patch.object(cli, 'default_state_dir', return_value=case.root / 'files'), \
+                contextlib.redirect_stdout(io.StringIO()) as output:
+            cli.main(['install-observers', '--inventory', str(source), '--host', case.host,
+                      '--mode', 'shadow', '--prepare-adoption'])
+            cli.main(['install-credentials', '--inventory', str(source), '--host', case.host,
+                      '--role', 'collector', '--source', str(credential_source), '--prepare-adoption'])
+            self.assertTrue(all(json.loads(line)['prepared'] for line in output.getvalue().splitlines()))
+            # Failed authentication or missing observations must fail forward adoption,
+            # while restoration checks the previous legacy endpoint instead.
+            original = self.fleet.http_get
+            self.fleet.http_get = lambda host, url: ((503, 'no authenticated collection')
+                                                   if url == monitoring_certs.COLLECTOR_READY else original(host, url))
+            with self.assertRaises(DeployError):
+                case.deploy(b'new collector without observations', retire_historical=True, allow_drift=True)
+            self.assertEqual(self.fleet.probe_unit(case.host, case.unit)['exe_sha256'], sha256(b'legacy release'))
+            self.assertEqual(monitoring_certs.transaction.Journal.load(case.root / 'state', 'apm').status, 'rolled-back')
+            cli.main(['rollback', '--inventory', str(source), '--host', case.host, '--role', 'observers'])
+            # Credential recovery remains possible even after the prepared inventory is gone.
+            cli.main(['rollback', '--inventory', str(source), '--host', case.host, '--role', 'collector'])
+        self.assertIsNone(self.fleet.read(case.host, monitoring_roles.APM_OBSERVERS))
+        self.assertIsNone(self.fleet.read(case.host, monitoring_certs.COLLECTOR_CREDENTIALS + '/collector.key'))
+
+    def assert_preparation_refuses_observer_configuration(self, environment_file):
+        case = self.bootstrap_case()
+        if environment_file:
+            self.fleet.put(case.host, '/etc/default/pir-apm', b'PIR_APM_OBSERVERS=/etc/pir-apm/observers.json\n')
+        else:
+            path = self.fleet.probe_unit(case.host, case.unit)['fragment_path']
+            text = self.fleet.read(case.host, path).replace(
+                '[Service]', '[Service]\nEnvironment=PIR_APM_OBSERVERS=/etc/pir-apm/observers.json')
+            self.fleet.put(case.host, path, text.encode())
+            self.fleet.systemctl(case.host, 'daemon-reload')
+        with self.assertRaisesRegex(RuntimeError, 'already references'):
+            self.prepare(case, '/etc/pir-apm', {'observers.json': b'new'})
+        self.assertIsNone(self.fleet.read(case.host, monitoring_roles.APM_OBSERVERS))
+
+    def test_preparation_rejects_observer_configuration_in_the_unit(self):
+        self.assert_preparation_refuses_observer_configuration(False)
+
+    def test_preparation_rejects_observer_configuration_in_an_environment_file(self):
+        self.assert_preparation_refuses_observer_configuration(True)
 
     def test_adoption_needs_explicit_acceptance_and_rolls_back_to_the_legacy_unit(self):
         for name in CASES:

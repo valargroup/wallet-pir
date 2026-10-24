@@ -97,6 +97,9 @@ class Role:
     # the transaction, their settings now rendered by the role.
     adopt_launcher: tuple = ()
     adopt_drop_ins: bool = False
+    # The pinned legacy unit's health contract, saved only for its restoration.
+    # Forward deployment still requires this role's current readiness contract.
+    adopt_health: str = None
 
     def render(self, settings, release, unit=None):
         """The product adapter's `RenderedRole` for one instance.
@@ -259,12 +262,16 @@ def load_descriptors(path, _parents=()):
                 mode == 'role' and spec.get('adoptable_drop_ins'))),
                     '%s.%s: adopt_drop_ins is boolean, true only for a rendered role naming adoptable_drop_ins'
                     % (name, role_name))
+            adopt_health = spec.get('adopt_health')
+            require(adopt_health is None or (adopt_launcher and isinstance(adopt_health, str)
+                                            and adopt_health.startswith(('http://', 'https://'))),
+                    'adopt_health requires a URL and a pinned legacy launcher')
             roles[role_name] = Role(role_name, spec['unit'], mode, spec['health'], template, ready,
                                     spec.get('ready_url'), int(spec.get('ready_timeout', 180)),
                                     tuple(spec.get('adoptable_drop_ins', ())), owns_unit or mode == 'role',
                                     tuple(duties), renderer, optional, shared_lifecycle, guard, binary, adopt_paths,
                                     tuple((p['path'], p['sha256']) for p in launcher),
-                                    tuple((p['path'], p['sha256']) for p in adopt_launcher), adopt_drop_ins)
+                                    tuple((p['path'], p['sha256']) for p in adopt_launcher), adopt_drop_ins, adopt_health)
         order = tuple(raw.get('order', ()))
         require(order and sorted(order) == sorted(roles), '%s: order must list every role once' % name)
         require(PLAIN_PATH.match(raw.get('root', '')), '%s: root must be a plain absolute path' % name)
@@ -405,7 +412,8 @@ def targets(service, inventory):
             require((host, unit) not in seen, '%s: %s appears twice on %s' % (service.name, unit, host))
             seen.add((host, unit))
             values = {**spec.get('vars', {}), **entry.get('vars', {})}
-            missing = (placeholders(role.health) | placeholders(role.ready_url)) - set(values)
+            missing = (placeholders(role.health) | placeholders(role.ready_url)
+                       | placeholders(role.adopt_health)) - set(values)
             require(not missing, '%s.%s@%s: inventory vars missing %s' % (service.name, role_name, host, sorted(missing)))
             expected = entry.get('health_equals', {})
             require(isinstance(expected, dict) and all(
