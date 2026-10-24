@@ -1,4 +1,5 @@
 //! Autonomous workers load published rows; they never prepare public hints.
+use super::evaluation::{Evaluate, Intermediate};
 use crate::enhance::synchronization::{Client, Config as SourceConfig, Error, Lease, Safety};
 use crate::synchronization::SyncTask;
 use axum::{
@@ -8,7 +9,6 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use enhance_query_server::worker::{Evaluate, Intermediate};
 use enhance_shared::{
     ipir::{RowPlaintextIter, ShardRuntime},
     matvec::MatvecConfig,

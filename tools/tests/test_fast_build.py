@@ -347,7 +347,7 @@ class FastBuildTests(unittest.TestCase):
         return values('-p'), values('--bin'), values('--test'), features
 
     def test_enhance_subset_compiles_the_warm_dev_dependency_closure(self):
-        builds = self._cargo_tests(['enhance-query-server'])
+        builds = self._cargo_tests(['enhance-shared'])
         self.assertEqual(len(builds), 2)
         stable, hint = builds
         stable_packages, bins, stable_tests, stable_features = self._command_parts(stable)
@@ -390,7 +390,7 @@ class FastBuildTests(unittest.TestCase):
         self.assertEqual(transparent[0], stable)
         # A status-only diff and a reader diff must name the same roots and
         # features. Dropping the reader on the smaller diff rebuilds the closure.
-        status = self._cargo_tests(['status-query-server'])
+        status = self._cargo_tests(['status-publisher'])
         reader = self._cargo_tests(['zakura-server-chain', 'pir-node-rpc', 'pir-pipeline'])
         self.assertEqual(len(status), 1)
         self.assertEqual(status, reader)
@@ -434,7 +434,7 @@ class FastBuildTests(unittest.TestCase):
         _packages, _bins, tests, features = self._command_parts(status_builds[0])
         self.assertNotIn('pir-publisher/status-tests', features)
         self.assertNotIn('ci_hint', tests)
-        builds = self._cargo_tests(['enhance-query-server', 'transparent-publisher'])
+        builds = self._cargo_tests(['enhance-shared', 'transparent-publisher'])
         self.assertEqual(self._command_parts(builds[0])[3], [
             'pir-query-server/transparent-history',
             'zakura-server-chain/enhance',
@@ -453,7 +453,7 @@ class FastBuildTests(unittest.TestCase):
     def test_a_shared_diff_leaves_host_product_features_off(self):
         # Dependents of a shared crate are selected, but the diff itself is not a product.
         builds = self._cargo_tests(
-            ['enhance-query-server', 'pir-publisher', 'pir-e2e-tests', 'transparent-publisher'],
+            ['enhance-shared', 'pir-publisher', 'pir-e2e-tests', 'transparent-publisher'],
             products=frozenset())
         features, tests = [], []
         for build in builds:

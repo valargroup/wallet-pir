@@ -33,10 +33,10 @@ class CudaSelectionTests(unittest.TestCase):
 
     def test_unrelated_products_docs_helpers_and_ci_do_not_select_cuda(self):
         paths = ['docs/enhance/cuda_workers.md', 'src/pir-query-server/src/transparent/mod.rs',
-                 'src/enhance/enhance-query-server/src/router.rs',
+                 'src/pir-query-server/src/enhance/shutdown.rs',
                  'src/status/status-shared/src/generation.rs',
-                 'src/status/status-query-server/src/distributed.rs',
-                 'src/status/status-query-server/tests/status_wallet.rs',
+                 'src/pir-query-server/src/status/peers.rs',
+                 'src/status/status-shared/tests/status_wallet.rs',
                  'tools/ci/fast.py', 'tools/tests/test_iteration.py',
                  '.github/workflows/deploy-transparent.yml']
         self.assertEqual(self.select(paths), {'cuda': False, 'reasons': []})
@@ -69,7 +69,7 @@ checksum = "first"
         self.assertTrue(self.select(['Cargo.toml'], before, after)['cuda'])
 
     def test_ambiguous_missing_or_deleted_inputs_require_cuda(self):
-        for path in ['Cargo.lock', 'src/enhance/enhance-query-server/Cargo.toml']:
+        for path in ['Cargo.lock', 'src/enhance/enhance-shared/Cargo.toml']:
             self.assertTrue(self.select([path])['cuda'])
         lock = {'package': [{'name': 'simplepir-kernel', 'version': '1', 'dependencies': ['helper']},
                             {'name': 'helper', 'version': '1'}, {'name': 'helper', 'version': '2'}]}
@@ -135,7 +135,7 @@ checksum = "first"
             (root / 'server').mkdir()
             manifest = root / 'server/Cargo.toml'
             manifest.write_text('''[package]
-name = "enhance-query-server"
+name = "enhance-shared"
 version = "0.1.0"
 [features]
 default = []

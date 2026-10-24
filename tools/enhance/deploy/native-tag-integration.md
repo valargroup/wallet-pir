@@ -74,8 +74,8 @@ cargo check --locked -p enhance-publisher -p enhance-pir-load-test \
 QUALIFY_PUBLICATIONS=1 QUALIFY_QUERY_LANES=2 QUALIFY_QUERIES_PER_LANE=3 \
   cargo test --locked --profile release-fast -p pir-e2e-tests --features enhance-tests,native-reinspiring \
   --test packing_http
-cargo test --locked -p status-query-server --features native-reinspiring --test status_wallet
-cargo test --locked -p enhance-query-server --features native-reinspiring --lib native
+cargo test --locked -p status-shared --features native-reinspiring,client --test status_wallet
+cargo test --locked -p enhance-shared --features native-reinspiring --lib native
 cargo test --locked --profile release-fast -p pir-e2e-tests --features enhance-tests --test packing_http
 ```
 

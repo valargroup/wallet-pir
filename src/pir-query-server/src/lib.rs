@@ -1,6 +1,6 @@
 //! Unified query-server host. It owns product roles, listeners, admission,
-//! synchronization and supervision; product libraries supply typed material,
-//! evaluation and peer-message primitives.
+//! synchronization, supervision and the private messages those roles exchange.
+//! Product libraries supply typed material and prepared evaluation.
 pub mod config;
 #[cfg(feature = "enhance")]
 pub mod enhance;

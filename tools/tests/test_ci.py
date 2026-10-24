@@ -427,7 +427,7 @@ class BoundaryTests(unittest.TestCase):
 
     def test_serving_libraries_refuse_ingestion_applications_and_other_products(self):
         def package(*dependencies):
-            return [{'name': 'enhance-query-server', 'manifest': 'src/enhance/enhance-query-server/Cargo.toml',
+            return [{'name': 'enhance-shared', 'manifest': 'src/enhance/enhance-shared/Cargo.toml',
                      'dependencies': list(dependencies)}]
         library = 'https://github.com/zakura-core/wallet-libraries.git'
         allowed = [{**self.edge('pir-control'), 'path': 'src/shared/pir-control/'},
@@ -464,23 +464,23 @@ class BoundaryTests(unittest.TestCase):
 
     def test_status_query_library_leaves_the_lifecycle_to_the_host(self):
         for name, path in [('pir-pipeline', 'src/shared/pir-pipeline/')]:
-            packages = [{'name': 'status-query-server',
-                         'manifest': 'src/status/status-query-server/Cargo.toml',
+            packages = [{'name': 'status-shared',
+                         'manifest': 'src/status/status-shared/Cargo.toml',
                          'dependencies': [{**self.edge(name), 'path': path}]}]
             self.assertNotEqual(boundary.violations(packages, []), [], name)
         packages = [{'name': 'pir-query-server', 'manifest': 'src/pir-query-server/Cargo.toml',
                      'dependencies': [{**self.edge('pir-pipeline'), 'path': 'src/shared/pir-pipeline/'}]}]
         self.assertEqual(boundary.violations(packages, []), [])
 
-    def test_status_query_server_refuses_publisher_and_chain_dependencies(self):
+    def test_status_shared_refuses_publisher_and_chain_dependencies(self):
         for name, location in [
             ('status-publisher', {'path': 'src/status/status-publisher/'}),
             ('zakura-server-chain', {'git': 'https://github.com/zakura-core/wallet-libraries.git'}),
         ]:
             for kind in ['dependencies', 'dev-dependencies', 'build-dependencies',
                          'target.cfg(unix).dependencies']:
-                packages = [{'name': 'status-query-server',
-                             'manifest': 'src/status/status-query-server/Cargo.toml',
+                packages = [{'name': 'status-shared',
+                             'manifest': 'src/status/status-shared/Cargo.toml',
                              'dependencies': [{**self.edge(name), **location, 'kind': kind}]}]
                 problems = boundary.violations(packages, [])
                 self.assertTrue(any('serving library' in problem for problem in problems),
@@ -494,7 +494,7 @@ class BoundaryTests(unittest.TestCase):
                     'manifest_path': str(boundary.ROOT / folder / 'Cargo.toml')}
         metadata = {
             'packages': [
-                local('serving', 'status-query-server', 'src/status/status-query-server'),
+                local('serving', 'status-shared', 'src/status/status-shared'),
                 local('enhance', 'pir-serving', 'src/shared/pir-serving'),
                 local('control', 'pir-control', 'src/shared/pir-control'),
                 {'id': 'mid', 'name': 'helper', 'source': 'registry'},
@@ -517,17 +517,17 @@ class BoundaryTests(unittest.TestCase):
                                            *metadata['resolve']['nodes'][1:], node('lifecycle', [])]}}
         # The lifecycle utility belongs to the host, never a serving library.
         self.assertEqual(boundary.resolved_violations(lifecycle),
-                         ['status-query-server: serving library resolves pir-pipeline'])
+                         ['status-shared: serving library resolves pir-pipeline'])
         lifecycle['resolve']['nodes'][-1] = node('lifecycle', [('chain', None)])
-        self.assertTrue(any('status-query-server: serving library resolves zakura-server-chain' == problem
+        self.assertTrue(any('status-shared: serving library resolves zakura-server-chain' == problem
                             for problem in boundary.resolved_violations(lifecycle)))
         # Status serving may not reach Enhance serving, another product's package.
         enhance = {**metadata, 'packages': [*metadata['packages'],
-                   local('product', 'enhance-query-server', 'src/enhance/enhance-query-server')],
+                   local('product', 'enhance-shared', 'src/enhance/enhance-shared')],
                    'resolve': {'nodes': [node('serving', [('product', None)]),
                                          *metadata['resolve']['nodes'][1:], node('product', [])]}}
         self.assertEqual(boundary.resolved_violations(enhance),
-                         ['status-query-server: serving library resolves enhance-query-server'])
+                         ['status-shared: serving library resolves enhance-shared'])
         metadata['resolve']['nodes'][3] = node('mid', [('chain', None)])
         metadata['resolve']['nodes'][0] = node('serving', [('enhance', None), ('app', 'dev'),
                                                            ('other', None)])
@@ -535,19 +535,19 @@ class BoundaryTests(unittest.TestCase):
         self.assertEqual(boundary.resolved_violations(metadata), [
             'pir-serving: resolves zakura-server-chain',
             'pir-serving: serving library resolves zakura-server-chain',
-            'status-query-server: resolves zakura-server-chain',
-            'status-query-server: serving library resolves enhance-publisher',
-            'status-query-server: serving library resolves receiver-store',
-            'status-query-server: serving library resolves zakura-server-chain',
+            'status-shared: resolves zakura-server-chain',
+            'status-shared: serving library resolves enhance-publisher',
+            'status-shared: serving library resolves receiver-store',
+            'status-shared: serving library resolves zakura-server-chain',
         ])
 
-    def test_enhance_query_server_graph_resolves_no_publisher_or_tools(self):
+    def test_enhance_shared_graph_resolves_no_publisher_or_tools(self):
         def node(id, deps):
             return {'id': id, 'deps': [{'pkg': d, 'dep_kinds': [{'kind': k}]} for d, k in deps]}
         def local(id, name, folder):
             return {'id': id, 'name': name, 'source': None,
                     'manifest_path': str(boundary.ROOT / folder / 'Cargo.toml')}
-        packages = [local('query', 'enhance-query-server', 'src/enhance/enhance-query-server'),
+        packages = [local('query', 'enhance-shared', 'src/enhance/enhance-shared'),
                     {'id': 'mid', 'name': 'helper', 'source': 'registry'},
                     local('publisher', 'enhance-publisher', 'src/enhance/enhance-publisher'),
                     local('tool', 'enhance-pir-client', 'tools/enhance/client')]
@@ -563,7 +563,7 @@ class BoundaryTests(unittest.TestCase):
                     metadata = {'packages': packages, 'resolve': {'nodes': [
                         *nodes, node('publisher', []), node('tool', [])]}}
                     name = next(p['name'] for p in packages if p['id'] == target)
-                    self.assertIn(f'enhance-query-server: serving library resolves {name}',
+                    self.assertIn(f'enhance-shared: serving library resolves {name}',
                                   boundary.resolved_violations(metadata), (target, kind))
 
     def test_sync_manager_refuses_products_engines_and_replaced_utilities(self):
@@ -604,7 +604,7 @@ class BoundaryTests(unittest.TestCase):
                      'target.cfg(unix).dependencies', 'target.cfg(unix).dev-dependencies',
                      'target.cfg(unix).build-dependencies']:
             for name in ['receiver-store', 'zakura-server-chain', 'zakura-pir-protocol',
-                         'sha2', 'rand', 'enhance-query-server', 'pir-runtime']:
+                         'sha2', 'rand', 'enhance-shared', 'pir-runtime']:
                 package = {'name': 'pir-pipeline', 'manifest': 'src/shared/pir-pipeline/Cargo.toml',
                            'dependencies': [self.edge(name, kind)]}
                 self.assertTrue(boundary.violations([package], []), (kind, name))

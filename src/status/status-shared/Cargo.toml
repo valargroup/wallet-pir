@@ -37,3 +37,7 @@ zakura-pir-client = { version = "=0.0.1-rc2", default-features = false, features
 [dev-dependencies]
 # Independent wallet client exercises the wire contract.
 zakura-pir-client = { version = "=0.0.1-rc2", default-features = false, features = ["native", "status"] }
+
+[[test]]
+name = "status_wallet"
+required-features = ["native-reinspiring", "client"]

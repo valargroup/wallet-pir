@@ -1,4 +1,5 @@
 //! Consumer-owned packing activation and exact worker handover.
+use super::evaluation::Evaluate;
 use crate::enhance::{
     peers::WorkerEndpoint,
     synchronization::{Authority, Client, Config as SourceConfig, Error, Guard, Lease, Safety},
@@ -12,7 +13,6 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use enhance_query_server::worker::Evaluate;
 use enhance_shared::{
     protocol::{self, digest, Manifest, QueryBinding},
     publication::{Object, METADATA_LIMIT},

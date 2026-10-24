@@ -35,8 +35,8 @@ jobs:
       - name: Lint CUDA integration
         run: >-
           python3 tools/ci/stage.py lint:cuda -- cargo clippy --locked --all-targets
-          -p pir-cuda -p enhance-shared -p enhance-query-server -p pir-query-server
-          --features pir-cuda/cuda,enhance-shared/cuda,enhance-query-server/cuda,enhance-query-server/native-reinspiring,pir-query-server/enhance,pir-query-server/native-reinspiring,pir-query-server/cuda
+          -p pir-cuda -p enhance-shared -p pir-query-server
+          --features pir-cuda/cuda,enhance-shared/cuda,enhance-shared/native-reinspiring,pir-query-server/enhance,pir-query-server/native-reinspiring,pir-query-server/cuda
           -- -D warnings
       - name: Status uses CPU even when Enhance enables upstream CUDA
         run: >-
