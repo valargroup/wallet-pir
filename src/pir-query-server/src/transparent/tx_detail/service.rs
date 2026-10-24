@@ -339,7 +339,7 @@ impl DisplayState {
     }
 
     pub fn set(&self) -> &DisplaySet {
-        &self.inner.serving.set()
+        self.inner.serving.set()
     }
 
     pub fn runtime(&self) -> &Arc<DisplayRuntime> {
