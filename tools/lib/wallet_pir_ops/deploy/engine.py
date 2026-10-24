@@ -484,6 +484,9 @@ class Deployer:
             'verify': {'health': target.url(target.role.health), 'ready': target.role.ready,
                        'ready_url': target.url(target.role.ready_url), 'timeout': target.role.ready_timeout,
                        'health_equals': target.health_equals},
+            'previous_verify': ({'health': target.url(target.role.adopt_health), 'ready': None,
+                                 'ready_url': None, 'timeout': target.role.ready_timeout, 'health_equals': {}}
+                                if plan.launcher is not None and target.role.adopt_health else None),
             'directories': list(plan.directories), 'check': list(plan.check),
             'launcher': [{'path': path, 'sha256': digest}
                          for path, digest in (target.role.launcher if plan.launcher is None else plan.launcher)],
@@ -798,7 +801,7 @@ class Deployer:
                                   exe_sha256=expected, invocation_id=state['invocation_id'])
         if not verify:
             return
-        self.wait_verified(record, expected)
+        self.wait_verified(dict(record, verify=record.get('previous_verify') or record['verify']), expected)
         self.lock.verify()
         journal.set_phase(index, 'restored')
         self.out('%s: restored %s' % (record['key'], expected))

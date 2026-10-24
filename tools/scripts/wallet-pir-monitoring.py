@@ -150,11 +150,14 @@ def credential_files(role, source):
 def install_credentials(args):
     """Install from a private directory, e.g. a tmpfs filled from Infisical."""
     files = credential_files(args.role, args.source)
+    if args.prepare_adoption and args.role not in ('collector', 'apm-slack'):
+        raise SystemExit('--prepare-adoption is only for collector and apm-slack credentials')
     executor, lock = _executor(args)
     directory, unit, ready = _role(args, executor)
     changed = monitoring_certs.install(executor, lock, args.host, files, state_dir=default_state_dir(),
-                                       directory=directory, unit=unit, ready=ready)
-    print(json.dumps({'host': args.host, 'changed': changed}))
+                                       directory=directory, unit=unit, ready=ready,
+                                       prepare_adoption=args.prepare_adoption)
+    print(json.dumps({'host': args.host, 'changed': changed, 'prepared': args.prepare_adoption}))
 
 
 def install_observers(args):
@@ -166,8 +169,8 @@ def install_observers(args):
         state_dir=default_state_dir(), directory=os.path.dirname(OBSERVERS), unit=monitoring_certs.COLLECTOR_UNIT,
         ready=monitoring_certs.collector_ready(document['revision']),
         restore_ready=monitoring_certs.collector_restore_ready,
-        identity={'revision': document['revision']}, mode=0o644)
-    print(json.dumps({'host': args.host, 'changed': changed}))
+        identity={'revision': document['revision']}, mode=0o644, prepare_adoption=args.prepare_adoption)
+    print(json.dumps({'host': args.host, 'changed': changed, 'prepared': args.prepare_adoption}))
 
 
 def recover(args):
@@ -177,7 +180,12 @@ def recover(args):
         directory, unit = os.path.dirname(OBSERVERS), monitoring_certs.COLLECTOR_UNIT
         ready = None
     else:
-        directory, unit, ready = _role(args, executor)
+        directory, unit, _, _ = CREDENTIAL_ROLES[args.role]
+        journal = monitoring_certs.transaction.Journal.load(default_state_dir(), monitoring_certs._service(args.host, directory))
+        if journal and journal.hosts[0].get('preparation_identity'):
+            ready = None  # Prepared files restore against the retained legacy-unit identity.
+        else:
+            directory, unit, ready = _role(args, executor)
     operation = monitoring_certs.reconcile if args.command == 'reconcile' else monitoring_certs.rollback
     print(json.dumps({'host': args.host, 'unit': unit,
                       'transaction': operation(executor, lock, args.host, state_dir=default_state_dir(),
@@ -199,6 +207,8 @@ def main(argv=None):
         child.add_argument('--roster-snapshot', help='JSON capacity mapping: unit, role_units, data_path and size')
         if name == 'install-observers':
             child.add_argument('--host', required=True, help='the inventory host running pir-apm')
+            child.add_argument('--prepare-adoption', action='store_true',
+                               help='stage new, unused prerequisites for an installed legacy APM without restarting it')
         child.set_defaults(handler=handler)
     child = sub.add_parser('coverage')
     child.add_argument('--inventory', required=True)
@@ -232,6 +242,8 @@ def main(argv=None):
     child.add_argument('--host', required=True)
     child.add_argument('--role', choices=sorted(CREDENTIAL_ROLES), default='sidecar')
     child.add_argument('--source', required=True, help='private directory holding the credential files')
+    child.add_argument('--prepare-adoption', action='store_true',
+                       help='stage collector/apm-slack prerequisites without restarting the pinned legacy APM')
     child.set_defaults(handler=install_credentials)
     for name in ('reconcile', 'rollback'):
         child = sub.add_parser(name, help='%s the latest monitoring file transaction on a host' % name)

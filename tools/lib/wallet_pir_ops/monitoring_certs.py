@@ -27,7 +27,7 @@ import subprocess
 import tempfile
 import time
 
-from .deploy import remote, transaction
+from .deploy import remote, transaction, units
 
 
 WARN_DAYS = 30
@@ -163,9 +163,44 @@ def _service(host, directory):
     return 'monitoring-files-%s-%s' % (host, directory.strip('/').replace('/', '-'))
 
 
+def _legacy_launcher():
+    from .deploy import descriptors
+    from .paths import ROOT
+    return descriptors.load_descriptors(ROOT / 'tools/enhance/deploy/apm.toml')['apm'].roles['server'].launcher
+
+
+def _legacy_identity(executor, host, state):
+    """Attest a healthy pinned legacy APM that cannot consume the new files.
+
+    Only a digest of its unit, environment files and executable is retained.
+    A new unit, changed loader, or observer-aware configuration is refused.
+    """
+    if state['load_state'] != 'loaded' or state['active_state'] != 'active' or state['need_daemon_reload']:
+        raise RuntimeError('prepare-adoption requires a healthy, unchanged legacy APM')
+    config = units.effective([state['fragment_text'], *(entry['text'] for entry in state['drop_ins'])])
+    launcher = _legacy_launcher()
+    if (not state.get('exe_sha256') or not units.uses_launcher(units.exec_start(config), tuple(p for p, _ in launcher))
+            or any(executor.sha256(host, path) != digest for path, digest in launcher)):
+        raise RuntimeError('prepare-adoption requires the pinned legacy APM launcher')
+    environment_files = {}
+    for reference in config.get('Service', {}).get('EnvironmentFile', []):
+        value = executor.read(host, reference.lstrip('-'))
+        if value is None and not reference.startswith('-'):
+            raise RuntimeError('legacy APM environment file is missing')
+        environment_files[reference] = value
+    encoded = json.dumps([config, environment_files], sort_keys=True)
+    if any(value in encoded for value in ('PIR_APM_OBSERVERS', 'PIR_APM_SLACK_WEBHOOK_FILE',
+                                          COLLECTOR_CREDENTIALS, '/etc/pir-apm/observers.json',
+                                          '/etc/pir-apm/alerting')):
+        raise RuntimeError('legacy APM already references the candidate monitoring files')
+    if executor.http_get(host, 'http://127.0.0.1:3002/healthz')[0] != 200:
+        raise RuntimeError('legacy APM is not healthy')
+    return _digest((state['exe_sha256'] + encoded).encode())
+
+
 def install(executor, lock, host, files, *, state_dir, directory=SIDECAR_CREDENTIALS, unit=SIDECAR_UNIT,
             ready=None, restore_ready=None, identity=None, ready_timeout=60, mode=0o600,
-            sleep=time.sleep, clock=time.monotonic):
+            sleep=time.sleep, clock=time.monotonic, prepare_adoption=False):
     """Replace files on one host and restart its unit as one journaled transaction.
 
     `lock` is the production lock as a context manager (`remote.production_lock`)
@@ -179,6 +214,10 @@ def install(executor, lock, host, files, *, state_dir, directory=SIDECAR_CREDENT
     unreachable), the journal stays open and the next `install` or `reconcile`
     on the host completes the restoration before anything else.
     Where `unit` is not installed, the files are staged without a restart.
+    `prepare_adoption` similarly prepares only new, unused APM prerequisites
+    for a pinned legacy unit. It does not activate or verify the new collector:
+    the rendered-role deployment must prove fresh collection before committing.
+    Prepared-file rollback requires restoring that legacy unit first.
     Returns the names whose contents changed.
     """
     ready = ready or sidecar_ready()
@@ -191,16 +230,34 @@ def install(executor, lock, host, files, *, state_dir, directory=SIDECAR_CREDENT
         changed = sorted(name for name, data in files.items()
                          if previous[name] is None or previous[name].encode() != data)
         previous_unit = executor.probe_unit(host, unit)
+        prior = transaction.Journal.load(state_dir, _service(host, directory))
+        preparation = None
+        if prepare_adoption:
+            if unit != COLLECTOR_UNIT or directory not in ('/etc/pir-apm', COLLECTOR_CREDENTIALS, '/etc/pir-apm/alerting'):
+                raise RuntimeError('prepare-adoption is only for the central APM prerequisites')
+            preparation = _legacy_identity(executor, host, previous_unit)
+            if prior and prior.status == 'committed' and prior.hosts[0].get('preparation_identity') == preparation:
+                if not changed:
+                    return []
+            if any(value is not None for value in previous.values()):
+                raise RuntimeError('prepare-adoption cannot replace existing files; roll back the preparation first')
+        elif unit == COLLECTOR_UNIT and previous_unit['load_state'] == 'loaded':
+            try:
+                _legacy_identity(executor, host, previous_unit)
+            except (RuntimeError, units.UnitError):
+                pass
+            else:
+                raise RuntimeError('legacy APM first needs --prepare-adoption, then rendered-role deployment')
         if not changed:
             if previous_unit['load_state'] != 'not-found' and not _wait(
                     executor, host, ready, ready_timeout, sleep, clock):
                 raise RuntimeError('%s has unchanged files but is not ready' % unit)
             return []
-        prior = transaction.Journal.load(state_dir, _service(host, directory))
-        staged = previous_unit['load_state'] == 'not-found'
+        staged = previous_unit['load_state'] == 'not-found' or prepare_adoption
         record = {'key': '%s:%s' % (host, directory), 'host': host, 'unit': unit, 'directory': directory,
                   'mode': mode, 'phase': 'pending', 'restart_issued': False, 'staged': staged,
                   'previous_active': previous_unit['active_state'], 'identity': identity,
+                  'preparation_identity': preparation,
                   'changes': [{'name': name, 'previous_sha256': _digest(None if previous[name] is None
                                                                         else previous[name].encode()),
                                'new_sha256': _digest(files[name])} for name in changed]}
@@ -230,6 +287,9 @@ def install(executor, lock, host, files, *, state_dir, directory=SIDECAR_CREDENT
                 journal.set_phase(0, 'verifying')
                 if not _wait(executor, host, ready, ready_timeout, sleep, clock):
                     raise RuntimeError('%s did not become ready' % unit)
+            elif prepare_adoption:
+                if _legacy_identity(executor, host, executor.probe_unit(host, unit)) != preparation:
+                    raise RuntimeError('legacy APM changed while preparing its prerequisites')
             elif executor.probe_unit(host, unit)['load_state'] != 'not-found':
                 raise RuntimeError('%s was installed while its files were staged' % unit)
             held.verify()
@@ -259,6 +319,10 @@ def _restore(executor, held, journal, ready, restore_ready, ready_timeout, sleep
     held.verify()
     journal.set_status('restoring')
     journal.set_phase(0, 'restoring')
+    if record.get('preparation_identity'):
+        if _legacy_identity(executor, host, executor.probe_unit(host, record['unit'])) != record['preparation_identity']:
+            journal.set_phase(0, 'restore-failed')
+            raise RuntimeError('restore the previous legacy APM unit before rolling back its prepared files')
     for change in record['changes']:
         held.verify()
         target = '%s/%s' % (directory, change['name'])
@@ -272,6 +336,10 @@ def _restore(executor, held, journal, ready, restore_ready, ready_timeout, sleep
         if executor.sha256(host, target) != change['previous_sha256']:
             executor.write(host, target, saved.encode(), record['mode'])
     held.verify()
+    if record.get('preparation_identity'):
+        journal.set_phase(0, 'restored')
+        journal.set_status('rolled-back')
+        return
     if record.get('staged') and executor.probe_unit(host, record['unit'])['load_state'] == 'not-found':
         # Staged for a unit that still does not exist: nothing ran with the files.
         journal.set_phase(0, 'restored')

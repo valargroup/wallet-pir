@@ -745,8 +745,9 @@ under the production lock (plan, preflight, deploy, status, rollback) from the
 renderers are `wallet_pir_ops.monitoring` and `wallet_pir_ops.monitoring_roles`;
 an environment value that looks like a Slack webhook, or names a rendered
 setting, is refused. `apm.central` is ready when `/observers/ready` answers,
-that is after the collector identity and observer inventory loaded and every
-enrolled sidecar was polled once; `monitor.checker` when `/monitor-status`
+that is while every expected, non-retired host has a fresh authenticated
+observation; alerts still count as valid collection. Readiness expires when
+collection stops advancing. `monitor.checker` is ready when `/monitor-status`
 reports an evaluation. Changing role settings changes the unit, so its deploy
 needs `--allow-unit-drift` after reviewing the drift.
 
@@ -811,10 +812,15 @@ done in production:
 
 1. Store the monitoring CA, host certificates, collector certificate and both
    Slack webhooks in Infisical.
-2. Install `/etc/pir-apm/observers.json`, the collector and `apm-slack`
-   credentials on the coordinator, and the `monitor` credentials on the
-   monitor host (the legacy APM restarts and must stay ready).
-3. Deploy `apm-sidecar` to every host, after its `sidecar` credentials.
+2. Deploy `apm-sidecar` to every host, after its `sidecar` credentials.
+3. Prepare `/etc/pir-apm/observers.json` with `install-observers
+   --prepare-adoption`, then install the collector and `apm-slack` credentials
+   with `install-credentials --prepare-adoption` on the coordinator. Install
+   the `monitor` credentials on the monitor host normally. Preparation only
+   writes new files: it checks the pinned, healthy legacy APM launcher and
+   verifies that its unit and environment files do not reference the new
+   paths. The legacy APM keeps running; preparation does not claim collection
+   or activate the new credentials. Existing files cannot be replaced this way.
 4. Replace the coordinator's `apm.server` entry with `apm.central` and deploy
    `apm` with `--retire-historical --allow-unit-drift`: the transaction moves
    every `pir-apm.service.d/*.conf` drop-in into its rollback directory and
@@ -830,7 +836,10 @@ done in production:
 
 The legacy rollback path stays: rolling back the adopting `apm` transaction
 restores the legacy unit, its drop-ins and launcher, and restarts the legacy
-release. Legacy deploys then resume with the inventory entry back under
+release. Its saved restoration contract checks the legacy `/healthz`, not the
+new collector's readiness endpoint. After the unit is restored, `rollback` or
+`reconcile` may remove its prepared prerequisite files; doing this while the
+new unit still uses them is refused. Legacy deploys then resume with the inventory entry back under
 `server` and `--descriptors tools/enhance/deploy/apm.toml`, which shares the
 `apm` journal sequence. The monitor's adoption rolls back the same way.
 

@@ -42,9 +42,10 @@ template = "pir-apm.service.in"
 renderer = "wallet_pir_ops.monitoring_roles:apm"
 # Settings: environment, slack?, chain_cookie?, writable?, limits?.
 health = "http://127.0.0.1:3002/healthz"
-# Answers only after the collector identity and observer inventory loaded and
-# every enrolled sidecar was polled once.
+# Requires fresh authenticated collection from every expected host and expires
+# when collection stops progressing.
 ready_url = "http://127.0.0.1:3002/observers/ready"
+adopt_health = "http://127.0.0.1:3002/healthz"
 ready_timeout = 240
 adopt_drop_ins = true
 adoptable_drop_ins = ["*.conf"]
