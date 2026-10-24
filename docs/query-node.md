@@ -44,6 +44,13 @@ HTTPS transfer progress and shutdown completion on the candidate.
 
 ## Provisioning from a branch
 
+The installed production Terraform root must already use the reviewed service
+module layout. Follow its separate [activation procedure](../tools/infra/digitalocean/fleet/activation.md)
+first if it still uses the old flat layout. Establish a fresh no-change baseline;
+the query-node plan guard refuses state-address moves and imports, even when
+their provider actions are no-ops. Do not combine that fleet migration with
+creating this node.
+
 The fleet root includes `../query-serving` only when
 `query_serving_enabled=true`. Defaults provision nothing. The module reuses the
 existing Wallet PIR project, VPC, region and public SSH key IDs. Ensure Roman's
@@ -69,7 +76,11 @@ wallet paths to loopback; management and private APIs stay inaccessible publicly
    It prints only the digest and allowed creation addresses. Saved plans contain
    sensitive inputs and must remain private. The guard rejects drift, partial
    plans, replacements and changes to existing resources.
-4. Apply that exact saved plan through the locked wrapper. If the guard refuses,
+4. Before applying, make the reviewed module source and enabled candidate setting
+   part of the maintained canonical Terraform root through its locked activation
+   path. An ephemeral staging tree alone is insufficient: the next autoscaling
+   or regular fleet operation must use source that knows about the new node.
+   Apply that exact saved plan through the locked wrapper. If the guard refuses,
    stop; do not target resources to evade a fleet change. Retain Terraform output
    privately and enable the candidate in the maintained production variables so
    the next regular fleet plan does not propose removing it.
