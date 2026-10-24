@@ -7,6 +7,7 @@ its recovery journal on the coordinator before every effect. Reconciliation roll
 an interrupted cutover back; it never guesses whether to continue activation.
 """
 import hashlib
+import copy
 import json
 from pathlib import Path
 import re
@@ -160,6 +161,43 @@ def stable_unit(state):
             'need_daemon_reload', 'fragment_path', 'fragment_text', 'drop_ins', 'exe_sha256', 'unit_file_state')}
 
 
+def configuration_preserves_products(candidate, installed):
+    """Allow only the root chain conversion, retaining every other setting.
+
+    All four previous node sources must agree. The shared follower retains the
+    fastest configured interval, bounded by Status and History's previous
+    1000 ms cadence. The
+    transaction still saves the original bytes for rollback.
+    """
+    if candidate == installed:
+        return True
+    if 'chain' in installed or not isinstance(candidate.get('chain'), dict):
+        return False
+    converted = copy.deepcopy(installed)
+    sources = []
+    polls = [1000]
+    fields = [('enhance', 'zakura_rpc_url', 'zakura_cookie', 'poll_seconds', 1000),
+              ('status', 'rpc_url', 'cookie', None, 1),
+              ('transparent_history', 'rpc_url', 'rpc_cookie', None, 1),
+              ('transaction_details', 'rpc_url', 'rpc_cookie', 'poll_ms', 1)]
+    for product, url_key, cookie_key, poll_key, scale in fields:
+        settings = converted.get(product, {}).get('settings', {})
+        url, cookie = settings.pop(url_key, None), settings.pop(cookie_key, None)
+        if not isinstance(url, str) or not url or not isinstance(cookie, str) or not cookie:
+            return False
+        sources.append((url, cookie))
+        if poll_key in settings:
+            poll = settings.pop(poll_key)
+            if type(poll) is not int or poll <= 0:
+                return False
+            polls.append(poll * scale)
+    if len(set(sources)) != 1:
+        return False
+    url, cookie = sources[0]
+    converted['chain'] = {'rpc_url': url, 'rpc_cookie': cookie, 'poll_ms': min(polls, default=1000)}
+    return candidate == converted
+
+
 class Cutover:
     def __init__(self, request, inventory, executor, state_dir, *, clock=time.monotonic, sleep=time.sleep):
         self.request, self.inventory, self.ex = request, inventory, executor
@@ -223,7 +261,7 @@ class Cutover:
         override = status_https_override(unified, unified['exe_sha256'])
         config = self.request['configuration']
         installed = json.loads(self.read(CONFIG))
-        require(config == installed,
+        require(configuration_preserves_products(config, installed),
                 'publisher updates must preserve every product setting')
         executables = {}
         for name, state in states.items():
