@@ -226,6 +226,17 @@ class Certificates(unittest.TestCase):
     def tearDown(self):
         self.dir.cleanup()
 
+    def test_issue_commands_accept_relative_ca_and_output_paths(self):
+        for command, output in (('issue-host', 'host-relative'), ('issue-collector', 'collector-relative')):
+            argv = [sys.executable, str(ROOT / 'tools/scripts/wallet-pir-monitoring.py'), command,
+                    '--ca', 'ca', '--output', output]
+            if command == 'issue-host':
+                argv += ['--host', 'recent-09']
+            subprocess.run(argv, cwd=self.root, capture_output=True, text=True, check=True)
+            stem = 'server' if command == 'issue-host' else 'collector'
+            self.assertTrue((self.root / output / (stem + '.pem')).is_file())
+            self.assertEqual((self.root / output / (stem + '.key')).stat().st_mode & 0o777, 0o600)
+
     def test_expiry_thresholds_and_fresh_keys_on_rotation(self):
         now = datetime.datetime.now(datetime.timezone.utc)
         for days, expected in ((90, 'healthy'), (20, 'warning'), (3, 'critical')):

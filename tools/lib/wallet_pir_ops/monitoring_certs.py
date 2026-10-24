@@ -69,11 +69,12 @@ def issue_leaf(ca_directory, output, name, usage, *, days=LEAF_DAYS):
     """Sign `<output>/<stem>.pem` and `.key` for DNS `name`; returns the cert path.
 
     The stem is `server` or `collector`. Each issuance makes a fresh key, so a
-    rotation never reuses one.
+    rotation never reuses one. CA and output paths resolve from the caller's
+    directory before OpenSSL runs in its private scratch directory.
     """
     if usage not in USAGES:
         raise ValueError('usage is server or client')
-    ca_directory, output = Path(ca_directory), Path(output)
+    ca_directory, output = Path(ca_directory).resolve(), Path(output).resolve()
     output.mkdir(mode=0o700, parents=True, exist_ok=True)
     stem = 'server' if usage == 'server' else 'collector'
     with tempfile.TemporaryDirectory() as scratch:
