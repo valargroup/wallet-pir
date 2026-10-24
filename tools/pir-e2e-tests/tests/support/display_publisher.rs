@@ -20,8 +20,7 @@ use transparent_shared::tx_detail::{
 };
 use zakura_pir_publisher::transparent as transparent_shard;
 
-#[path = "../../../../src/pir-query-server/tests/support/status_tls.rs"]
-mod tls;
+use super::tls;
 
 pub struct DisplayPublisher {
     pub origin: String,
