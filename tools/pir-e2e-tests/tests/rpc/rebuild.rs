@@ -229,6 +229,9 @@ async fn rebuild_resumes_and_coordinator_adopts_only_fee_repairs() {
     let later = funding(3, &[200_000]);
     let hashes = {
         let mut c = chain.lock().unwrap();
+        // The root chain follower reads network identity before publishing tips.
+        let (raw, hash) = block(&[], u8::MAX);
+        c.blocks.insert(0, (raw, hash, 0));
         c.add_transaction(&earlier);
         let spend_same = Mixed::new(vec![spend(&same, 0)], &[], -400_000).build();
         let change = Mixed::new(
