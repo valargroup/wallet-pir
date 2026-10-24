@@ -47,7 +47,7 @@ The committed `backend.tf` enables versioned remote state. Spaces did not
 enforce conditional lock writes in the rollout test; native S3 locking is
 disabled. All writes must execute under the coordinator's
 `/run/lock/wallet-pir-production.lock`, shared with deployment and autoscaling.
-Use `ops/scripts/wallet-pir-terraform.sh` on the coordinator for manual operations;
+Use `tools/scripts/wallet-pir-terraform.sh` on the coordinator for manual operations;
 do not run a direct apply from another host.
 The service extraction needs no backend migration. Initialize a fresh staging
 copy without changing the backend configuration. Follow the
@@ -109,3 +109,12 @@ The public origin and dashboard are served at
 Wallet PIR hosts intentionally have no DigitalOcean cloud firewalls. SSH access
 does not depend on operator or VPN source addresses. Bind private services to
 loopback or the VPC interface; public routing remains owned by Caddy.
+
+## Unified query candidate
+
+`query_serving_enabled` defaults to false. Enabling it adds the separate
+`wallet-pir-query-01` node, its 1 TiB volume and candidate DNS through the
+`../query-serving` module. Existing routing stays unchanged. Follow the
+[query node procedure](../../../../docs/query-node.md) for the approved 192 GiB
+capacity, saved-plan guard, branch staging and application deployment.
+Receiver support is still required before all-products acceptance.

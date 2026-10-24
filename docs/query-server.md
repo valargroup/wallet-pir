@@ -283,3 +283,9 @@ other products continue; a confirmed publisher incompatibility, or a panicked
 product task, stops the whole host. The products' private health routes
 (Enhance `GET /internal/health`, Status `GET /control/health`, Transparent
 `GET /v1/ready`) are unchanged for deployment checks.
+
+## Dedicated query infrastructure
+
+See [the unified query node](query-node.md) for the opt-in 192 GiB candidate,
+HTTPS publication synchronization, volume and RAM limits, locked Terraform and
+transactional deployment. Receiver integration remains an all-products gate.
