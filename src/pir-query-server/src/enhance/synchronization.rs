@@ -72,9 +72,9 @@ pub const RECOVERY_POLL: Duration = Duration::from_secs(1);
 pub const STEADY_POLL: Duration = Duration::from_secs(5);
 /// A deferral longer than this returns to [`STEADY_POLL`], bounding publisher
 /// load without adding failure backoff. A reorganization defers consumers from
-/// withdrawal until the replacement is prepared: 38-89 s for a one-shard
-/// fixture on 3 CPUs (`reorg_recovery`), so a one-minute window could expire
-/// just before the replacement appeared. Five minutes matches APM's critical
+/// withdrawal until the replacement is prepared: 24-49 s for a one-shard
+/// fixture on 6 CPUs and up to 89 s on 3 (`reorg_recovery`), so a one-minute
+/// window could expire just before the replacement appeared. Five minutes matches APM's critical
 /// publication-blocked duration, past which the withdrawal is an incident.
 /// A withdrawn `current` needs no node lookup, so polling stays cheap.
 pub const RECOVERY_WINDOW: Duration = Duration::from_secs(300);
