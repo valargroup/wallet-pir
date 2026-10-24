@@ -827,9 +827,7 @@ async fn query_inner(
     let map_digest = worker.map_digest;
     let metrics = worker.metrics;
     // A retired snapshot is refused before the body is queued if a segment
-    // has already gone; whether it is retired is read again when the handles
-    // are taken, after admission, so a request admitted after its snapshot
-    // retires never builds.
+    // has already gone; the check is repeated when the handles are taken.
     let prepared = state
         .inner
         .serving
@@ -846,87 +844,118 @@ async fn query_inner(
 }
 
 #[cfg(test)]
-mod tests {
+mod retirement_tests {
     use super::*;
-    use tower::ServiceExt as _;
-    use transparent_shared::tx_detail::synth::{self, ShardSpec};
-    use transparent_shared::tx_detail::DisplayRole;
-    use zakura_pir_protocol::transparent::shard::display::{DisplaySealParams, TXID_2K8};
+    use std::{
+        convert::Infallible,
+        future::Future,
+        pin::Pin,
+        task::{Context, Poll},
+    };
+    use transparent_shared::tx_detail::{kind, synth, DisplayRole};
+    use zakura_pir_protocol::transparent::shard::display::{
+        DisplaySealParams, DisplayTable, TXID_2K8,
+    };
 
-    fn spec(shard_id: u64, start: u64, end: u64, sealed: bool) -> ShardSpec {
-        ShardSpec {
-            shard_id,
-            start_height: start,
-            end_height: end,
-            sealed,
-            revision: 0,
-            supersedes: String::new(),
-            parent_manifest_digest: String::new(),
-            n_buckets: 1,
-            archive_target: 1,
-            geometry: &TXID_2K8,
+    struct Upload(tokio::sync::mpsc::Receiver<axum::body::Bytes>);
+
+    impl http_body::Body for Upload {
+        type Data = axum::body::Bytes;
+        type Error = Infallible;
+
+        fn poll_frame(
+            mut self: Pin<&mut Self>,
+            context: &mut Context<'_>,
+        ) -> Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
+            self.0
+                .poll_recv(context)
+                .map(|frame| frame.map(|bytes| Ok(http_body::Frame::data(bytes))))
         }
     }
 
-    /// A query admitted after its snapshot retired is answered only from
-    /// resident runtimes: it resolved while the snapshot served, waited for a
-    /// slot through the activation, and is then the same stale refusal a
-    /// wallet on the old map always gets, with nothing built for it.
+    /// Upload can outlive activation of a successor. Once the old snapshot
+    /// is retired it must refuse a cold runtime, rather than build it using
+    /// the next candidate's cache and build capacity.
     #[tokio::test]
-    async fn retirement_during_the_admission_wait_never_builds() {
+    async fn retirement_during_upload_refuses_a_cold_runtime() {
         let root = tempfile::tempdir().unwrap();
-        let records = synth::records(40, 7);
-        let archive =
-            synth::write_shard(root.path(), &spec(0, 10, 19, true), &records[..20]).unwrap();
-        let mut recent = spec(1, 20, 29, false);
-        recent.parent_manifest_digest = archive.digest.clone();
-        let recent = synth::write_shard(root.path(), &recent, &records[20..]).unwrap();
-        let params = DisplaySealParams {
-            n_archive: 1,
-            n_recent: 1,
-            archive_target: 1,
-            recent_window: 1,
-            reorg_margin: 1,
-        };
-        let (dir, _) =
-            synth::write_candidate(root.path(), &params, &[archive, recent.clone()], "c0").unwrap();
-        let runtime = DisplayRuntime::new(
-            ServiceConfig {
-                query_slots: 1,
-                ..ServiceConfig::default()
+        let shard = synth::write_shard(
+            root.path(),
+            &synth::ShardSpec {
+                shard_id: 0,
+                start_height: 10,
+                end_height: 19,
+                sealed: false,
+                revision: 0,
+                supersedes: String::new(),
+                parent_manifest_digest: String::new(),
+                n_buckets: 1,
+                archive_target: 1,
+                geometry: &TXID_2K8,
             },
-            None,
-        );
-        let set = DisplaySet::open(&dir, 3, DisplayRole::Combined).unwrap();
-        let state = DisplayState::build(set, &runtime).unwrap();
-        let len = state
+            &synth::records(4, 7),
+        )
+        .unwrap();
+        let (dir, _) = synth::write_candidate(
+            root.path(),
+            &DisplaySealParams {
+                n_archive: 1,
+                n_recent: 1,
+                archive_target: 1,
+                recent_window: 1,
+                reorg_margin: 1,
+            },
+            std::slice::from_ref(&shard),
+            "upload",
+        )
+        .unwrap();
+        let runtime = DisplayRuntime::new(ServiceConfig::default(), None);
+        let state = DisplayState::build(
+            DisplaySet::open(&dir, 3, DisplayRole::Combined).unwrap(),
+            &runtime,
+        )
+        .unwrap();
+        let table = DisplayTable::parse("directory-0").unwrap();
+        let params = state
             .inner
             .serving
-            .params(TXID_2K8.name, Table::TxDirectory)
-            .unwrap()
-            .query_bytes();
-
-        let held = runtime.admission.hold_slot().await;
-        let uri = format!(
-            "{}/txid/recent/shards/1/revisions/{}/query/directory-0",
-            transparent_shared::http::CANONICAL_PREFIX,
-            recent.digest
-        );
-        let request = Request::post(uri)
-            .header(axum::http::header::CONTENT_LENGTH, len)
-            .body(axum::body::Body::from(vec![0u8; len]))
+            .params(TXID_2K8.name, kind(table))
             .unwrap();
-        let answer = tokio::spawn(router(state.clone()).oneshot(request));
-        while Metrics::get(&runtime.metrics.query_queue_depth) == 0 {
-            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let mut body = vec![0; params.query_bytes()];
+        body[..8].copy_from_slice(&display::query_binding(&shard.digest, table));
+        let (send, receive) = tokio::sync::mpsc::channel(1);
+        send.send(axum::body::Bytes::copy_from_slice(&body[..8]))
+            .await
+            .unwrap();
+        let request = Request::post("/")
+            .header("content-length", body.len())
+            .body(axum::body::Body::new(Upload(receive)))
+            .unwrap();
+        let response = query_inner(
+            State(state.clone()),
+            false,
+            AxumPath((0, shard.digest, table.label())),
+            request,
+        );
+        tokio::pin!(response);
+        // Poll through resolution and into the unfinished upload, without
+        // depending on a timer or another task's scheduling.
+        std::future::poll_fn(|context| {
+            assert!(response.as_mut().poll(context).is_pending());
+            Poll::Ready(())
+        })
+        .await;
         state.retire();
-        drop(held);
-
-        let response = answer.await.unwrap().unwrap();
-        assert_eq!(response.status(), StatusCode::CONFLICT);
         assert_eq!(runtime.cache.entries(), 0);
-        assert_eq!(Metrics::get(&runtime.metrics.stale_revisions), 1);
+        send.send(axum::body::Bytes::copy_from_slice(&body[8..]))
+            .await
+            .unwrap();
+        drop(send);
+        assert_eq!(response.await.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            runtime.cache.entries(),
+            0,
+            "a retired upload built a runtime"
+        );
     }
 }

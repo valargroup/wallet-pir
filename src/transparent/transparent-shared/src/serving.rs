@@ -58,11 +58,23 @@ pub struct Artifact {
     pub key: RuntimeKey,
 }
 
-/// The flag a superseded snapshot sets, and the refusal its requests get
-/// for a runtime no longer resident.
-struct Retirement {
-    retired: Arc<AtomicBool>,
-    stale: ServingError,
+/// Where a prepared request's runtimes come from.
+enum Acquisition {
+    /// Found, restored or built under the cache budget; `shipped` is tried
+    /// before a restore or build.
+    Build {
+        segments: Vec<(RuntimeKey, SegmentSource)>,
+        shipped: Option<ShippedRuntimes>,
+        /// A snapshot can retire while its request uploads or waits for
+        /// admission. Recheck this shared state when acquiring a runtime.
+        retirement: Option<(Arc<AtomicBool>, ServingError)>,
+    },
+    /// Only runtimes already resident, for a superseded snapshot that must
+    /// not take build capacity; a missing one makes the request stale.
+    Resident {
+        keys: Vec<RuntimeKey>,
+        stale: ServingError,
+    },
 }
 
 /// What a runtime acquisition needs beside the address.
@@ -70,62 +82,62 @@ struct Source {
     cache: Arc<RuntimeCache>,
     shared: Arc<SharedParams>,
     metrics: Arc<Metrics>,
-    /// Found, restored or built under the cache budget; `shipped` is tried
-    /// before a restore or build.
-    segments: Vec<(RuntimeKey, SegmentSource)>,
-    shipped: Option<ShippedRuntimes>,
-    /// Once set, only runtimes already resident are used: a superseded
-    /// snapshot must not take build capacity, and a missing runtime makes
-    /// the request stale. Read when each runtime is taken, after admission,
-    /// so a request that waited through a retirement never builds.
-    retirement: Option<Retirement>,
+    acquisition: Acquisition,
 }
 
 impl Source {
     fn segments(&self) -> usize {
-        self.segments.len()
-    }
-
-    fn retired(&self) -> Option<&ServingError> {
-        self.retirement
-            .as_ref()
-            .filter(|r| r.retired.load(Ordering::Acquire))
-            .map(|r| &r.stale)
-    }
-
-    fn stale(&self, stale: &ServingError) -> ServingError {
-        Metrics::incr(&self.metrics.stale_revisions);
-        stale.clone()
+        match &self.acquisition {
+            Acquisition::Build { segments, .. } => segments.len(),
+            Acquisition::Resident { keys, .. } => keys.len(),
+        }
     }
 
     async fn runtime(&self, segment: usize) -> Result<(RuntimeHandle, Produced), ServingError> {
-        let (key, source) = self
-            .segments
-            .get(segment)
-            .cloned()
-            .ok_or_else(|| ServingError::Invalid(format!("no segment {segment}")))?;
-        if let Some(stale) = self.retired() {
-            return self
-                .cache
-                .cached(&key)
+        match &self.acquisition {
+            Acquisition::Build {
+                segments,
+                shipped,
+                retirement,
+            } => {
+                let (key, source) = segments
+                    .get(segment)
+                    .cloned()
+                    .ok_or_else(|| ServingError::Invalid(format!("no segment {segment}")))?;
+                if let Some((retired, stale)) = retirement {
+                    if retired.load(Ordering::Acquire) {
+                        return self
+                            .cache
+                            .cached(&key)
+                            .map(|handle| (handle, Produced::Joined))
+                            .ok_or_else(|| {
+                                Metrics::incr(&self.metrics.stale_revisions);
+                                stale.clone()
+                            });
+                    }
+                }
+                Ok(self
+                    .cache
+                    .get_from(key, self.shared.clone(), source, shipped.clone())
+                    .await?)
+            }
+            Acquisition::Resident { keys, stale } => keys
+                .get(segment)
+                .and_then(|key| self.cache.cached(key))
                 .map(|handle| (handle, Produced::Joined))
-                .ok_or_else(|| self.stale(stale));
+                .ok_or_else(|| {
+                    Metrics::incr(&self.metrics.stale_revisions);
+                    stale.clone()
+                }),
         }
-        Ok(self
-            .cache
-            .get_from(key, self.shared.clone(), source, self.shipped.clone())
-            .await?)
     }
 
-    /// Whether every segment is resident if the snapshot is already retired.
+    /// Whether every segment is resident, for a resident-only source.
     fn check_resident(&self) -> Result<(), ServingError> {
-        if let Some(stale) = self.retired() {
-            if !self
-                .segments
-                .iter()
-                .all(|(key, _)| self.cache.cached(key).is_some())
-            {
-                return Err(self.stale(stale));
+        if let Acquisition::Resident { keys, stale } = &self.acquisition {
+            if !keys.iter().all(|key| self.cache.cached(key).is_some()) {
+                Metrics::incr(&self.metrics.stale_revisions);
+                return Err(stale.clone());
             }
         }
         Ok(())
@@ -178,7 +190,7 @@ impl PreparedQuery {
     }
 
     /// One segment's runtime, found, restored or built under the cache
-    /// budget, or only if resident once the snapshot is superseded.
+    /// budget, or only if resident for a superseded snapshot.
     pub async fn runtime(&self, segment: usize) -> Result<RuntimeHandle, ServingError> {
         self.source.runtime(segment).await.map(|(handle, _)| handle)
     }
@@ -237,8 +249,7 @@ pub struct Setup {
 }
 
 impl PreparedSetup {
-    /// Takes the segment's runtime, building it if needed unless the
-    /// snapshot is superseded by then.
+    /// Takes the segment's runtime, building it if needed.
     pub async fn load(self) -> Result<Setup, ServingError> {
         let (runtime, _) = self.source.runtime(0).await?;
         Ok(Setup {
@@ -269,9 +280,20 @@ impl Prepared {
             cache: self.cache,
             shared: self.shared,
             metrics: self.metrics,
-            segments,
-            shipped,
-            retirement: None,
+            acquisition: Acquisition::Build {
+                segments,
+                shipped,
+                retirement: None,
+            },
+        })
+    }
+
+    pub(crate) fn resident(self, keys: Vec<RuntimeKey>, stale: ServingError) -> SourceParts {
+        SourceParts(Source {
+            cache: self.cache,
+            shared: self.shared,
+            metrics: self.metrics,
+            acquisition: Acquisition::Resident { keys, stale },
         })
     }
 }
@@ -280,16 +302,17 @@ impl Prepared {
 pub(crate) struct SourceParts(Source);
 
 impl SourceParts {
-    /// Uses only resident runtimes once `retired` is set, refusing with
-    /// `stale` for one that is gone.
-    pub(crate) fn retired_by(mut self, retired: Arc<AtomicBool>, stale: ServingError) -> Self {
-        self.0.retirement = Some(Retirement { retired, stale });
+    /// A source prepared while active must still become resident-only if
+    /// its snapshot retires before the request acquires runtime handles.
+    pub(crate) fn until_retired(mut self, retired: Arc<AtomicBool>, stale: ServingError) -> Self {
+        if let Acquisition::Build { retirement, .. } = &mut self.0.acquisition {
+            *retirement = Some((retired, stale));
+        }
         self
     }
 
-    /// A query; a source already retired is refused now if a segment is
-    /// gone, so the body is not queued for a request that cannot be answered.
-    /// The check is repeated when each runtime is taken.
+    /// A query; a resident-only source is refused now if a segment is gone,
+    /// so the body is not queued for a request that cannot be answered.
     pub(crate) fn query(
         self,
         query_rows: usize,

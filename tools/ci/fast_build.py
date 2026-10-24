@@ -6,7 +6,7 @@ a fixed feature set, so a warm cache still hits. Transparent publication tests
 live in those libraries. Enabling history and detail on the host binary links
 the publisher again and is not part of this command. The query host's own
 Transparent `ci_smoke` names `pir-query-server/transparent-history`, which the
-publisher library's dev-dependency already unifies in. Moving the hosts onto
+host's own dev-dependency already unifies in. Moving the hosts onto
 another command changes that unification and rebuilds the closure. The
 in-process Enhance hint graph stays on a second command and never joins the
 first. Chain-node fixtures stay in qualification: they pull the wallet client

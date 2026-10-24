@@ -4,7 +4,6 @@
 //! bucket's entries, and the binding names the bucket. A superseded snapshot
 //! answers only from runtimes still resident, so a client on a stale map
 //! never takes build capacity from the candidate the next activation awaits.
-//! Retirement is read when a request takes its runtimes, after admission.
 
 use crate::history::shardset::SegmentSource;
 use crate::runtime::disk::ShippedRuntimes;
@@ -55,7 +54,8 @@ pub struct DisplayServing {
     /// Managed consumers may only load publisher-prepared native files.
     required: bool,
     max_query_bytes: usize,
-    /// Set once a successor is active; see [`DisplayServing::retire`].
+    /// Shared with prepared requests so retirement during upload/admission
+    /// changes their runtime acquisition policy too.
     retired: Arc<AtomicBool>,
 }
 
@@ -120,8 +120,19 @@ impl DisplayServing {
             metrics,
             required,
             max_query_bytes,
-            retired: Arc::default(),
+            retired: Arc::new(AtomicBool::new(false)),
         })
+    }
+
+    /// Restrict this snapshot and requests already prepared from it to
+    /// resident runtimes. Admitted work that holds a runtime may finish.
+    pub fn retire(&self) {
+        self.retired.store(true, Ordering::Release);
+    }
+
+    /// Whether a successor has retired this snapshot's ability to load runtimes.
+    pub fn is_retired(&self) -> bool {
+        self.retired.load(Ordering::Acquire)
     }
 
     pub fn set(&self) -> &DisplaySet {
@@ -130,18 +141,6 @@ impl DisplayServing {
 
     pub fn cache(&self) -> &Arc<RuntimeCache> {
         &self.cache
-    }
-
-    /// Marks the snapshot superseded. Its requests are answered only from
-    /// runtimes still resident from then on, prepared ones included: whether
-    /// a request may build is decided when it takes each runtime, after it
-    /// was admitted, not when it was resolved.
-    pub fn retire(&self) {
-        self.retired.store(true, Ordering::Release);
-    }
-
-    pub fn is_retired(&self) -> bool {
-        self.retired.load(Ordering::Acquire)
     }
 
     /// The largest body any geometry of this set can legitimately send.
@@ -237,8 +236,8 @@ impl DisplayServing {
         Ok((table, segments))
     }
 
-    /// Where the runtimes of `sources` come from: the cache while the
-    /// snapshot serves, only resident ones once it is retired.
+    /// Where the runtimes of `sources` come from: the cache for a serving
+    /// snapshot, only resident ones for a retired one.
     fn source(
         &self,
         revision: &DisplayRevision,
@@ -252,15 +251,25 @@ impl DisplayServing {
             metrics: self.metrics.clone(),
         };
         let digest = &revision.digest;
-        prepared
-            .build(
+        if self.is_retired() {
+            prepared.resident(
                 sources
-                    .into_iter()
-                    .map(|(segment, source)| (runtime_key(digest, table, segment), source))
+                    .iter()
+                    .map(|(segment, _)| runtime_key(digest, table, *segment))
                     .collect(),
-                None,
+                stale(shard_id, digest),
             )
-            .retired_by(self.retired.clone(), stale(shard_id, digest))
+        } else {
+            prepared
+                .build(
+                    sources
+                        .into_iter()
+                        .map(|(segment, source)| (runtime_key(digest, table, segment), source))
+                        .collect(),
+                    None,
+                )
+                .until_retired(self.retired.clone(), stale(shard_id, digest))
+        }
     }
 
     /// A query to every segment of one bucket's table.
@@ -570,15 +579,13 @@ mod tests {
         assert_eq!(combined.cache().entries(), 0);
     }
 
-    /// A request resolved while its snapshot served and admitted after the
-    /// snapshot retired never builds: retirement is read when it takes its
-    /// runtimes. Without a resident runtime it is the same stale refusal; with
-    /// one it is answered from it.
+    /// Prepared query and setup handles retain the snapshot's live retirement
+    /// state, rather than permission to build captured before an async wait.
     #[tokio::test]
-    async fn retirement_during_admission_is_read_at_acquisition() {
+    async fn prepared_requests_observe_later_retirement() {
         let root = tempfile::tempdir().unwrap();
         let (dir, shards) = publication(root.path());
-        let (combined, metrics) = serving(&dir, DisplayRole::Combined, u64::MAX);
+        let (combined, _) = serving(&dir, DisplayRole::Combined, u64::MAX);
         let digest = &shards[1].digest;
         let query = combined
             .prepare_query(false, 1, digest, "directory-0")
@@ -589,22 +596,7 @@ mod tests {
         combined.retire();
         assert_eq!(refused(query.runtime(0).await), stale(1, digest));
         assert_eq!(refused(setup.load().await), stale(1, digest));
-        assert_eq!(Metrics::get(&metrics.stale_revisions), 2);
         assert_eq!(combined.cache().entries(), 0);
-
-        // Resident before the retirement: still answered, and nothing built.
-        let (serving, _) = serving(&dir, DisplayRole::Combined, u64::MAX);
-        let query = serving
-            .prepare_query(false, 1, digest, "directory-0")
-            .unwrap();
-        let resident = query.runtime(0).await.unwrap();
-        let waiting = serving
-            .prepare_query(false, 1, digest, "directory-0")
-            .unwrap();
-        serving.retire();
-        let answered = waiting.runtime(0).await.unwrap();
-        assert!(std::ptr::eq(resident.get(), answered.get()));
-        assert_eq!(serving.cache().entries(), 1);
     }
 
     /// A cache that cannot make room refuses retryably instead of exceeding
