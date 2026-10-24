@@ -127,20 +127,26 @@ impl EnhancePublisher {
         if work.owner != self.incarnation {
             return Err("publication work belongs to another publisher".into());
         }
+        if self.published(&work) {
+            return Ok(());
+        }
+        let result = executor.publish(self.publication(work)?).await;
+        self.publication_finished(result.as_ref().err().cloned());
+        result
+    }
+    /// The work's committed prefix is already the eligible publication under
+    /// the same withdrawal fence. Follower passes reserve a fresh generation
+    /// for the same prefix while it prepares; publishing that token again
+    /// would only advance consumers to an identical generation.
+    pub(crate) fn published(&self, work: &PublicationWork) -> bool {
         let current = self.distribution.durable_current();
-        if current.withdrawal_revision == work.withdrawal_revision
+        current.withdrawal_revision == work.withdrawal_revision
             && current.eligible
             && current.manifest.as_ref().is_some_and(|m| {
                 m.anchor_height == work.manifest.anchor_height
                     && m.anchor_block_hash == work.manifest.anchor_block_hash
                     && m.coverage.records == work.manifest.coverage.records
             })
-        {
-            return Ok(());
-        }
-        let result = executor.publish(self.publication(work)?).await;
-        self.publication_finished(result.as_ref().err().cloned());
-        result
     }
     pub(crate) fn publication_finished(&self, error: Option<String>) {
         let mut state = self.state.lock().unwrap();
