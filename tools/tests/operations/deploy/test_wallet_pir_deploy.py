@@ -1114,11 +1114,14 @@ class UnitTests(unittest.TestCase):
         SERVICES = descriptors.load_descriptors(ROOT / 'tools/deploy/services.toml')
         inventory = descriptors.load_inventory(DEPLOY / 'deploy-inventory.example.json')
         for name, service in SERVICES.items():
+            if name not in inventory.services:
+                self.assertTrue(all(role.optional for role in service.roles.values()))
+                continue
             keys = [t.key for t in descriptors.targets(service, inventory)]
             self.assertEqual(len(keys), len(set(keys)))
         self.assertEqual(SERVICES['enhance'].order,
-                         ('worker', 'external-worker', 'packing-router', 'query-ingress'))
-        self.assertEqual(SERVICES['status'].order, ('worker', 'external-worker', 'router'))
+                         ('worker', 'external-worker', 'packing-router', 'query-ingress', 'combined'))
+        self.assertEqual(SERVICES['status'].order, ('worker', 'external-worker', 'router', 'combined'))
         self.assertEqual(SERVICES['receiver'].order, ('server', 'serve-publication'))
         publisher = SERVICES['publisher']
         self.assertEqual(publisher.binary, 'pir-publisher')
@@ -1129,7 +1132,7 @@ class UnitTests(unittest.TestCase):
                             for service in SERVICES.values() for role in service.roles.values()))
         enhance = SERVICES['enhance']
         self.assertEqual({name for name, role in enhance.roles.items() if role.binary == 'pir-query-server'},
-                         {'worker', 'external-worker', 'packing-router', 'query-ingress'})
+                         {'worker', 'external-worker', 'packing-router', 'query-ingress', 'combined'})
         self.assertNotIn('coordinator', enhance.roles)
         self.assertNotIn('controller', SERVICES['status'].roles)
         self.assertEqual(SERVICES['receiver'].artifact_kinds, ('receiver-pir',))

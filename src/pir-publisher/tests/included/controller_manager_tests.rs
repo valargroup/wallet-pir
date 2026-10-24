@@ -400,6 +400,32 @@ async fn manager(tls: &Tls, root: &Path) -> Manager {
     .await
     .unwrap()
 }
+
+// Staging explicitly refuses a pass while the source collector owns its lock.
+// Retry only that nonacceptance, never transport, authority or preparation errors.
+#[cfg(feature = "qualification-tests")]
+async fn poll_after_collection(
+    manager: &mut Manager,
+) -> pir_query_server::transparent::routing::manager::Progress {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
+    loop {
+        match manager.poll_once().await {
+            Ok(progress) => return progress,
+            Err(error)
+                if error
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|error| error.kind() == std::io::ErrorKind::WouldBlock) =>
+            {
+                assert!(
+                    tokio::time::Instant::now() < deadline,
+                    "source collection must release staging promptly: {error}"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+            }
+            Err(error) => panic!("publication synchronization failed: {error}"),
+        }
+    }
+}
 // In-process retirement can outlive the last manager or listener handle while
 // spawned work unwinds. A real process exit closes those ownership descriptors.
 // Bound that harness-only wait; never retry another startup failure.
@@ -540,14 +566,13 @@ async fn query_with_reply(origin: &str, set: &ShardSet) -> (Vec<u8>, Vec<u8>) {
         .unwrap();
     assert_eq!(shard.geometry, &transparent_shard::layout::DECOUPLED_2K_8K);
     let profile = query_profile();
-    let setup: serde_json::Value = get(
+    let setup = get(
         origin,
         &format!("/v2/shards/1/revisions/{}/setup/directory/0", shard.digest),
     )
-    .await
-    .json()
-    .await
-    .unwrap();
+    .await;
+    assert_eq!(setup.status(), StatusCode::OK, "setup for {}", shard.digest);
+    let setup: serde_json::Value = setup.json().await.unwrap();
     let params = base64::Engine::decode(
         &base64::engine::general_purpose::STANDARD,
         setup["public_params"].as_str().unwrap(),
@@ -673,7 +698,7 @@ async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
     let tls = tls(root.path(), owner.clone()).await;
     let state = root.path().join("provider");
     let mut follow = manager(&tls, &state).await;
-    let first = follow.poll_once().await.unwrap();
+    let first = poll_after_collection(&mut follow).await;
     assert!(first.downloaded_files > 0);
     let stages = first.stages.expect("a changed pass reports its stages");
     assert!(stages.transfer_seconds > 0.0 && stages.prewarm_seconds > 0.0);
@@ -693,7 +718,7 @@ async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
     assert_eq!(observed["archive_reachability"], serde_json::Value::Null);
     let original_answer = CheckedAnswer::new(&origin, &set).await;
     let count = artifact_requests(&tls);
-    let unchanged = follow.poll_once().await.unwrap();
+    let unchanged = poll_after_collection(&mut follow).await;
     assert!(unchanged.unchanged);
     assert!(unchanged.stages.is_none());
     assert_eq!(unchanged.downloaded_bytes, 0);
@@ -709,7 +734,7 @@ async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
     assert!(change["stages"]["activation_seconds"].as_f64().is_some());
     // Missing many revisions does not require a retained delta base.
     owner.0.distribution_revision.store(40, Ordering::Release);
-    let reused = follow.poll_once().await.unwrap();
+    let reused = poll_after_collection(&mut follow).await;
     assert_eq!(reused.revision, 40);
     assert_eq!(reused.downloaded_files, 0);
     assert_eq!(count, artifact_requests(&tls));
@@ -751,7 +776,7 @@ async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
     let (origin, task) = worker(live.clone()).await;
     original_answer.check(&origin).await;
     std::fs::write(&tls.control, "").unwrap();
-    let updated = follow.poll_once().await.unwrap();
+    let updated = poll_after_collection(&mut follow).await;
     assert!(updated.downloaded_files > 0);
     assert!(
         updated.downloaded_files < first.downloaded_files,
@@ -769,7 +794,7 @@ async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
     owner.0.distribution_revision.fetch_add(5, Ordering::AcqRel);
     owner.0.invalidated_from.store(4, Ordering::Release);
     *rpc.hash.write().unwrap() = Some("77".repeat(32));
-    follow.poll_once().await.unwrap();
+    poll_after_collection(&mut follow).await;
     next_answer.check(&origin).await;
     assert_eq!(
         get(
@@ -785,7 +810,7 @@ async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
     );
     // A later good same-revision answer cannot resurrect that retired view.
     *rpc.hash.write().unwrap() = Some(set.map.shards.last().unwrap().terminal_block_hash.clone());
-    assert!(follow.poll_once().await.unwrap().unchanged);
+    assert!(poll_after_collection(&mut follow).await.unchanged);
     assert_eq!(
         get(
             &origin,
@@ -815,7 +840,7 @@ async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
     std::fs::write(state.join("active.invalid.json"), b"[]").unwrap();
     let mut restarted = restart_manager(&tls, &state).await;
     assert!(restarted.live().is_none());
-    let restored = restarted.poll_once().await.unwrap();
+    let restored = poll_after_collection(&mut restarted).await;
     assert_eq!(restored.downloaded_files, 0);
     let status = restarted
         .live()
@@ -853,7 +878,11 @@ async fn manager_persists_invalidation_and_refuses_equal_revision_reenable_after
     owner.0.withdrawn.store(true, Ordering::Release);
     // An intent-write failure must still fence memory and the owner's own
     // durable record. Startup then reconciles the two records conservatively.
-    std::fs::create_dir(state.join("revocation-floor.tmp")).unwrap();
+    let records = std::fs::canonicalize(&state).unwrap();
+    let refused = pir_query_server::transparent::test_support::record_writer(
+        &records.join("revocation-floor.json"),
+        |_, _| Err(std::io::Error::other("record directory write refused")),
+    );
     assert!(follow.poll_once().await.is_err());
     assert_eq!(
         get(&origin, "/v2/shards/init").await.status(),
@@ -864,7 +893,7 @@ async fn manager_persists_invalidation_and_refuses_equal_revision_reenable_after
         serde_json::from_slice(&std::fs::read(state.join("revocation-floor.json")).unwrap())
             .unwrap();
     assert_eq!(intent["revision"], 0);
-    std::fs::remove_dir(state.join("revocation-floor.tmp")).unwrap();
+    drop(refused);
     task.stop().await;
     drop(live);
     drop(follow);
@@ -1015,15 +1044,29 @@ async fn manager_checks_inventory_and_required_files_on_unchanged_maps() {
     std::fs::write(&tls.control, "").unwrap();
     owner.0.distribution_revision.fetch_add(1, Ordering::AcqRel);
     follow.poll_once().await.unwrap();
-    // Rehash cached files, then charge the actual replacement transfer. A bad
-    // cache object plus bad download cannot borrow a resident runtime to pass.
+    // Check cached lengths, then charge the actual replacement transfer. A
+    // truncated download cannot borrow a resident runtime to pass.
     // Objects are read-only inodes shared with staged trees; replace the cache
     // entry rather than write through the active publication's runtime.
+    // Finish the initial checker first: replacing its pending primary path
+    // would instead exercise artifact withdrawal, which has separate coverage.
+    tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        loop {
+            let status = live.command(Command::Status).await.unwrap();
+            assert_eq!(status["artifact_validation"]["failed"], 0);
+            if status["artifact_validation"]["pending"] == 0 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        }
+    })
+    .await
+    .expect("active artifacts finish their initial validation");
     let object = state.join("objects").join(&runtime.sha256);
     assert!(std::fs::metadata(&object).unwrap().permissions().readonly());
     std::fs::remove_file(&object).unwrap();
     std::fs::write(&object, b"corrupt").unwrap();
-    std::fs::write(&tls.control, "corrupt").unwrap();
+    std::fs::write(&tls.control, "truncated").unwrap();
     owner.0.distribution_revision.fetch_add(1, Ordering::AcqRel);
     assert!(follow.poll_once().await.is_err());
     query(&origin, &set).await;
@@ -1583,6 +1626,10 @@ async fn manager_bounds_memory_while_retaining_admitted_upload() {
         4,
         "held oldest plus three recent"
     );
+    assert!(
+        held.exists(),
+        "the admitted request's tree survived collection"
+    );
     writer.write_all(&body).await.unwrap();
     drop(writer);
     let response = admitted.await.unwrap();
@@ -1604,8 +1651,8 @@ async fn manager_bounds_memory_while_retaining_admitted_upload() {
     );
     query(&origin, &set).await;
     assert!(state.join("objects").is_dir());
-    // Eleven activations leave the active tree, three retained predecessors,
-    // the tree the admitted request held and three unused trees on disk.
+    // After admission ends, collection retains the active tree, three
+    // predecessors and three unused trees. The old request no longer pins one.
     let trees: Vec<_> = std::fs::read_dir(&state)
         .unwrap()
         .filter_map(Result::ok)
@@ -1617,10 +1664,10 @@ async fn manager_bounds_memory_while_retaining_admitted_upload() {
                 .starts_with("staging-")
         })
         .collect();
-    assert_eq!(trees.len(), 8, "{trees:?}");
+    assert_eq!(trees.len(), 7, "{trees:?}");
     assert!(
-        trees.contains(&held),
-        "the admitted request's tree survived"
+        !held.exists(),
+        "the released request no longer pins its tree"
     );
     let active = live.command(Command::Status).await.unwrap()["active"]["directory"]
         .as_str()
@@ -1826,9 +1873,16 @@ async fn manager_double_intent_write_failure_retains_exact_negative_revision() {
     follow.poll_once().await.unwrap();
     let (origin, task) = worker(follow.live().unwrap()).await;
     let encrypted = query_and_upload(&origin, &set).await;
-    for name in ["revocation-floor.tmp", "revocation-fallback.tmp"] {
-        std::fs::create_dir(state.join(name)).unwrap();
-    }
+    let records = std::fs::canonicalize(&state).unwrap();
+    let refused: Vec<_> = ["revocation-floor.json", "revocation-fallback.json"]
+        .into_iter()
+        .map(|name| {
+            pir_query_server::transparent::test_support::record_writer(
+                &records.join(name),
+                |_, _| Err(std::io::Error::other("record directory write refused")),
+            )
+        })
+        .collect();
     owner.0.distribution_revision.store(100, Ordering::Release);
     std::fs::write(&tls.control, "pause-anchor").unwrap();
     let work = tokio::spawn(async move {
@@ -1862,9 +1916,7 @@ async fn manager_double_intent_write_failure_retains_exact_negative_revision() {
         get(&origin, "/v2/shards/init").await.status(),
         StatusCode::SERVICE_UNAVAILABLE
     );
-    for name in ["revocation-floor.tmp", "revocation-fallback.tmp"] {
-        std::fs::remove_dir(state.join(name)).unwrap();
-    }
+    drop(refused);
     *rpc.hash.write().unwrap() = Some(set.map.shards.last().unwrap().terminal_block_hash.clone());
     assert!(
         follow.poll_once().await.is_err(),
@@ -2015,11 +2067,13 @@ async fn http_consumers_answer_from_successive_stored_publications() {
             &owner,
             |geometry| {
                 let mut policy = DecoupledPolicy::for_geometry(geometry);
-                policy.scripts.target = 2;
+                if !cfg!(feature = "qualification-tests") {
+                    policy.scripts.target = 2;
+                }
                 policy
             },
-            None,
-            None,
+            cfg!(feature = "qualification-tests").then(|| config.archive_geometry.clone()),
+            cfg!(feature = "qualification-tests").then_some(config.recent_from),
         )
         .await
         .unwrap();

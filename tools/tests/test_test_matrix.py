@@ -115,6 +115,20 @@ class MatrixTests(unittest.TestCase):
             packages['pir-query-server'], matrix.package_features('pir-query-server', context, packages))
         self.assertEqual(host_features(baseline), host_features(contexts['reference']))
 
+    def test_artifact_withdrawal_cases_keep_the_shared_validator_idle(self):
+        package = self.plan[3]['pir-query-server']
+        for target in ('txid_sharded', 'revisions_and_cache'):
+            artifact = dict(package_id=package['id'], target=dict(name=target, kind=['test']),
+                            executable='/not-executed', features=['qualification-tests'])
+            def listing(command, **_):
+                self.assertIn('--test-threads=1', command)
+                return '' if '--ignored' in command else 'withdrawal: test\n'
+            with patch.object(matrix.subprocess, 'check_output', side_effect=listing):
+                _, programs, cases = matrix.test_programs([artifact], 'transparent',
+                                                         {package['name']: package}, {})
+            self.assertEqual(programs[0]['args'], ['--test-threads=1'])
+            self.assertEqual(cases[f'transparent:pir-query-server:{target}']['tests'], ['withdrawal'])
+
     def test_database_reader_binaries_remain_in_full_qualification(self):
         registry, contexts, targets, packages, _ = self.plan
         keys = registry['transparent-publisher']['targets']

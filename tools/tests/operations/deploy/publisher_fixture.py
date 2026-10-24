@@ -92,6 +92,9 @@ class Coordinator(FakeFleet):
         if '--check' in argv:
             configuration = json.loads(self.read(host, argv[argv.index('--config') + 1]))
             expected = {'management_listen', *publisher.PRODUCTS} if argv[0].endswith('/pir-publisher') else {'management_listen', 'enhance'}
+            if (not argv[0].endswith('/pir-publisher')
+                    and configuration.get('enhance', {}).get('settings', {}).get('role') in ('query-ingress', 'combined')):
+                expected.add('public_listen')
             if self.refuse_configuration or set(configuration) - {'chain'} != expected:
                 return 1, 'unknown product configuration'
         elif self.fail_probe and argv[0].startswith('/bin/check-'):

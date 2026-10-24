@@ -30,6 +30,10 @@ on:
         description: Build and check a unified publisher candidate from this exact ref, without deploying
         type: boolean
         default: false
+      query-candidate:
+        description: Also build and check the unified CPU query candidate from this exact ref, without deploying
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -206,6 +210,13 @@ jobs:
         run: |
           umask 022
           terraform fmt -check -recursive ..
+          terraform init -backend=false -input=false -lockfile=readonly
+          terraform validate -no-color
+          terraform test -no-color
+
+      - name: Validate the unified query node
+        working-directory: tools/infra/digitalocean/query-serving
+        run: |
           terraform init -backend=false -input=false -lockfile=readonly
           terraform validate -no-color
           terraform test -no-color
@@ -545,6 +556,40 @@ jobs:
         with:
           family: enhance
           cuda: 'true'
+
+  query-candidate:
+    name: Unified query candidate
+    if: github.event_name == 'workflow_dispatch' && inputs.query-candidate
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/rust-setup
+        with:
+          lane: release
+          scope: query-server
+      - name: Check query deployment and provisioning refusals
+        run: python3 -B -m unittest tools.tests.operations.test_query_role tools.tests.operations.test_query_infra tools.tests.operations.test_query_terraform
+      - name: Build all supported query products together
+        run: cargo build --locked --release -p pir-query-server --features enhance,status,transparent-history,transparent-detail,native-reinspiring
+      - name: Check the rendered deployment through the actual binary
+        run: |
+          python3 tools/scripts/wallet-pir-roles.py --service query-server --role combined --settings tools/deploy/query-server/query-node.example.json --release "$CARGO_TARGET_DIR/release" > "$RUNNER_TEMP/rendered-query.json"
+          jq -r '.files["/etc/wallet-pir-query/query-server.json"]' "$RUNNER_TEMP/rendered-query.json" > "$RUNNER_TEMP/query-server.json"
+          "$CARGO_TARGET_DIR/release/pir-query-server" --config "$RUNNER_TEMP/query-server.json" --check
+      - name: Package the exact source candidate
+        run: |
+          python3 tools/ci/release.py assemble --kind pir-query-server --sha "$GITHUB_SHA" --output .local-pir/query-candidate
+          python3 tools/scripts/wallet-pir-bundle.py assemble --sha "$GITHUB_SHA" --archive .local-pir/query-candidate/wallet-pir-ops.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unified-query-candidate-${{ github.sha }}
+          path: .local-pir/query-candidate/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
 
   publisher-candidate:
     name: Unified publisher candidate

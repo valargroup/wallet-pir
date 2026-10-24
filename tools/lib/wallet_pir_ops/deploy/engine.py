@@ -642,7 +642,7 @@ class Deployer:
         if check is None and not skip_exact_check:
             raise DeployError('inventory has no %s.exact_check; configure one or pass --skip-exact-check '
                               'and run the exact-answer check by hand' % self.service.name)
-        self.check_identities([self.inventory.lock.get('host'), check and check['host']])
+        self.check_identities([self.inventory.lock.get('host'), *descriptors.exact_check_hosts(check)])
         with self.lock_factory() as lock:
             self.lock = lock
             try:

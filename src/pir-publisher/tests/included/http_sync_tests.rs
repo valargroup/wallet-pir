@@ -1172,6 +1172,31 @@ async fn a_display_restore_stopped_mid_scan_keeps_its_evidence() {
         .unwrap());
     let (set, loaded, _) = distribution.evidence();
     assert!(set.is_some() && loaded > 0);
+    // A fresh file cannot supply reusable evidence until both timestamps have
+    // settled. Otherwise two equal early counts can still shrink mid-campaign.
+    let mut directories = vec![directory.clone()];
+    let mut identities = Vec::new();
+    while let Some(path) = directories.pop() {
+        for entry in std::fs::read_dir(path).unwrap() {
+            let entry = entry.unwrap();
+            let metadata = std::fs::metadata(entry.path()).unwrap();
+            if metadata.is_dir() {
+                directories.push(entry.path());
+            } else {
+                identities.push(pir_publication::FileIdentity::from_metadata(&metadata).unwrap());
+            }
+        }
+    }
+    tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        while identities
+            .iter()
+            .any(|identity| !identity.settled_before(std::time::SystemTime::now()))
+        {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("fixture files settle before measuring cancellation points");
     // Later restores reuse that evidence. Files hashed right after they were
     // written are vouched for only by a later hash, so restore until one
     // makes as many checks as the one before; count them.

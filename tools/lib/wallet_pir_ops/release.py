@@ -13,6 +13,7 @@ import tarfile
 
 from .paths import ROOT
 BINARIES = {
+    'pir-query-server': ['pir-query-server'],
     'pir-publisher': ['pir-publisher'],
     'wallet-pir-ops': [],
     # pir-apm is the Enhance/Status/Transparent dashboard and alerting sidecar;
@@ -42,6 +43,10 @@ BINARIES = {
     'receiver-pir': ['receiver-directory', 'receiver-probe'],
 }
 FILES = {
+    'pir-query-server': ['tools/deploy/query-server/pir-query-server.service',
+                         'tools/deploy/query-server/query-server.example.json',
+                         'tools/deploy/query-server/query-node.example.json',
+                         'tools/deploy/query-server/services.toml'],
     'pir-publisher': ['tools/deploy/publisher/pir-publisher.service',
                       'tools/deploy/publisher/publisher.example.json',
                       'tools/deploy/publisher/services.toml'],
@@ -75,7 +80,7 @@ FILES['enhance-pir-native-cuda'] = FILES['enhance-pir-native'] + [
 ]
 # The operations package needs no compiled binary: full CI assembles and tests
 # it in its own job, so publishing it never waits on Rust compilation.
-ON_REQUEST = ('pir-publisher', 'enhance-pir-native', 'enhance-pir-native-cuda', 'status-pir', 'wallet-pir-ops')
+ON_REQUEST = ('pir-publisher', 'pir-query-server', 'enhance-pir-native', 'enhance-pir-native-cuda', 'status-pir', 'wallet-pir-ops')
 # Build-time protocol identity recorded in candidate.json and re-checked on extract.
 PROTOCOLS = {
     'pir-publisher': 'wallet-pir-publisher-v1',

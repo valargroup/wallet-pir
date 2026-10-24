@@ -1,2 +1,2 @@
 # Shared role registry. Product descriptors stay beside product-owned templates.
-include = ["publisher/services.toml", "../enhance/deploy/deploy.toml", "../status/deploy/services.toml", "../transparent/deploy/services.toml", "../txid/deploy/services.toml", "../receiver/digitalocean/service.toml"]
+include = ["publisher/services.toml", "query-server/services.toml", "../enhance/deploy/deploy.toml", "../status/deploy/services.toml", "../transparent/deploy/services.toml", "../txid/deploy/services.toml", "../receiver/digitalocean/service.toml"]

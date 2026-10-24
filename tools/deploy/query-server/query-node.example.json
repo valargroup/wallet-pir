@@ -1,0 +1,49 @@
+{
+  "listen": "127.0.0.1:8090",
+  "management_listen": "127.0.0.1:18081",
+  "enhance": {
+    "listen": "127.0.0.1:8090",
+    "control_listen": "127.0.0.1:8096",
+    "data_dir": "/srv/wallet-pir-query/enhance",
+    "synchronization": {
+      "publisher_origin": "https://publisher.example.invalid",
+      "trusted_ca": null,
+      "download_budget_bytes": 25769803776,
+      "cache_limit_bytes": 25769803776,
+      "shards": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5
+      ]
+    }
+  },
+  "status": {
+    "network_hex": "0101010101010101010101010101010101010101010101010101010101010101",
+    "state_dir": "/srv/wallet-pir-query/status",
+    "listen": "127.0.0.1:8481",
+    "query_listen": "127.0.0.1:8090",
+    "publisher": "https://publisher.example.invalid"
+  },
+  "transparent_history": {
+    "listen": "127.0.0.1:8093",
+    "state_dir": "/srv/wallet-pir-query/history",
+    "publisher": "https://publisher.example.invalid",
+    "publisher_network": "main",
+    "publisher_genesis": "0000000000000000000000000000000000000000000000000000000000000000",
+    "cache_bytes": 68719476736,
+    "full_holdings": true,
+    "query_slots": 1,
+    "build_slots": 1
+  },
+  "transaction_details": {
+    "listen": "127.0.0.1:8095",
+    "state_dir": "/srv/wallet-pir-query/details",
+    "publisher": "https://publisher.example.invalid",
+    "publisher_network": "main",
+    "publisher_genesis": "0000000000000000000000000000000000000000000000000000000000000000",
+    "cache_bytes": 17179869184
+  }
+}
