@@ -45,6 +45,46 @@ def inventory(*observers, retired=()):
 
 
 class ObserverInventory(unittest.TestCase):
+    def test_coverage_cli_accepts_static_enrollment_in_the_exported_monitoring_roster(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            'fleet_inventory_coverage', ROOT / 'tools/transparent/scripts/transparent-fleet-inventory.py')
+        fleet_inventory = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(fleet_inventory)
+        workers = inventory(WORKER)
+        workers['services'].pop('apm')
+        record = monitoring.enrollment_record({'host_id': 'recent-09', 'address': '10.0.0.19'})
+        cases = [('enrolled', False, '10.0.0.17'), ('draining', False, '10.0.0.17'),
+                 ('enrolled', True, '10.0.0.17'), ('enrolled', False, '10.0.0.99')]
+        for intent, missing_dynamic, cloud_address in cases:
+            with self.subTest(intent=intent, missing_dynamic=missing_dynamic, cloud_address=cloud_address):
+                members = [{'id': WORKER['host_id'], 'intent': intent},
+                           {'id': 'recent-09', 'intent': 'enrolled', 'monitoring': record},
+                           {'id': 'retired-worker', 'intent': 'retired'}]
+                if missing_dynamic:
+                    members.append({'id': 'recent-10', 'intent': 'draining'})
+                roster = fleet_inventory.monitoring_view({'members': members})
+                self.assertEqual(set(roster[0]), {'id', 'intent'})
+                with tempfile.TemporaryDirectory() as temporary:
+                    root = Path(temporary)
+                    for name, document in [('inventory', workers), ('roster', roster),
+                                           ('terraform', {'worker_ipv4': {'value': cloud_address}})]:
+                        (root / (name + '.json')).write_text(json.dumps(document))
+                    result = subprocess.run(
+                        [sys.executable, str(ROOT / 'tools/scripts/wallet-pir-monitoring.py'), 'coverage',
+                         '--inventory', str(root / 'inventory.json'), '--roster', str(root / 'roster.json'),
+                         '--terraform-outputs', str(root / 'terraform.json'), '--state-dir', str(root / 'state')],
+                        capture_output=True, text=True)
+                report = json.loads(result.stdout)
+                missing = ['recent-10'] if missing_dynamic else []
+                if cloud_address != WORKER['address']:
+                    missing.append('worker')
+                self.assertEqual(report['missing_declarations'], missing)
+                self.assertEqual(result.returncode, int(bool(missing)), result.stderr)
+                self.assertEqual(report['enrolled'], [WORKER['host_id'], 'recent-09'])
+                self.assertEqual((report['partial'], report['not_provisioned'], report['missing_volumes']),
+                                 (False, [], {}))
+
     def test_coverage_accepts_dynamic_enrollment_and_refuses_missing_or_malformed_records(self):
         record = monitoring.enrollment_record({'host_id': 'recent-09', 'address': '10.0.0.19'})
         member = {'id': 'recent-09', 'intent': 'enrolled', 'monitoring': record}
