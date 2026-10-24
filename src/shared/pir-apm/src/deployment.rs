@@ -149,6 +149,24 @@ impl Store {
             "DELETE FROM outbox WHERE incident NOT LIKE 'deployment:%'",
             [],
         )?;
+        let incidents = {
+            let mut statement = tx.prepare("SELECT key,value FROM incidents")?;
+            statement
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        for (key, value) in incidents {
+            let mut incident: crate::incidents::Incident = serde_json::from_str(&value)?;
+            if incident.active {
+                incident.announce_pending = true;
+                tx.execute(
+                    "UPDATE incidents SET value=? WHERE key=?",
+                    params![serde_json::to_string(&incident)?, key],
+                )?;
+            }
+        }
         announce(
             &tx,
             &deployment,
