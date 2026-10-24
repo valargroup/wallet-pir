@@ -66,6 +66,27 @@ class ObserverInventory(unittest.TestCase):
         report = monitoring.coverage(complete, expected_volumes={'coordinator': [{'path': path, 'uuid': 'ffff'}]})
         self.assertEqual(report['missing_volumes'], {'coordinator': [path]}, 'an explicit UUID remains required')
 
+    def test_load_generator_output_is_checked_by_enrollment_and_coverage(self):
+        outputs = {'transparent_loadgen_ipv4': {'value': [
+            {'public': '203.0.113.7', 'private': '10.0.0.7'},
+            {'public': '203.0.113.8', 'private': '10.0.0.8'}]}}
+        bare = {'hosts': {'load-01': {'address': '203.0.113.7'}}, 'services': {}}
+        self.assertEqual(monitoring.provisioned_hosts(outputs), [
+            ('transparent_loadgen_ipv4[0]', frozenset(['203.0.113.7', '10.0.0.7'])),
+            ('transparent_loadgen_ipv4[1]', frozenset(['203.0.113.8', '10.0.0.8']))])
+        enrolled, report = monitoring.enroll(bare, terraform_outputs=outputs, role_units={})
+        self.assertEqual(report['added'], ['load-01'])
+        self.assertEqual(report['undeclared'], ['transparent_loadgen_ipv4[1]'])
+        observer = enrolled['services']['apm-sidecar']['roles']['observer'][0]
+        self.assertEqual(observer['settings']['address'], '10.0.0.7')
+        report = monitoring.coverage(enrolled, terraform_outputs=outputs, roster=[])
+        self.assertEqual(report['missing_declarations'], ['transparent_loadgen_ipv4[1]'])
+        self.assertFalse(report['partial'])
+        enrolled['hosts']['load-02'] = {'address': '10.0.0.8'}
+        complete, report = monitoring.enroll(enrolled, terraform_outputs=outputs, role_units={})
+        self.assertEqual((report['added'], report['undeclared']), (['load-02'], []))
+        self.assertEqual(monitoring.coverage(complete, terraform_outputs=outputs, roster=[])['missing_declarations'], [])
+
     def test_non_service_units_only_require_active_state(self):
         document = monitoring.sidecar_document(dict(WORKER, units=['worker.service', 'worker.socket', 'worker.timer']))
         checks = [c for c in monitoring.expected_checks(document) if c.startswith('unit:')]
