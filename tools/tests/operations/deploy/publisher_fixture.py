@@ -131,10 +131,14 @@ class PublisherFixture:
         self.ex.install('coordinator', publisher.LOAD,
             '[Service]\nExecStart=/bin/load --controller-unit pir-publisher\n', files={'/bin/load': b'load'})
         self.ex.put('coordinator', publisher.CONFIG, json.dumps(config))
-        self.ex.put('coordinator', publisher.SAMPLER, json.dumps({'targets': [
-            {'sources': ['transparent-publisher', 'txid-controller'], 'unit': publisher.UNIT}]}))
+        self.ex.put('coordinator', publisher.OBSERVERS, json.dumps({'hosts': [
+            {'host_id': 'coordinator', 'snapshot': {'sources': ['transparent-publisher', 'txid-controller'],
+                                                    'unit': publisher.UNIT}}]}))
         inventory = json.loads((ROOT / 'tools/enhance/deploy/deploy-inventory.example.json').read_text())
         inventory['services'].pop('receiver', None)
+        # The cutover registry covers serving products, not monitoring.
+        for name in ('apm-sidecar', 'apm', 'monitor'):
+            inventory['services'].pop(name, None)
         inventory['ancillary'] = {k: v for k, v in inventory['ancillary'].items()
                                   if set(v['consumers']) <= set(inventory['services'])}
         # Start with the supported ownership graph, never replay retired deployments.

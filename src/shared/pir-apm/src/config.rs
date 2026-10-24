@@ -178,7 +178,11 @@ impl Config {
             health_path: path_value(&get_or("PIR_APM_HEALTH_PATH", "/v1/health"))?,
             ready_path: path_value(&get_or("PIR_APM_READY_PATH", "/ready"))?,
             listen,
-            slack_webhook_url: get("PIR_APM_SLACK_WEBHOOK_URL"),
+            slack_webhook_url: pir_apm::credentials::slack_webhook(
+                get("PIR_APM_SLACK_WEBHOOK_URL").as_deref(),
+                get("PIR_APM_SLACK_WEBHOOK_FILE").as_deref(),
+                pir_apm::credentials::directory().as_deref(),
+            )?,
             title: get_or("PIR_APM_TITLE", "PIR APM"),
             environment: get_or("PIR_APM_ENVIRONMENT", "unknown"),
             hostname: get("PIR_APM_HOSTNAME")

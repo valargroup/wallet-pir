@@ -46,8 +46,11 @@ resource "digitalocean_droplet" "coordinator" {
   backups    = var.enable_backups
   ipv6       = true
 
-  user_data = templatefile("${path.module}/cloud-init-coordinator.yaml.tftpl", {
-    packages = jsonencode(concat(local.common_packages, ["xfsprogs"]))
+  user_data = templatefile("${path.module}/../apm-sidecar/user-data.tftpl", {
+    script = local.apm_sidecar_boot_script
+    cloud_config = templatefile("${path.module}/cloud-init-coordinator.yaml.tftpl", {
+      packages = jsonencode(concat(local.common_packages, ["xfsprogs"]))
+    })
   })
 
   lifecycle {

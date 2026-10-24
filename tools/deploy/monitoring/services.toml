@@ -1,0 +1,84 @@
+# Per-host APM observer on every managed Linux host. The inventory lists one
+# `observer` per host with `install: true`, so a fresh host and an existing one
+# get the same rendered unit and configuration under the production lock.
+[services.apm-sidecar]
+root = "/opt/pir-apm-sidecar"
+binary = "pir-apm-sidecar"
+artifact_kinds = ["pir-monitoring"]
+self_check = ["--help"]
+min_free_bytes = 268435456
+order = ["observer"]
+
+[services.apm-sidecar.roles.observer]
+unit = "pir-apm-sidecar.service"
+mode = "role"
+template = "pir-apm-sidecar.service.in"
+renderer = "wallet_pir_ops.monitoring:sidecar"
+# Settings: host_id, address (private), port?, required_volumes?, units?, hooks?, edge_metrics_url?.
+health = "http://127.0.0.1:9444/healthz"
+ready = { field = "ready", equals = true }
+ready_timeout = 60
+
+
+# The central APM as a rendered role. A fresh coordinator gets the whole unit;
+# an existing one adopts it from the legacy role that the opt-in descriptor
+# `tools/enhance/deploy/apm.toml` deploys (service `apm`, role `server`, the same
+# journal sequence), in one reviewed transaction (`--retire-historical
+# --allow-unit-drift`) whose rollback restores the legacy unit, drop-ins and
+# credential launcher. Legacy deploys resume with the inventory entry moved
+# back to `server` and `--descriptors tools/enhance/deploy/apm.toml`.
+[services.apm]
+root = "/opt/pir-apm"
+binary = "pir-apm"
+artifact_kinds = ["pir-monitoring", "enhance-pir"]
+self_check = ["--help"]
+min_free_bytes = 1073741824
+order = ["central"]
+
+[services.apm.roles.central]
+unit = "pir-apm.service"
+mode = "role"
+template = "pir-apm.service.in"
+renderer = "wallet_pir_ops.monitoring_roles:apm"
+# Settings: environment, slack?, chain_cookie?, writable?, limits?.
+health = "http://127.0.0.1:3002/healthz"
+# Requires fresh authenticated collection from every expected host and expires
+# when collection stops progressing.
+ready_url = "http://127.0.0.1:3002/observers/ready"
+adopt_health = "http://127.0.0.1:3002/healthz"
+ready_timeout = 240
+adopt_drop_ins = true
+adoptable_drop_ins = ["*.conf"]
+# The legacy role's pinned loader (tools/enhance/deploy/apm.toml).
+adopt_launcher = [
+  { path = "/usr/bin/python3", sha256 = "e50d468e8b0adfb05733f5b87b3cff34829c4a8c1aea50c865aa8bdfe4bb150f" },
+  { path = "/opt/enhance-pir/releases/observability-20260926/credential-exec.py", sha256 = "8f7dda08e57251db817c3422c38a2df7a1b1618214af08aaf1c33ef3be3afaa2" },
+]
+
+# The independent external monitor on its own host. A fresh host gets the whole
+# unit; the live one adopts it from its hand-installed unit in one reviewed
+# transaction (`--retire-historical --allow-unit-drift`) whose rollback
+# restores that unit, its drop-ins and its credential launcher.
+[services.monitor]
+root = "/opt/pir-monitor"
+binary = "pir-monitor"
+artifact_kinds = ["pir-monitoring"]
+self_check = ["--help"]
+min_free_bytes = 268435456
+order = ["checker"]
+
+[services.monitor.roles.checker]
+unit = "pir-monitor.service"
+mode = "role"
+template = "pir-monitor.service.in"
+renderer = "wallet_pir_ops.monitoring_roles:monitor"
+# Settings: environment, slack?, service_probes?, chain_rpc_cookie?, limits?.
+health = "http://127.0.0.1:3003/monitor-status"
+ready = { field = "evaluated_at", nonempty = true }
+ready_timeout = 120
+adopt_drop_ins = true
+adoptable_drop_ins = ["*.conf"]
+adopt_launcher = [
+  { path = "/usr/bin/python3", sha256 = "e50d468e8b0adfb05733f5b87b3cff34829c4a8c1aea50c865aa8bdfe4bb150f" },
+  { path = "/opt/pir-monitor/credential-exec.py", sha256 = "8f7dda08e57251db817c3422c38a2df7a1b1618214af08aaf1c33ef3be3afaa2" },
+]

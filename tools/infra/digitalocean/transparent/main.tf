@@ -42,9 +42,12 @@ resource "digitalocean_droplet" "transparent_recent" {
   backups    = var.enable_backups
   ipv6       = true
 
-  user_data = templatefile("${path.module}/cloud-init-transparent-worker.yaml.tftpl", {
-    packages          = jsonencode(concat(local.common_packages, ["caddy"]))
-    deploy_public_key = var.transparent_worker_deploy_public_key
+  user_data = templatefile("${path.module}/../apm-sidecar/user-data.tftpl", {
+    script = var.apm_sidecar_boot_script
+    cloud_config = templatefile("${path.module}/cloud-init-transparent-worker.yaml.tftpl", {
+      packages          = jsonencode(concat(local.common_packages, ["caddy"]))
+      deploy_public_key = var.transparent_worker_deploy_public_key
+    })
   })
 
   lifecycle {
@@ -69,9 +72,12 @@ resource "digitalocean_droplet" "transparent_archive" {
   backups    = var.enable_backups
   ipv6       = true
 
-  user_data = templatefile("${path.module}/cloud-init-transparent-worker.yaml.tftpl", {
-    packages          = jsonencode(concat(local.common_packages, ["caddy"]))
-    deploy_public_key = var.transparent_worker_deploy_public_key
+  user_data = templatefile("${path.module}/../apm-sidecar/user-data.tftpl", {
+    script = var.apm_sidecar_boot_script
+    cloud_config = templatefile("${path.module}/cloud-init-transparent-worker.yaml.tftpl", {
+      packages          = jsonencode(concat(local.common_packages, ["caddy"]))
+      deploy_public_key = var.transparent_worker_deploy_public_key
+    })
   })
 
   lifecycle {
@@ -96,9 +102,12 @@ resource "digitalocean_droplet" "transparent_loadgen" {
   backups    = false
   ipv6       = false
 
-  user_data = templatefile("${path.module}/cloud-init-transparent-router.yaml.tftpl", {
-    packages          = jsonencode(concat(local.common_packages, ["build-essential", "pkg-config"]))
-    deploy_public_key = var.transparent_worker_deploy_public_key
+  user_data = templatefile("${path.module}/../apm-sidecar/user-data.tftpl", {
+    script = var.apm_sidecar_boot_script
+    cloud_config = templatefile("${path.module}/cloud-init-transparent-router.yaml.tftpl", {
+      packages          = jsonencode(concat(local.common_packages, ["build-essential", "pkg-config"]))
+      deploy_public_key = var.transparent_worker_deploy_public_key
+    })
   })
 
   lifecycle {
@@ -123,9 +132,12 @@ resource "digitalocean_droplet" "transparent_router" {
   backups    = var.enable_backups
   ipv6       = true
 
-  user_data = templatefile("${path.module}/cloud-init-transparent-router.yaml.tftpl", {
-    packages          = jsonencode(concat(local.common_packages, ["caddy"]))
-    deploy_public_key = var.transparent_worker_deploy_public_key
+  user_data = templatefile("${path.module}/../apm-sidecar/user-data.tftpl", {
+    script = var.apm_sidecar_boot_script
+    cloud_config = templatefile("${path.module}/cloud-init-transparent-router.yaml.tftpl", {
+      packages          = jsonencode(concat(local.common_packages, ["caddy"]))
+      deploy_public_key = var.transparent_worker_deploy_public_key
+    })
   })
 
   lifecycle {
@@ -168,9 +180,12 @@ resource "digitalocean_droplet" "transparent_v12" {
   backups    = var.enable_backups
   ipv6       = true
 
-  user_data = templatefile("${path.module}/cloud-init-transparent-worker.yaml.tftpl", {
-    packages          = jsonencode(concat(local.common_packages, ["caddy"]))
-    deploy_public_key = var.transparent_worker_deploy_public_key
+  user_data = templatefile("${path.module}/../apm-sidecar/user-data.tftpl", {
+    script = var.apm_sidecar_boot_script
+    cloud_config = templatefile("${path.module}/cloud-init-transparent-worker.yaml.tftpl", {
+      packages          = jsonencode(concat(local.common_packages, ["caddy"]))
+      deploy_public_key = var.transparent_worker_deploy_public_key
+    })
   })
 
   lifecycle {

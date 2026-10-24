@@ -33,7 +33,8 @@ LOAD_LATCH = '/srv/transparent-activity/canonical-load/v12/latched.json'
 ROOT_DIR = '/opt/pir-publisher'
 CONFIG = '/etc/wallet-pir/publisher.json'
 INVENTORY = '/etc/wallet-pir/transparent-fleet.json'
-SAMPLER = '/etc/pir-quality/hosts.json'
+# The central APM's sidecar inventory names the hosts' monitoring sources.
+OBSERVERS = '/etc/pir-apm/observers.json'
 LOAD_DROP = '/etc/systemd/system/' + LOAD + '.d/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-publisher.conf'
 UNIT_PATH = '/etc/systemd/system/' + UNIT
 # The completed Status HTTPS cutover (tools/status/lib/https_cutover.py, retired
@@ -217,7 +218,7 @@ class Cutover:
         config = self.request['configuration']
         history = config['transparent_history']['settings']
         display = config['transaction_details']['settings']
-        paths = [CONFIG, INVENTORY, SAMPLER, UNIT_PATH, STATUS_HTTPS_DROP, LOAD_DROP, ROOT_DIR + '/latest.json',
+        paths = [CONFIG, INVENTORY, OBSERVERS, UNIT_PATH, STATUS_HTTPS_DROP, LOAD_DROP, ROOT_DIR + '/latest.json',
                  history['data_dir'] + '/writer.lock', history['publication_root'] + '/controller.lock',
                  display['journal'] + '/writer.lock', display['root'] + '/controller.lock']
         from .publisher_products import locks
@@ -274,12 +275,12 @@ class Cutover:
             require(states[LOAD]['active_state'] == 'active', 'continuous exact load must be running at capture')
         else:
             self.require_stopped_load(states[LOAD])
-        sampler = json.loads(self.read(SAMPLER))
-        targets = sampler.get('targets', [])
-        sources = {source for target in targets for source in target.get('sources', [])}
+        observers = json.loads(self.read(OBSERVERS))
+        snapshots = [host['snapshot'] for host in observers.get('hosts', []) if host.get('snapshot')]
+        sources = {source for snapshot in snapshots for source in snapshot.get('sources', [])}
         require({'transparent-publisher', 'txid-controller'} <= sources, 'both publisher monitoring sources must exist')
-        require(all(target.get('unit') == UNIT for target in targets
-                    if set(target.get('sources', [])) & {'transparent-publisher', 'txid-controller'}),
+        require(all(snapshot.get('unit') == UNIT for snapshot in snapshots
+                    if set(snapshot.get('sources', [])) & {'transparent-publisher', 'txid-controller'}),
                 'publisher monitoring must already follow the unified owner')
         load_command = units.exec_start(units.effective([states[LOAD]['fragment_text'],
             *(entry['text'] for entry in states[LOAD]['drop_ins'])]))
@@ -295,7 +296,7 @@ class Cutover:
             CONFIG: json.dumps(config, indent=2) + '\n',
             INVENTORY: json.dumps(self.request['inventory'], indent=2) + '\n',
             UNIT_PATH: render(config, binary, states),
-            SAMPLER: json.dumps(sampler, indent=2) + '\n',
+            OBSERVERS: json.dumps(observers, indent=2) + '\n',
             LOAD_DROP: '[Service]\nExecStart=\nExecStart=' + load_command + '\n',
         }
         if override is not None:

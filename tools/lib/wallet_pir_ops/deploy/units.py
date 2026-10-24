@@ -118,6 +118,15 @@ def split_exec(line, launcher=()):
     return prefix, binary, tail.strip()
 
 
+def uses_launcher(line, launcher):
+    """Whether an ExecStart line runs through exactly these launcher paths."""
+    try:
+        split_exec(line, launcher)
+    except UnitError:
+        return False
+    return bool(launcher)
+
+
 def normalized(config, launcher=()):
     """Comparable form: empty settings dropped, whitespace collapsed, the ExecStart binary abstracted.
 

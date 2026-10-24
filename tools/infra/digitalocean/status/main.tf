@@ -18,10 +18,13 @@ resource "digitalocean_droplet" "status_host" {
   tags        = [digitalocean_tag.status_host.name]
   monitoring  = true
   ipv6        = true
-  user_data = templatefile("${path.module}/cloud-init.yaml.tftpl", {
-    packages           = jsonencode(local.common_packages)
-    deploy_public_key  = var.enhance_worker_deploy_public_key
-    control_public_key = var.status_control_public_key
+  user_data = templatefile("${path.module}/../apm-sidecar/user-data.tftpl", {
+    script = var.apm_sidecar_boot_script
+    cloud_config = templatefile("${path.module}/cloud-init.yaml.tftpl", {
+      packages           = jsonencode(local.common_packages)
+      deploy_public_key  = var.enhance_worker_deploy_public_key
+      control_public_key = var.status_control_public_key
+    })
   })
   lifecycle {
     prevent_destroy = true

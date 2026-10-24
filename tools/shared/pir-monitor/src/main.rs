@@ -124,6 +124,11 @@ fn load_oracle(bytes: &[u8], checksum: &str) -> Result<Oracle> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // The deploy engine's self-check of a staged release; configuration comes from the environment.
+    if std::env::args().skip(1).any(|arg| arg == "--help") {
+        println!("usage: pir-monitor (configured by PIR_MONITOR_* environment variables)");
+        return Ok(());
+    }
     let origin = env("PIR_MONITOR_ORIGIN")?;
     let status_url = env("PIR_MONITOR_APM_STATUS_URL")?;
     let oracle = load_oracle(
@@ -131,9 +136,14 @@ async fn main() -> Result<()> {
         &env("PIR_MONITOR_ORACLE_SHA256")?,
     )?;
     let path = PathBuf::from(env("PIR_MONITOR_STATE_PATH")?);
-    let webhook = std::env::var("PIR_APM_SLACK_WEBHOOK_URL")
-        .ok()
-        .filter(|v| !v.trim().is_empty());
+    // `credential-exec.py` sets the URL; a rendered unit names its credential file instead.
+    let webhook = pir_apm::credentials::slack_webhook(
+        std::env::var("PIR_APM_SLACK_WEBHOOK_URL").ok().as_deref(),
+        std::env::var("PIR_MONITOR_SLACK_WEBHOOK_FILE")
+            .ok()
+            .as_deref(),
+        pir_apm::credentials::directory().as_deref(),
+    )?;
     let configured = webhook.is_some();
     let mode = std::env::var("PIR_MONITOR_ALERT_MODE").unwrap_or_else(|_| "shadow".into());
     anyhow::ensure!(mode == "shadow" || mode == "active", "invalid alert mode");

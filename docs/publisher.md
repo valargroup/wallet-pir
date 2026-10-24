@@ -439,7 +439,9 @@ metrics come from query ingress, while publisher health and publication metrics
 stay on the publisher. Update its binary through the opt-in descriptor
 `tools/enhance/deploy/apm.toml` with the normal baseline, plan, preflight, deploy,
 status and rollback commands. This preserves its unit arguments, credential
-files and durable incident/delivery state. Acceptance requires fresh monitoring
+files and durable incident/delivery state. The registry's rendered `apm.central`
+role replaces this path once a host adopts it
+([monitoring deployment](enhance/observability-alerting.md#monitoring-deployment-and-rebuild)). Acceptance requires fresh monitoring
 coverage; a stale sidecar can report missing init coverage despite correct
 wallet answers.
 

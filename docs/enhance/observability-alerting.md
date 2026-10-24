@@ -194,11 +194,16 @@ from the PIR service being tested. If the anchor becomes noncanonical, freeze
 correctness classification and regenerate/review the oracle from canonical
 source records.
 
-Both processes receive the existing production Slack webhook through encrypted
-systemd credentials and `credential-exec.py`/the existing APM wrapper. Do not put
-it in environment files, Terraform variables, logs, or checked-in artifacts.
-The node RPC cookie is loaded as a systemd credential; restart APM after cookie
-rotation so it receives the new value.
+Each process receives the Slack webhook as a systemd credential scoped to its
+own unit. The rendered roles ([Monitoring deployment and rebuild](#monitoring-deployment-and-rebuild))
+load `slack-webhook` with `LoadCredential=` and name it in
+`PIR_APM_SLACK_WEBHOOK_FILE` or `PIR_MONITOR_SLACK_WEBHOOK_FILE`; the process
+reads the file at start and refuses a value that is not a `https://hooks.slack.com/`
+URL, without printing it. A legacy unit still passes it through
+`credential-exec.py`, which sets `PIR_APM_SLACK_WEBHOOK_URL`; setting both is
+refused. Do not put it in environment files, Terraform variables, logs, or
+checked-in artifacts. The node RPC cookie is loaded as a systemd credential;
+restart APM after cookie rotation so it receives the new value.
 
 ## Delivery and response
 
@@ -249,8 +254,10 @@ Investigate by check family:
    Exercise monitoring-task failures without interrupting serving processes.
 6. Observe 24 additional hours of active alerting and record final acceptance.
 
-For rollback, restore the prior APM ExecStart/drop-ins and restart only APM;
-stop external checker sending or return it to shadow mode. Keep SQLite databases,
+For rollback, roll back the role's deploy transaction (see
+[Monitoring deployment and rebuild](#monitoring-deployment-and-rebuild)), which
+restores the prior APM unit, drop-ins and launcher and restarts only APM; stop
+external checker sending or return it to shadow mode. Keep SQLite databases,
 including WAL files, with their owning process stopped or use SQLite backup.
 Retain the monitor infrastructure unless separately approved for deletion.
 Additive server metrics and queue timestamps are backward-compatible and can
@@ -400,27 +407,44 @@ Open Transparent incidents are left as they are, not retired, until a valid
 config is back.
 
 The existing fleet roster is authoritative. No public metrics route is added.
-The host sampler uses explicitly configured private SSH targets and loopback
-Caddy metrics. Its output contains resource numbers and fixed source names.
-With a `roster` block (`{"path": ".../roster.json", "unit":
-"transparent-shard-server.service"}`) it derives one target per enrolled or
-draining transparent worker from the roster on every cycle, so elastic members
-and replaced owners are sampled under their own names. A static list sampled
-archive-03 as `transparent-pir-recent-03` after the 2026-09-29 owner move.
-An explicit target may also name its machine (`host_id`, default its first
-source), its DigitalOcean size slug (`size`) and up to eight more systemd
-`units` to report beside `unit`; the `roster` block accepts `size` for every
-derived target and `role_units` (roster `role` to unit), and a derived target's
-`host_id` is its worker id (at most 80 letters, digits, `_`, `.`, `@` or `-`,
-the APM's own limit; anything else falls back to the first source). Each
-snapshot entry then adds `unit` (the main unit), `host_id`, `size`,
+Host resources come from per-host APM sidecars (`pir-apm-sidecar`), not SSH.
+Each managed host runs one, deployed as the `apm-sidecar.observer` role from
+the deployment inventory, measuring its filesystems, required volumes, memory,
+swap, configured units and hooks every 15 s and serving the result over mTLS
+on port 9443. The APM polls every enrolled sidecar every 5 s as the
+`pir-apm-collector` identity of the dedicated monitoring CA, raises its
+`host` family (below) and writes `host_snapshot` in the former sampler's shape
+for the hosts whose observer settings carry `snapshot` (`sources`, main `unit`,
+optional `data_path` and `size`); with `roster` in its observer inventory,
+every enrolled or draining roster member is an expected host. Aggregate Caddy
+metrics are read by the router's sidecar on loopback and written to
+`edge_output`. `tools/scripts/wallet-pir-monitoring.py` renders the observer
+inventory, reports coverage gaps against Terraform outputs, declared external
+hosts and the roster, issues monitoring certificates and installs credentials
+under the production lock as journaled transactions (`reconcile` finishes
+an interrupted one, `rollback` undoes the latest). Its `enroll` adds an
+observer for every provisioned inventory host from Terraform outputs and
+declared external hosts (dialed at their declared address with the same mTLS
+checks). A completed `cache-data-activate` binds the new volume's path and
+filesystem UUID, deploys the running sidecar configuration, and updates the
+collector's expected configuration digest under the same deployment lock.
+An interrupted monitoring update retains `monitoring-pending` in the activation
+receipt; `cache-data-reconcile` resumes it without repeating storage activation
+or changing the serving process. Missing monitoring prerequisites leave that
+receipt pending. Coverage still includes its required volume.
+The collector's install waits for `/observers/ready` to report the installed
+inventory `revision` and fresh authenticated observations from every expected
+host. Alerting hosts count as collected; missing, rejected, frozen or future
+observations do not. Readiness expires with the oldest document or after 45
+seconds without a completed collection round. Failed restoration stays open
+for reconciliation and verifies the saved previous revision.
+For dynamic capacity snapshots, pass `--roster-snapshot` with a JSON mapping of
+`unit`, optional `role_units`, `data_path` and `size`, together with `--roster`
+and `--host-snapshot`. Each snapshot entry has `unit`, `host_id`, `size`,
 `swap_total_bytes`, `swap_free_bytes` and `units`, a map from unit name to
 `memory_current_bytes`, `memory_anon_bytes` (`anon` plus `shmem` from the
 cgroup's `memory.stat`), `memory_peak_bytes`, `memory_max_bytes` (null when
-unlimited) and `oom_kills`. A value the host does not report, or a unit systemd
-has not loaded, is left out. The existing fields are unchanged.
-[`pir-quality-hosts.example.json`](../../tools/enhance/deploy/pir-quality-hosts.example.json)
-samples the coordinator, the router, the v12 roster and the one-query txid site.
+unlimited) and `oom_kills`; a value the sidecar does not report is left out.
 Caddy 2.6 metrics must be enabled in the generated router configuration. Only
 the deployed top-level `subroute` handler boundary is counted; nested handler
 totals must not be added. This includes responses and refusals at that route. Caddy size
@@ -429,8 +453,9 @@ estimates and service payload byte counters have different semantics.
 A schema cutover moves these inputs. Since v11 (2026-10-03) the fleet roster is
 `/opt/transparent-publisher/v11/roster.json` and the continuous load writes
 `/srv/transparent-activity/canonical-load/v11/status.json`; point the APM config
-and the host sampler's `roster` block at them, then restart `pir-apm`, which
-reads its config only at start (the sampler rereads its own each cycle). The pre-v11 roster and
+at them, then restart `pir-apm`, which reads those inputs at start. The observer
+inventory keeps its separate enrollment roster: serving rosters omit host
+monitoring identities and cannot replace it. The pre-v11 roster and
 `/opt/transparent-5qps-20260929/status.json` stopped changing at the cutover, so
 an unmoved APM shows retired workers and a stale load. The v11 load pins worker
 binaries in `canonical-load/v11/pins.json`. `/etc/pir-quality/qualified-workers.json`
@@ -650,9 +675,6 @@ txid display controller.
 | `http_coverage_<source>` | history | warning | publisher or worker lacks HTTP observation version 1 | 45 s |
 | `http_errors_<source>` | both | warning | 5xx > 5% with ≥ 10 responses in 5 min | – |
 | `latency_<source>_<endpoint>` | both | warning | p99 > 2 s (metadata) or > 5 s (setup, query), ≥ 20 samples | 120 s |
-| `memory_<source>`, `disk_<source>` | both | warning | host memory < 15% or disk < 10% available | 120 s |
-| `oom_<source>` | both | critical | new OOM kills of the source's main unit | – |
-| `oom_<source>_<unit>` | both | critical | new OOM kills of another unit the host sampler reports | – |
 
 History keeps its 30 s and 60 s unpublished-age rules, which already page
 earlier than 180 s; the txid display seals every block, so it has only the 180 s
@@ -677,15 +699,175 @@ yet, so their 5xx and latency rules stay unknown until they export `pir_http_*`.
 Histogram deltas need a `*process_start_time_seconds` gauge on each scraped
 process to detect restarts.
 
-When a service's inventory is valid, incidents of a source it no longer lists
+Host memory, disk and OOM rules moved to the sidecar `host` family; incidents
+the former `memory_`, `disk_`, `oom_` and `host_coverage_` rules left open are
+retired. When a service's inventory is valid, incidents of a source it no longer lists
 are retired, and incidents of a service no longer configured (or keys of the old
 single-service shape) are retired by the shared family.
 
+## Host family (sidecars)
+
+The `host` family has its own mode (`mode` in `/etc/pir-apm/observers.json`)
+and keys `host:<host>:check:<check>` and `host:<host>:coverage`. Sidecars decide
+each check; the APM propagates status and reason. Built-in checks: `disk:<mount>`
+per writable local block filesystem (deduplicated by device, root-reserved
+blocks excluded; below 15% available warns at once). Mount paths outside the
+check-name alphabet use `disk:path-<sha256>`, with an escaped path in the reason.
+Explicit required-volume paths must fit a lowercase `volume:<path>` identifier
+of at most 128 bytes; invalid paths are refused before installation.
+`volume:<path>` reports each
+required volume bound to its filesystem UUID (absent, replaced by its parent
+directory, another filesystem or read-only is critical from the first
+observation), `memory` (< 15% available for 120 s warns), `swap`,
+`unit:<unit>:{active,restarts,oom}` (an automatic restart warns and a new OOM
+kill is critical for 5 minutes for service units; socket and timer units report
+active state only), `certificate` (serving certificate expires in
+< 30 days warns, < 7 critical), `hook:<name>` and `edge`. A check older than
+45 s, a missing configured check, an unreachable, unauthenticated, malformed,
+other-schema, other-host or other-configuration document is unknown and never
+recovers an incident. Coverage (`host:<host>:coverage`) warns after 45 s
+without a new fresh document, including hosts never observed; a cached or
+frozen document served again does not renew it. Each configured check also
+has `host:<host>:coverage:<check>`, warning after 45 s without a fresh known
+status while the host itself still reports. Recovery needs two distinct
+healthy observations. Removing a unit, hook, required volume or edge declaration
+retires that check's incidents and check-coverage incident; removing a hook also
+retires its structured subchecks. A missing discovered filesystem remains unknown.
+Enrollment persists until the host is retired in the deployment
+inventory (`decommissioned`) or by the scaler (roster `intent: retired`).
+Collector readiness and the coverage CLI use static observer declarations to
+satisfy enrollment for hosts also listed in the monitoring roster, taking
+precedence over its endpoint records. Other enrolled
+or draining roster members need a sidecar enrollment record; a missing record
+keeps collection readiness false even when the rest of the fleet reports.
+Additional expected or activated volumes never replace the coordinator's three
+mandatory data-volume checks. Coverage also includes each Terraform load
+generator's paired public/private addresses.
+
+## Monitoring deployment and rebuild
+
+Every monitoring process is a role of the shared registry
+(`tools/deploy/monitoring/services.toml`), deployed with `wallet-pir-deploy.py`
+under the production lock (plan, preflight, deploy, status, rollback) from the
+`pir-monitoring` release artifact:
+
+| Role | Unit | Host | Rendered from |
+| --- | --- | --- | --- |
+| `apm-sidecar.observer` | `pir-apm-sidecar.service` | every managed host | observer settings |
+| `apm.central` | `pir-apm.service` | coordinator | `environment` (`PIR_APM_*` other than the rendered state, listener, observer, cookie and webhook settings), `slack`, `chain_cookie`, `writable`, `limits` |
+| `monitor.checker` | `pir-monitor.service` | independent monitor host | `environment` (`PIR_MONITOR_ORIGIN`, `PIR_MONITOR_APM_STATUS_URL`, `PIR_MONITOR_ORACLE`, `PIR_MONITOR_ORACLE_SHA256`, alert modes, public status URL), `slack`, `service_probes`, `chain_rpc_cookie`, `limits` |
+
+`tools/enhance/deploy/deploy-inventory.example.json` shows all three. The
+renderers are `wallet_pir_ops.monitoring` and `wallet_pir_ops.monitoring_roles`;
+an environment value that looks like a Slack webhook, or names a rendered
+setting, is refused. `apm.central` is ready when `/observers/ready` answers,
+that is while every expected, non-retired host has a fresh authenticated
+observation; alerts still count as valid collection. Readiness expires when
+collection stops advancing. `monitor.checker` is ready when `/monitor-status`
+reports an evaluation. Changing role settings changes the unit, so its deploy
+needs `--allow-unit-drift` after reviewing the drift.
+
+The observer loop's completed-round heartbeat is part of `/monitor-status`'s
+`progress_ok`. If the task fails or stops progressing, the independent monitor
+detects the stale heartbeat through its existing APM-progress alert, even if
+the APM's other collectors and evaluator continue running.
+
+Credentials come from Infisical through a private directory (a tmpfs) and
+`wallet-pir-monitoring.py install-credentials --role ROLE --source DIR`, each a
+journaled, lock-fenced transaction with `reconcile` and `rollback`:
+
+| `--role` | Files | Installed in | Loaded by |
+| --- | --- | --- | --- |
+| `sidecar` | `server.pem`, `server.key`, `monitoring-ca.pem` | `/etc/pir-apm-sidecar/credentials` | `pir-apm-sidecar.service` |
+| `collector` | `collector.pem`, `collector.key`, `monitoring-ca.pem` | `/etc/pir-apm/credentials` | `pir-apm.service` |
+| `apm-slack` | `slack-webhook` | `/etc/pir-apm/alerting` | `pir-apm.service` |
+| `monitor` | `slack-webhook`, optional `chain-rpc-cookie` | `/etc/pir-monitor/credentials` | `pir-monitor.service` |
+
+Where the unit is not installed yet, the install stages its files without a
+restart and the role's first deploy starts the unit with them.
+
+**New hosts.** With `apm_sidecar_boot = {url, sha256}` set in the fleet root
+or either standalone worker-pool root,
+every droplet Terraform creates appends
+[`pir-apm-sidecar-boot.sh`](../../tools/deploy/monitoring/pir-apm-sidecar-boot.sh)
+to its user_data as a second MIME part. At first boot it downloads the pinned
+binary into its release directory, checks the sha256, writes the unit exactly as
+the observer renderer renders it for that release and a provisional
+configuration (droplet name, private address), and enables the unit without
+starting it. The URL serves a public binary; user_data, state and plans carry
+no key material, and no certificate is issued at boot. Every droplet ignores
+user_data changes, so setting the variable never touches an existing host.
+Both worker-pool roots expose `monitoring_enrollment_required`; use their host
+outputs with the deployment tool's `enroll --write`, install the host
+credentials, and deploy the rendered sidecar before considering those hosts
+covered. A boot-installed unit alone is pending enrollment, not active monitoring.
+Elastic Transparent members finish installation and enrollment through the
+fleet actuator (`monitoring_install`), which requires its `monitoring` settings
+and refuses to accept a member when installation or enrollment is missing.
+
+**Fresh rebuild** of the APM and monitor hosts, after Terraform:
+
+1. Add the hosts to the deployment inventory and run `wallet-pir-monitoring.py
+   enroll --terraform-outputs ... --write`, then bind the coordinator's data
+   volume UUIDs.
+2. Issue host certificates (`issue-host`) and the collector certificate
+   (`issue-collector`) from the monitoring CA in Infisical, or reuse the stored
+   ones; store new ones in Infisical.
+3. On the coordinator: `install-observers --host coordinator --mode shadow`,
+   then `install-credentials --role collector` and `--role apm-slack`; on the
+   monitor host `install-credentials --role monitor`. With no unit yet these stage.
+4. `install-credentials --role sidecar` on every host; the boot-installed unit
+   starts with its certificate.
+5. Install the protected oracle at `PIR_MONITOR_ORACLE` on the monitor host.
+6. Capture baselines and deploy `apm-sidecar`, `apm` and `monitor`; the first
+   two update the boot configuration to the inventory's and install the APM.
+7. `coverage --terraform-outputs ... --roster ...` must report no gaps.
+
+`FreshRebuild` in `tools/tests/operations/test_monitoring.py` rehearses this
+with the real binaries, throwaway certificates and the rendered units on one
+machine; `test_monitoring_roles.py` covers install, update, status, rollback and
+adoption on fake hosts.
+
+**Existing hosts** adopt the rendered roles without a rebuild. Steps not yet
+done in production:
+
+1. Store the monitoring CA, host certificates, collector certificate and both
+   Slack webhooks in Infisical.
+2. Deploy `apm-sidecar` to every host, after its `sidecar` credentials.
+3. Prepare `/etc/pir-apm/observers.json` with `install-observers
+   --prepare-adoption`, then install the collector and `apm-slack` credentials
+   with `install-credentials --prepare-adoption` on the coordinator. Install
+   the `monitor` credentials on the monitor host normally. Preparation only
+   writes new files: it checks the pinned, healthy legacy APM launcher and
+   verifies that its unit and environment files do not reference the new
+   paths. The legacy APM keeps running; preparation does not claim collection
+   or activate the new credentials. Existing files cannot be replaced this way.
+4. Replace the coordinator's `apm.server` entry with `apm.central` and deploy
+   `apm` with `--retire-historical --allow-unit-drift`: the transaction moves
+   every `pir-apm.service.d/*.conf` drop-in into its rollback directory and
+   replaces the unit, after the plan's drift shows exactly the settings that
+   change (the `credential-exec.py` launcher and `/etc/default/pir-apm` go away;
+   every other setting must be carried by `environment`). The running unit must
+   use the launcher the legacy descriptor pins; otherwise the plan refuses.
+5. Do the same for the monitor with a `monitor.checker` entry. Its adoption pin
+   for `/opt/pir-monitor/credential-exec.py` and `/usr/bin/python3` is the APM's
+   bytes; read the live digests first and update `adopt_launcher` if they differ.
+6. Remove `/etc/default/pir-apm`'s webhook line only once both roles are
+   committed and no rollback to the legacy unit is wanted.
+
+The legacy rollback path stays: rolling back the adopting `apm` transaction
+restores the legacy unit, its drop-ins and launcher, and restarts the legacy
+release. Its saved restoration contract checks the legacy `/healthz`, not the
+new collector's readiness endpoint. After the unit is restored, `rollback` or
+`reconcile` may remove its prepared prerequisite files; doing this while the
+new unit still uses them is refused. Legacy deploys then resume with the inventory entry back under
+`server` and `--descriptors tools/enhance/deploy/apm.toml`, which shares the
+`apm` journal sequence. The monitor's adoption rolls back the same way.
+
 ## Transparent RAM capacity
 
-The host sampler's snapshot (`host_snapshot`) has one entry per source with
-`at`, memory, disk, restarts, `cgroup_memory_bytes`, `cpu_seconds` and
-`oom_kills`, and may add `host_id` (stable host name; several sources may share
+The APM's host snapshot (`host_snapshot`) has one entry per source with
+`at`, memory, disk, restarts and `oom_kills`, and may add `host_id` (stable host name; several sources may share
 a host), `size` (DigitalOcean size), `swap_total_bytes`, `swap_free_bytes` and
 `units`: `{"<unit>": {"memory_current_bytes", "memory_anon_bytes",
 "memory_peak_bytes", "memory_max_bytes" (null when unlimited), "oom_kills"}}`.

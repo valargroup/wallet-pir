@@ -18,10 +18,13 @@ resource "digitalocean_droplet" "recent" {
   ipv6       = true
   backups    = false
 
-  user_data = templatefile("${path.module}/cloud-init-transparent-worker.yaml.tftpl", {
-    packages          = jsonencode(local.packages)
-    deploy_public_key = var.deploy_public_key
-    host_key          = lookup(var.host_keys, each.key, null)
+  user_data = templatefile("${path.module}/../../apm-sidecar/user-data.tftpl", {
+    cloud_config = templatefile("${path.module}/cloud-init-transparent-worker.yaml.tftpl", {
+      packages          = jsonencode(local.packages)
+      deploy_public_key = var.deploy_public_key
+      host_key          = lookup(var.host_keys, each.key, null)
+    })
+    script = module.monitoring_boot.script
   })
 
   # A member's host facts never change during its life: a new image or cloud
