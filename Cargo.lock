@@ -2312,6 +2312,7 @@ dependencies = [
  "pir-sync-manager",
  "prometheus",
  "rand 0.8.5",
+ "receiver-pir-server",
  "reqwest",
  "serde",
  "serde_json",

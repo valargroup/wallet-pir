@@ -2,7 +2,8 @@
     feature = "enhance",
     feature = "status",
     feature = "transparent-history",
-    feature = "transparent-detail"
+    feature = "transparent-detail",
+    feature = "receiver"
 ))]
 use crate::config::active;
 use crate::{config::Config, readiness::Readiness, Result};
@@ -13,7 +14,8 @@ use serde_json::{json, Value};
     feature = "enhance",
     feature = "status",
     feature = "transparent-history",
-    feature = "transparent-detail"
+    feature = "transparent-detail",
+    feature = "receiver"
 ))]
 use std::future::Future;
 use std::{
@@ -85,7 +87,8 @@ fn take(
     feature = "enhance",
     feature = "status",
     feature = "transparent-history",
-    feature = "transparent-detail"
+    feature = "transparent-detail",
+    feature = "receiver"
 ))]
 fn spawn<F>(
     name: &'static str,
@@ -151,6 +154,8 @@ fn public_mounts(products: &[&'static str]) -> Vec<crate::public::Mount> {
     products
         .iter()
         .filter_map(|product| match *product {
+            #[cfg(feature = "receiver")]
+            "receiver" => Some(crate::public::receiver()),
             #[cfg(feature = "enhance")]
             "enhance" => Some(crate::public::enhance()),
             #[cfg(feature = "status")]
@@ -189,6 +194,10 @@ pub async fn verify(config: Config) -> Result<()> {
 /// before any listener is bound, product state is opened or task is started;
 /// any failure stops the whole query server. Legacy roles are not checked.
 async fn discover(config: &Config) -> Result<()> {
+    #[cfg(feature = "receiver")]
+    if let Some(role) = active(&config.receiver)? {
+        role.source(true)?.discover().await?;
+    }
     #[cfg(feature = "status")]
     if let Some(role) = active(&config.status)? {
         crate::status::discover(role).await?;
@@ -376,6 +385,23 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
                 wallet,
                 readiness,
                 local,
+            ),
+            stop,
+            &mut group,
+            &mut owners,
+        );
+    }
+    #[cfg(feature = "receiver")]
+    if let Some(role) = active(&config.receiver)? {
+        let stop = Shutdown::default();
+        state.phases.lock().unwrap().insert("receiver", "running");
+        spawn(
+            "receiver",
+            crate::receiver::run(
+                role.clone(),
+                slots["receiver"].clone(),
+                state.readiness["receiver"].clone(),
+                stop.clone(),
             ),
             stop,
             &mut group,

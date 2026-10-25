@@ -63,7 +63,8 @@ pub struct Mount {
         feature = "enhance",
         feature = "status",
         feature = "transparent-history",
-        feature = "transparent-detail"
+        feature = "transparent-detail",
+        feature = "receiver"
     )),
     allow(dead_code)
 )]
@@ -94,6 +95,26 @@ pub fn status() -> Mount {
     Mount {
         product: "status",
         paths: under(crate::status::PUBLIC_ROUTES.prefixes(), &["/*operation"]),
+        slot: Slot::default(),
+    }
+}
+
+/// Only wallet operations join the public listener; Receiver health stays private.
+#[cfg(feature = "receiver")]
+pub fn receiver() -> Mount {
+    Mount {
+        product: "receiver",
+        paths: under(
+            ["/receiver/v1", "/v1/receiver"],
+            &[
+                "/inventory",
+                "/inventory/*operation",
+                "/shard-filters/*operation",
+                "/public/*operation",
+                "/query",
+                "/block-filters/*operation",
+            ],
+        ),
         slot: Slot::default(),
     }
 }
@@ -312,7 +333,8 @@ mod tests {
         feature = "enhance",
         feature = "status",
         feature = "transparent-history",
-        feature = "transparent-detail"
+        feature = "transparent-detail",
+        feature = "receiver"
     ))]
     #[tokio::test]
     async fn every_product_composes_on_one_listener_with_aliases() {

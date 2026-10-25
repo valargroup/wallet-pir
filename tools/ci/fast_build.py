@@ -164,6 +164,7 @@ PRODUCT_HOST_FEATURES = {
     'enhance': 'pir-e2e-tests/enhance-fast',
     'transparent': 'pir-e2e-tests/transparent-tests',
     'status': 'pir-publisher/status-tests',
+    'receiver': 'pir-query-server/receiver',
 }
 
 # A fast target that requires one of these is compiled only for a diff that

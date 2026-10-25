@@ -479,6 +479,68 @@ impl Publications {
         self.0.read().unwrap().filters.clone()
     }
 
+    /// Install one fully authorized HTTPS view atomically. All refusals happen
+    /// before changing serving state; the lifecycle has already fenced revisions
+    /// that invalidate earlier answers. Returning the installed directory lets
+    /// its owner retain files until the final request releases it.
+    pub fn install_view(
+        &self,
+        directory: Option<Publication>,
+        filters: Option<crate::blocks::BlockWindow>,
+        revision: u64,
+        expected_epoch: u64,
+    ) -> Result<Option<Arc<Publication>>, &'static str> {
+        let mut state = self.0.write().unwrap();
+        if state.epoch != expected_epoch || revision < state.history_revision {
+            return Err("Receiver view was fenced");
+        }
+        if directory
+            .as_ref()
+            .is_some_and(|p| p.head().history_revision != revision)
+            || filters
+                .as_ref()
+                .is_some_and(|f| f.head().revision != revision)
+        {
+            return Err("Receiver view revisions differ");
+        }
+        let correction = revision > state.history_revision;
+        if !correction {
+            if directory.as_ref().is_some_and(|p| {
+                state.current.as_ref().is_some_and(|old| {
+                    old.head().end_height > p.head().end_height
+                        || (old.id() != p.id() && state.ready_at().is_some())
+                })
+            }) || filters.as_ref().is_some_and(|f| {
+                state
+                    .filters
+                    .as_ref()
+                    .is_some_and(|old| old.head().tip.height > f.head().tip.height)
+            }) {
+                return Err("Receiver view advanced during preparation or retention is full");
+            }
+        }
+        if correction {
+            state.revoke();
+            state.history_revision = revision;
+        }
+        state.expire();
+        if let Some(directory) = directory {
+            let directory = Arc::new(directory);
+            if let Some(old) = state.current.replace(directory) {
+                if state.current.as_ref().unwrap().id() == old.id() {
+                    state.release(std::iter::once(old));
+                } else {
+                    let until = Instant::now() + state.retention;
+                    state.retained.push((old, until));
+                }
+            }
+        }
+        if let Some(filters) = filters {
+            state.filters = Some(Arc::new(filters));
+        }
+        Ok(state.current.clone())
+    }
+
     /// The current rolling window, whether or not a PIR publication is ready.
     pub(crate) fn filters(&self) -> Result<Arc<crate::blocks::BlockWindow>, StatusCode> {
         self.0

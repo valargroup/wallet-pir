@@ -7,6 +7,8 @@ pub mod enhance;
 mod host;
 pub mod public;
 pub mod readiness;
+#[cfg(feature = "receiver")]
+pub mod receiver;
 #[cfg(feature = "status")]
 pub mod status;
 #[cfg(any(
