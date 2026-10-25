@@ -1614,15 +1614,20 @@ mod tests {
             }
         };
         let indexer = |missing: u64| json!({"payouts_missing": missing, "payouts_uncheckable": 0});
-        let current = report(json!({"serving": probed, "indexer": indexer(0)}));
+        let publisher_health = |hash, missing| {
+            crate::managed::audit_fields(
+                Some(([hash; 32], Some(indexer(missing)))),
+                0,
+                &crate::near::Reads::default(),
+            )
+        };
+        let current = report(publisher_health(1, 0));
         assert!(current.await.is_none());
         let origin = serve(Value::Null).await;
         let failure = indexer_report(&http, &format!("{origin}/large"), &probed).await;
         assert!(failure.is_err());
         // The service rotated after the lookup, or health answers for another one.
-        let failure = report(json!({"serving": rotated, "indexer": indexer(0)}))
-            .await
-            .unwrap();
+        let failure = report(publisher_health(2, 0)).await.unwrap();
         assert_eq!(
             failure,
             (
@@ -1635,9 +1640,7 @@ mod tests {
         assert!(report(json!({"serving": probed, "indexer": null}))
             .await
             .is_none());
-        let failure = report(json!({"serving": probed, "indexer": indexer(2)}))
-            .await
-            .unwrap();
+        let failure = report(publisher_health(1, 2)).await.unwrap();
         assert_eq!(failure, ("answer_mismatch", json!({"payouts_missing": 2})));
         let uncheckable = json!({"payouts_missing": 0, "payouts_uncheckable": 1});
         assert!(report(json!({"serving": probed, "indexer": uncheckable}))

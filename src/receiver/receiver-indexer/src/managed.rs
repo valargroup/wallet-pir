@@ -204,13 +204,7 @@ async fn run<E: PublisherExecutor + IngestionExecutor>(
                 let reads = audit_reads.clone();
                 async move {
                     let (current, epoch) = publications.health();
-                    let mut fields = reads.health();
-                    fields.insert("epoch".into(), epoch.into());
-                    fields.insert(
-                        "indexer".into(),
-                        current.and_then(|(_, report)| report).into(),
-                    );
-                    axum::Json(serde_json::Value::Object(fields))
+                    axum::Json(audit_fields(current, epoch, &reads))
                 }
             }),
         )
@@ -278,6 +272,20 @@ async fn run<E: PublisherExecutor + IngestionExecutor>(
     };
     let (guarded, served, ingested) = tokio::join!(guarded, served, ingested);
     guarded.and(served).and(ingested)
+}
+
+/// Keep report and inventory identity from one atomic publication snapshot.
+pub(crate) fn audit_fields(
+    current: Option<([u8; 32], Option<serde_json::Value>)>,
+    epoch: u64,
+    reads: &crate::near::Reads,
+) -> serde_json::Value {
+    let mut fields = reads.health();
+    let (serving, report) = current.unzip();
+    fields.insert("epoch".into(), epoch.into());
+    fields.insert("serving".into(), serving.map(hex::encode).into());
+    fields.insert("indexer".into(), report.flatten().into());
+    serde_json::Value::Object(fields)
 }
 
 fn spawn_guard(
