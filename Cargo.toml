@@ -95,10 +95,12 @@ lto = false
 codegen-units = 16
 incremental = true
 
-# The fast runner caps the job at 6 GiB. A from-scratch release-fast rustc of
-# this host at full optimization crosses that cap. Deploy binaries stay on the
+# The fast runner caps the job at 6 GiB and deletes incremental sessions before
+# this compile. A from-scratch incremental rustc of this host crosses that cap.
+# Non-incremental opt-level 1 stays inside it. Deploy binaries stay on the
 # fat-LTO release profile above. Fast tests link dependencies that are still
 # fully optimized.
 [profile.release-fast.package.pir-query-server]
 opt-level = 1
 codegen-units = 4
+incremental = false
