@@ -155,6 +155,7 @@
       "native:pir-query-server:lib:pir_query_server",
       "native:pir-query-server:test:operator",
       "native:pir-publisher:test:commands",
+      "native:pir-publisher:test:receiver",
       "native:pir-e2e-tests:test:publication_renewal",
       "native:pir-e2e-tests:lib:pir_e2e_tests",
       "native:pir-e2e-tests:doc:pir_e2e_tests"
@@ -211,7 +212,6 @@
       "receiver:receiver-indexer:doc:receiver_indexer",
       "receiver:receiver-indexer:example:rehearsal_fixture",
       "receiver:receiver-indexer:lib:receiver_indexer",
-      "receiver:receiver-indexer:test:indexer",
       "receiver:receiver-store:doc:receiver_store",
       "receiver:receiver-store:lib:receiver_store",
       "receiver:receiver-store:test:store"
