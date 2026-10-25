@@ -249,3 +249,8 @@ required-features = ["wallet-recovery-tests"]
 name = "publication_renewal"
 path = "tests/publication_renewal.rs"
 required-features = ["enhance-tests"]
+
+[[test]]
+name = "reorg_recovery"
+path = "tests/reorg_recovery.rs"
+required-features = ["enhance-tests"]

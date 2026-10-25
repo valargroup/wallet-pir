@@ -206,7 +206,8 @@ pub async fn run_worker_on(
         },
         config.matvec,
     )?;
-    let manager = crate::synchronization::SyncManager::new(worker.synchronizer()?);
+    let manager = crate::synchronization::SyncManager::new(worker.synchronizer()?)
+        .with_success_interval(crate::enhance::synchronization::RECOVERY_POLL);
     let ready = worker.clone();
     readiness.register(move || std::future::ready(ready.ready()));
     let result = tokio::select! {
@@ -231,7 +232,8 @@ pub async fn run_ingress_on(
         config.requests,
         config.uploads,
     )?;
-    let manager = crate::synchronization::SyncManager::new(ingress.synchronizer()?);
+    let manager = crate::synchronization::SyncManager::new(ingress.synchronizer()?)
+        .with_success_interval(crate::enhance::synchronization::RECOVERY_POLL);
     let ready = ingress.clone();
     readiness.register(move || std::future::ready(ready.ready()));
     public.install(ingress.public_router());
@@ -269,7 +271,8 @@ pub async fn run_router_on(
         config.max_objects,
         config.requests,
     )?;
-    let manager = crate::synchronization::SyncManager::new(router.synchronizer()?);
+    let manager = crate::synchronization::SyncManager::new(router.synchronizer()?)
+        .with_success_interval(crate::enhance::synchronization::RECOVERY_POLL);
     let ready = router.clone();
     readiness.register(move || std::future::ready(ready.ready()));
     let (notify, public_stop, control_stop) = stop_pair(shutdown);
@@ -303,9 +306,12 @@ pub async fn run_combined_on(
         config.matvec,
     )?;
     let synchronizers = combined.synchronizers()?;
-    let worker = crate::synchronization::SyncManager::new(synchronizers.worker);
-    let router = crate::synchronization::SyncManager::new(synchronizers.router);
-    let ingress = crate::synchronization::SyncManager::new(synchronizers.ingress);
+    let worker = crate::synchronization::SyncManager::new(synchronizers.worker)
+        .with_success_interval(crate::enhance::synchronization::RECOVERY_POLL);
+    let router = crate::synchronization::SyncManager::new(synchronizers.router)
+        .with_success_interval(crate::enhance::synchronization::RECOVERY_POLL);
+    let ingress = crate::synchronization::SyncManager::new(synchronizers.ingress)
+        .with_success_interval(crate::enhance::synchronization::RECOVERY_POLL);
     let ready = combined.clone();
     readiness.register(move || std::future::ready(ready.ready()));
     public.install(combined.public_router());

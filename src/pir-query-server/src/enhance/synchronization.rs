@@ -20,6 +20,135 @@ use {enhance_shared::publication::SOURCE_AUTHORITY_LIFETIME, pir_publication::So
 
 pub type Error = pir_sync_manager::Error;
 
+/// An expected recovery wait, proven from a well-formed publisher observation
+/// rather than inferred from an HTTP status or message. It refuses serving
+/// exactly like any other failure; only the polling cadence differs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Deferral {
+    /// The publisher withdrew authority, for example before a chain rewind.
+    Withdrawn,
+    /// The publisher's last successful node check is absent or older than
+    /// [`enhance_shared::publication::SOURCE_AUTHORITY_LIFETIME`].
+    SourceExpired,
+    /// A fresh observation shows authority moved while this pass prepared.
+    AuthorityAdvanced,
+}
+impl std::fmt::Display for Deferral {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Withdrawn => "publisher authority withdrawn",
+            Self::SourceExpired => "Enhance source authority is absent or expired",
+            Self::AuthorityAdvanced => "publisher authority advanced during the pass",
+        })
+    }
+}
+impl std::error::Error for Deferral {}
+impl Deferral {
+    pub fn of(error: &Error) -> Option<Self> {
+        error.downcast_ref::<Self>().copied()
+    }
+}
+
+/// An absent or aged node check. A timestamp ahead of this host's clock is not
+/// an expected recovery state and stays an ordinary failure.
+fn source_expired(source: pir_publication::SourceObservation, now: SystemTime) -> bool {
+    let now_ms = now
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_millis() as u64);
+    source == pir_publication::SourceObservation::NONE
+        || now_ms
+            .checked_sub(source.observed_unix_ms)
+            .is_some_and(|age| {
+                age > enhance_shared::publication::SOURCE_AUTHORITY_LIFETIME.as_millis() as u64
+            })
+}
+
+/// Recovery polling while a pass is deferred. The source authority lifetime is
+/// five seconds, so a one-second cadence adopts a republished view within one
+/// fifth of a lease; each deferred pass costs one discovery and one `current`
+/// metadata request (plus, for a pass that prepared material, one authority request).
+pub const RECOVERY_POLL: Duration = Duration::from_secs(1);
+/// The manager's ordinary cadence, kept for steady state and long deferrals.
+pub const STEADY_POLL: Duration = Duration::from_secs(5);
+/// A deferral longer than this returns to [`STEADY_POLL`], bounding publisher
+/// load without adding failure backoff. A reorganization defers consumers from
+/// withdrawal until the replacement is prepared: 24-49 s for a one-shard
+/// fixture on 6 CPUs and up to 89 s on 3 (`reorg_recovery`), so a one-minute
+/// window could expire just before the replacement appeared. Five minutes matches APM's critical
+/// publication-blocked duration, past which the withdrawal is an incident.
+/// A withdrawn `current` needs no node lookup, so polling stays cheap.
+pub const RECOVERY_WINDOW: Duration = Duration::from_secs(300);
+
+/// Converts expected deferrals into successful, deferred passes for
+/// [`crate::synchronization::SyncManager`], and chooses the following wait. Genuine
+/// failures pass through unchanged and keep the manager's exponential backoff.
+#[derive(Default)]
+pub struct Pacing {
+    deferred_since: Option<tokio::time::Instant>,
+    reason: Option<Deferral>,
+    failed: bool,
+}
+impl Pacing {
+    /// Record one complete pass. A deferral becomes `Ok(Some(reason))`; a
+    /// genuine failure is returned unchanged and ends any recovery window.
+    pub fn finish(
+        &mut self,
+        role: &'static str,
+        result: Result<(), Error>,
+    ) -> Result<Option<Deferral>, Error> {
+        let reason = match result {
+            Ok(()) => None,
+            Err(error) => match Deferral::of(&error) {
+                Some(reason) => Some(reason),
+                None => {
+                    self.failed = true;
+                    self.deferred_since = None;
+                    self.reason = None;
+                    return Err(error);
+                }
+            },
+        };
+        self.failed = false;
+        match reason {
+            Some(reason) => {
+                if self.reason != Some(reason) {
+                    tracing::warn!(
+                        role,
+                        %reason,
+                        "Enhance synchronization deferred; serving stays refused"
+                    );
+                }
+                self.deferred_since
+                    .get_or_insert_with(tokio::time::Instant::now);
+            }
+            None => {
+                if let Some(since) = self.deferred_since.take() {
+                    tracing::info!(
+                        role,
+                        waited_ms = since.elapsed().as_millis() as u64,
+                        "Enhance synchronization recovered from deferral"
+                    );
+                }
+            }
+        }
+        self.reason = reason;
+        Ok(reason)
+    }
+    /// The manager supplies [`RECOVERY_POLL`] after a successful or deferred
+    /// pass and its own backoff after a failure. Only a steady successful pass,
+    /// or a deferral older than [`RECOVERY_WINDOW`], is lengthened to [`STEADY_POLL`].
+    pub fn deadline(&self, minimum: tokio::time::Instant) -> tokio::time::Instant {
+        let recovering = self
+            .deferred_since
+            .is_some_and(|since| since.elapsed() < RECOVERY_WINDOW);
+        if self.failed || recovering {
+            minimum
+        } else {
+            minimum.max(tokio::time::Instant::now() + STEADY_POLL)
+        }
+    }
+}
+
 pub(crate) fn peer_origin(origin: &str) -> Result<(), String> {
     let url = reqwest::Url::parse(origin).map_err(|e| e.to_string())?;
     if url.scheme() != "http"
@@ -366,7 +495,19 @@ impl Lease {
         safety: &Safety,
     ) -> Result<Self, Error> {
         safety.observe(&response.current)?;
-        let remaining = response.remaining_at(SystemTime::now())?;
+        let now = SystemTime::now();
+        let remaining = response.remaining_at(now).map_err(|error| -> Error {
+            // `observe` validated `current`; classify only well-formed refusals.
+            if !response.current.eligible {
+                Deferral::Withdrawn.into()
+            } else if enhance_shared::protocol::canonical_hash(&response.authorized_manifest_sha256)
+                && source_expired(response.source, now)
+            {
+                Deferral::SourceExpired.into()
+            } else {
+                error.into()
+            }
+        })?;
         if response.authorized_manifest_sha256 != digest(manifest) {
             return Err("publisher authorized another manifest".into());
         }
@@ -447,6 +588,30 @@ impl Client {
         })?;
         let response = serde_json::from_slice(&self.metadata("authority", Some(body)).await?)?;
         Lease::from_response(response, manifest, &self.safety)
+    }
+
+    /// Renew `observed` after a pass prepared its material. A publisher
+    /// refusal carries no typed reason, so it is a deferral only when a fresh,
+    /// durable `current` observation proves authority moved; otherwise the
+    /// original error (transport, malformed or refusal) is returned.
+    pub async fn renew(&mut self, manifest: &Manifest, observed: &Lease) -> Result<Lease, Error> {
+        let error = match self.authority(manifest).await {
+            Ok(lease) if lease.continues(observed) => return Ok(lease),
+            Ok(_) => return Err(Deferral::AuthorityAdvanced.into()),
+            Err(error) if Deferral::of(&error).is_some() => return Err(error),
+            Err(error) => error,
+        };
+        match self.current().await {
+            Ok(fresh)
+                if !fresh.current.eligible
+                    || fresh.current.withdrawal_revision
+                        != observed.current().withdrawal_revision
+                    || fresh.current.manifest.as_ref() != Some(manifest) =>
+            {
+                Err(Deferral::AuthorityAdvanced.into())
+            }
+            _ => Err(error),
+        }
     }
 
     pub async fn inventory(
@@ -733,6 +898,164 @@ mod tests {
         let mut lease = Lease::from_response(initial, &manifest, &safety).unwrap();
         lease.deadline = Instant::now() - Duration::from_millis(1);
         assert!(lease.check(&manifest, &safety).is_err());
+    }
+
+    #[test]
+    fn only_well_formed_recovery_states_are_deferrals_and_none_grants_a_lease() {
+        let root = tempfile::tempdir().unwrap();
+        let safety = Safety::open(root.path(), "https://publisher.example").unwrap();
+        let manifest = manifest();
+        let initial = response(&manifest);
+        let deferral = |response: AuthorityResponse| {
+            Deferral::of(
+                &Lease::from_response(response, &manifest, &safety)
+                    .err()
+                    .unwrap(),
+            )
+        };
+        let mut expired = initial.clone();
+        expired.source.observed_unix_ms -= SOURCE_AUTHORITY_LIFETIME.as_millis() as u64 + 1;
+        assert_eq!(deferral(expired), Some(Deferral::SourceExpired));
+        let mut absent = initial.clone();
+        absent.source = SourceObservation::NONE;
+        assert_eq!(deferral(absent), Some(Deferral::SourceExpired));
+        // Malformed or suspicious responses keep failure backoff.
+        let mut future = initial.clone();
+        future.source.observed_unix_ms += 60000;
+        assert_eq!(deferral(future), None);
+        let mut wrong = initial.clone();
+        wrong.authorized_manifest_sha256 = "04".repeat(32);
+        assert_eq!(deferral(wrong), None);
+        let mut noncanonical = initial.clone();
+        noncanonical.authorized_manifest_sha256 = "zz".into();
+        assert_eq!(deferral(noncanonical), None);
+        let mut invalid = initial.clone();
+        invalid.current.version += 1;
+        assert_eq!(deferral(invalid), None);
+        // A valid withdrawal is a deferral, is durable, and closes older leases.
+        let lease = Lease::from_response(initial.clone(), &manifest, &safety).unwrap();
+        let mut withdrawn = initial.clone();
+        withdrawn.current.revision += 1;
+        withdrawn.current.withdrawal_revision = withdrawn.current.revision;
+        withdrawn.current.eligible = false;
+        withdrawn.authorized_manifest_sha256 = String::new();
+        withdrawn.source = SourceObservation::NONE;
+        assert_eq!(deferral(withdrawn.clone()), Some(Deferral::Withdrawn));
+        assert!(lease.check(&manifest, &safety).is_err());
+        drop(safety);
+        let reopened = Safety::open(root.path(), "https://publisher.example").unwrap();
+        assert!(reopened.permits(&manifest).is_err());
+        // A replay of the pre-withdrawal response is a replay, not a deferral.
+        assert_eq!(
+            Deferral::of(
+                &Lease::from_response(initial, &manifest, &reopened)
+                    .err()
+                    .unwrap()
+            ),
+            None
+        );
+    }
+
+    /// Drives the real manager loop through scripted passes under controlled
+    /// time and records when each pass started, in milliseconds.
+    struct Scripted {
+        outcomes: std::collections::VecDeque<Result<(), Error>>,
+        started: Arc<Mutex<Vec<tokio::time::Instant>>>,
+        pacing: Pacing,
+    }
+    #[derive(Debug)]
+    struct Stop;
+    impl std::fmt::Display for Stop {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("script finished")
+        }
+    }
+    impl std::error::Error for Stop {}
+    impl crate::synchronization::SyncTask for Scripted {
+        type Report = Option<Deferral>;
+        type Error = Error;
+        async fn synchronize(&mut self) -> Result<Option<Deferral>, Error> {
+            self.started
+                .lock()
+                .unwrap()
+                .push(tokio::time::Instant::now());
+            let outcome = self.outcomes.pop_front().unwrap_or(Err(Stop.into()));
+            self.pacing.finish("test", outcome)
+        }
+        async fn wait_until(&mut self, deadline: tokio::time::Instant) {
+            tokio::time::sleep_until(self.pacing.deadline(deadline)).await;
+        }
+        fn terminal(&self, error: &Error) -> bool {
+            error.downcast_ref::<Stop>().is_some()
+        }
+    }
+
+    /// Whole seconds between consecutive pass starts (jitter is below one second).
+    async fn gaps(outcomes: Vec<Result<(), Error>>) -> Vec<u64> {
+        let started = Arc::new(Mutex::new(Vec::new()));
+        let manager = crate::synchronization::SyncManager::new(Scripted {
+            outcomes: outcomes.into(),
+            started: started.clone(),
+            pacing: Pacing::default(),
+        })
+        .with_success_interval(RECOVERY_POLL);
+        manager.run().await;
+        let started = started.lock().unwrap();
+        started
+            .windows(2)
+            .map(|pair| (pair[1] - pair[0]).as_secs())
+            .collect()
+    }
+
+    fn deferred(reason: Deferral) -> Result<(), Error> {
+        Err(reason.into())
+    }
+    fn failed(message: &str) -> Result<(), Error> {
+        Err(message.to_string().into())
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn recovery_deferrals_poll_promptly_without_accumulating_failure_backoff() {
+        // Before this change every deferral below was an ordinary error: the
+        // waits would have been 10, 20, 40, 80 and 120 seconds.
+        let observed = gaps(vec![
+            deferred(Deferral::Withdrawn),
+            deferred(Deferral::Withdrawn),
+            deferred(Deferral::SourceExpired),
+            deferred(Deferral::AuthorityAdvanced),
+            deferred(Deferral::Withdrawn),
+            Ok(()),
+            Ok(()),
+        ])
+        .await;
+        assert_eq!(observed, [1, 1, 1, 1, 1, 5, 5]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn genuine_failures_keep_exponential_backoff_around_deferrals() {
+        let observed = gaps(vec![
+            failed("Enhance publisher refused current: 503 Service Unavailable"),
+            failed("connection refused"),
+            failed("expected value at line 1 column 1"),
+            // A proven deferral resets the streak; it does not hide it.
+            deferred(Deferral::Withdrawn),
+            failed("connection refused"),
+            Ok(()),
+        ])
+        .await;
+        assert_eq!(observed, [10, 20, 40, 1, 10, 5]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_lasting_deferral_returns_to_the_steady_cadence() {
+        let mut outcomes = Vec::new();
+        outcomes.resize_with(RECOVERY_WINDOW.as_secs() as usize + 10, || {
+            deferred(Deferral::SourceExpired)
+        });
+        let observed = gaps(outcomes).await;
+        let recovering = observed.iter().take_while(|gap| **gap == 1).count();
+        assert_eq!(recovering as u64, RECOVERY_WINDOW.as_secs());
+        assert!(observed[recovering..].iter().all(|gap| *gap == 5));
     }
 
     #[test]

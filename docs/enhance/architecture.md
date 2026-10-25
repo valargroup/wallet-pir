@@ -80,6 +80,15 @@ Waiting for a peer to load is deferred coordination; it does not start an
 independent retry timer. Router and ingress maintenance renew peer promises
 while loading or waiting.
 
+Expected recovery waits proven by a well-formed publisher response (withdrawal,
+absent or aged source authority, or authority that moved during a pass) refuse
+serving like any failure, but poll every second for up to five minutes and then
+every five seconds. Genuine failures, including publisher refusals, keep the
+manager's exponential backoff. Requests renew authority on demand, so serving
+resumes when a node or publisher edge returns without waiting for a pass. The
+publisher publishes each committed prefix once; work reserved again for that
+prefix while it prepared is skipped.
+
 The publisher supplies authority only after a real canonical node observation.
 Its five-second lifetime is never extended by an unchanged HTTP response or a
 local timer. Processes persist publication/recovery floors before serving.

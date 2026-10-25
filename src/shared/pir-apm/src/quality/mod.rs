@@ -156,26 +156,41 @@ const LONG_HISTOGRAMS: [&str; 4] = [
 ];
 
 async fn fetch(client: &reqwest::Client, url: &str) -> Result<Vec<u8>, &'static str> {
+    fetch_observed(client, url).await.1
+}
+/// [`fetch`], also returning the HTTP status of any response received. The
+/// error is a fixed reason; no response body or URL is ever included.
+async fn fetch_observed(
+    client: &reqwest::Client,
+    url: &str,
+) -> (Option<u16>, Result<Vec<u8>, &'static str>) {
     if url.starts_with("file:") {
-        let path = reqwest::Url::parse(url)
-            .map_err(|_| "invalid snapshot URL")?
-            .to_file_path()
-            .map_err(|_| "invalid snapshot path")?;
-        let bytes = tokio::fs::read(path)
-            .await
-            .map_err(|_| "snapshot unavailable")?;
-        if bytes.len() > 2 * 1024 * 1024 {
-            return Err("telemetry exceeds limit");
-        }
-        return Ok(bytes);
+        return (None, fetch_file(url).await);
     }
-    let mut response = client
-        .get(url)
-        .send()
+    let response = match client.get(url).send().await {
+        Ok(response) => response,
+        Err(_) => return (None, Err("transport unavailable")),
+    };
+    let status = response.status().as_u16();
+    match response.error_for_status() {
+        Ok(response) => (Some(status), read_limited(response).await),
+        Err(_) => (Some(status), Err("HTTP failure")),
+    }
+}
+async fn fetch_file(url: &str) -> Result<Vec<u8>, &'static str> {
+    let path = reqwest::Url::parse(url)
+        .map_err(|_| "invalid snapshot URL")?
+        .to_file_path()
+        .map_err(|_| "invalid snapshot path")?;
+    let bytes = tokio::fs::read(path)
         .await
-        .map_err(|_| "transport unavailable")?
-        .error_for_status()
-        .map_err(|_| "HTTP failure")?;
+        .map_err(|_| "snapshot unavailable")?;
+    if bytes.len() > 2 * 1024 * 1024 {
+        return Err("telemetry exceeds limit");
+    }
+    Ok(bytes)
+}
+async fn read_limited(mut response: reqwest::Response) -> Result<Vec<u8>, &'static str> {
     let mut bytes = Vec::new();
     while let Some(chunk) = response.chunk().await.map_err(|_| "truncated response")? {
         if bytes.len() + chunk.len() > 2 * 1024 * 1024 {
@@ -518,9 +533,16 @@ pub fn start(dashboard: SharedDashboard, config: &Config) -> Result<()> {
         tokio::spawn(async move {
             let mut tick = tokio::time::interval(Duration::from_secs(15));
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            // The last two distinct published maps; an origin serving the
+            // older one is lagging rather than disagreeing.
+            let (mut last, mut before) = (None, None);
             loop {
                 tick.tick().await;
-                let result = publication::check(&client, &service).await;
+                let mut result = publication::check(&client, &service).await;
+                if result.map_sha256.is_some() && result.map_sha256 != last {
+                    before = std::mem::replace(&mut last, result.map_sha256.clone());
+                }
+                result.previous_map = before.clone();
                 if let Some(s) = dashboard
                     .write()
                     .await

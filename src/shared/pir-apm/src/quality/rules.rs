@@ -449,6 +449,15 @@ fn service_rules(a: &mut Adder, svc: &ServiceView, view: &View, now: u64, p: &Po
             verdicts.push(("origins", publication.origins_agree));
         }
         for (key, verdict) in verdicts {
+            // Origin incidents retain the bounded, sanitized per-origin evidence.
+            let (observed, coverage) = if key == "origins" {
+                (publication.evidence(), publication.evidence())
+            } else {
+                (
+                    "Independent public publication check".into(),
+                    "Publication verification coverage".into(),
+                )
+            };
             a.add(
                 format!("publication_{key}"),
                 name,
@@ -456,7 +465,7 @@ fn service_rules(a: &mut Adder, svc: &ServiceView, view: &View, now: u64, p: &Po
                 "critical",
                 if key == "canonical" { 0 } else { 30 },
                 publication.sampled_at,
-                "Independent public publication check",
+                observed,
                 "public anchor must be canonical; every origin must agree",
             );
             a.add(
@@ -466,7 +475,7 @@ fn service_rules(a: &mut Adder, svc: &ServiceView, view: &View, now: u64, p: &Po
                 "warning",
                 45,
                 now,
-                "Publication verification coverage",
+                coverage,
                 "verification unavailable for 45s",
             );
         }
@@ -1350,6 +1359,54 @@ mod tests {
             firing(&conditions(&display, at, &p), "txid", "prepare_d_warning"),
             Some(true)
         );
+    }
+
+    #[test]
+    fn origin_disagreement_incident_retains_per_origin_evidence() {
+        let mut svc = service("transparent", Kind::History);
+        svc.public_origins = vec!["https://a.example".into(), "https://b.example".into()];
+        svc.publication = publication::View {
+            sampled_at: 100,
+            canonical: Some(true),
+            origins_agree: Some(false),
+            map_sha256: Some("aa".repeat(32)),
+            map_after: Some("aa".repeat(32)),
+            previous_map: Some("bb".repeat(32)),
+            origins: vec![
+                publication::Origin {
+                    origin: "https://a.example".into(),
+                    observed_at: 99,
+                    http_status: Some(200),
+                    map_sha256: Some("aa".repeat(32)),
+                    failure: None,
+                },
+                publication::Origin {
+                    origin: "https://b.example".into(),
+                    observed_at: 99,
+                    http_status: Some(200),
+                    map_sha256: Some("bb".repeat(32)),
+                    failure: None,
+                },
+            ],
+            ..Default::default()
+        };
+        let v = view(
+            vec![svc],
+            vec![("r", source("transparent", "recent-replica", 100, &[]))],
+        );
+        let f = conditions(&v, 105, &Policy::default());
+        let origins = f.services["transparent"]
+            .iter()
+            .find(|c| c.key == "quality.transparent.publication_origins")
+            .unwrap();
+        assert_eq!(origins.firing, Some(true));
+        assert!(origins
+            .observed
+            .starts_with("lagging origin; expected map aaaa"));
+        assert!(origins.observed.contains(&format!(
+            "https://b.example at 99: HTTP 200, map {}",
+            "bb".repeat(32)
+        )));
     }
 
     #[test]
