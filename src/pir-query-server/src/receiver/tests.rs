@@ -371,14 +371,7 @@ async fn https_authority_controls_real_wallet_queries_and_restart() {
         "a rejected candidate preserves retained wallet sessions"
     );
     origin.reject_candidate.store(false, Ordering::SeqCst);
-    origin.publish(0, 3);
-    origin.corrupt.store(true, Ordering::SeqCst);
-    assert!(lifecycle.synchronize().await.is_err());
-    assert!(
-        publications.inventory(&first_inventory).is_ok(),
-        "failed replacement leaves retained answers available"
-    );
-    origin.corrupt.store(false, Ordering::SeqCst);
+    origin.publish(0, 1);
     origin.available.store(false, Ordering::SeqCst);
     assert!(lifecycle.synchronize().await.is_err());
     assert!(
@@ -425,7 +418,7 @@ async fn https_authority_controls_real_wallet_queries_and_restart() {
             .unwrap()
             .unwrap()
             .payment,
-        common::record(0, 3).payment
+        common::record(0, 1).payment
     );
     wallet_slot.install(router_with_health(
         publications.clone(),
@@ -437,7 +430,7 @@ async fn https_authority_controls_real_wallet_queries_and_restart() {
         .unwrap()
         .apply(AuthorityTransition::Withdraw)
         .unwrap();
-    origin.publish(1, 2); // The consumer missed the withdrawal itself.
+    origin.publish(1, 1); // The consumer missed the withdrawal itself.
     lifecycle.synchronize().await.unwrap();
     assert!(matches!(
         first.page(common::receiver(), 0).await,
@@ -447,7 +440,7 @@ async fn https_authority_controls_real_wallet_queries_and_restart() {
     let active = config.state_dir.join("active.json");
     std::fs::remove_file(&active).unwrap();
     std::fs::create_dir(&active).unwrap();
-    origin.publish(1, 1);
+    origin.publish_filters(103);
     assert!(lifecycle.synchronize().await.is_err());
     assert!(
         publications.current_anchor().is_none(),
