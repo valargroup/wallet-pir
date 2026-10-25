@@ -69,7 +69,6 @@ async fn disabled_products_start_no_work_and_shutdown_releases_the_listener() {
         ("enhance", cfg!(feature = "enhance")),
         ("status", cfg!(feature = "status")),
         ("transparent_history", cfg!(feature = "transparent-history")),
-        ("transparent_filters", cfg!(feature = "transparent-history")),
         ("transaction_details", cfg!(feature = "transparent-detail")),
         ("receiver", cfg!(feature = "receiver")),
     ] {

@@ -3,7 +3,8 @@
 
 Reads a `transparent_pir_collect.py` sample and emits one JSON object per block
 with the block's filter. Element extraction follows the profile in
-`docs/transparent/filter-api.md`:
+the per-block profile last documented at
+https://github.com/valargroup/wallet-pir/blob/002e82e3/docs/transparent/filter-api.md:
 
   * every nonempty output script except one whose FIRST byte is 0x6a;
   * the nonempty previous-output locking script of every non-coinbase input

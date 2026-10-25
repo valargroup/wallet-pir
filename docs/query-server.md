@@ -29,26 +29,20 @@ public operations once and mounts them at both prefixes through
 | Enhance | `/enhance/v1/<op>` | `/v1/enhance/<op>` | `init`, `session/:id`, `sessions/:generation/:shard`, `query` |
 | Status | `/status/v1/<op>` | `/v1/status/<op>` | `init`, `session/:id`, `query` |
 | Transparent | `/transparent/v1/<op>` | `/v2/<op>` | `shards`, `shards/init`, `shards/:id/revisions/...`, `filters/shards[/:id/filter]`, `txid/...` |
-| Transparent filters | `/transparent/v1/filters/<op>` | `/v1/filters/<op>` | `info`, `chain`, `digests`, `range` |
 | Receiver | `/receiver/v1/<op>` | `/v1/receiver/<op>` | see the Receiver docs |
 
-The two Transparent alias groups share the canonical namespace; their suffixes
-are disjoint (`filters/shards...` versus `filters/{info,chain,digests,range}`)
-and route construction panics if they ever overlap. An alias serves only its own
-group, so `/v2/filters/info` and `/v1/filters/shards` stay unrouted. Health,
-readiness, metrics, `/control/*`, `/internal/*`, `/evaluate`, `/v1/provider-*`
-and publisher status are never mounted under a canonical prefix and stay on
-their private paths. Peer-to-peer calls between roles, deploy probes and the
-`pir-apm` quality probes keep the legacy paths that deployed binaries already
-serve.
+Health, readiness, metrics, `/control/*`, `/internal/*`, `/evaluate`,
+`/v1/provider-*` and publisher status are never mounted under a canonical
+prefix and stay on their private paths. Peer-to-peer calls between roles,
+deploy probes and the `pir-apm` quality probes keep the legacy paths that
+deployed binaries already serve.
 
 `https://wallet-pir.valargroup.dev` is the unified base for the canonical paths.
 It is a second site on the coordinator's Caddy
 ([`tools/deploy/coordinator/Caddyfile`](../tools/deploy/coordinator/Caddyfile),
 rendered by `wallet_pir_ops.deploy.coordinator_edge`, DNS in
-`tools/infra/digitalocean/fleet/shared.tf`). Enhance, Status and Transparent
-compact-filter operations reach the coordinator's loopback services. History
-shard maps, shard filters, Transparent queries and Receiver cross to `transparent-pir` and
+`tools/infra/digitalocean/fleet/shared.tf`). Enhance and Status reach the
+coordinator's loopback services. History shard maps, shard filters, Transparent queries and Receiver cross to `transparent-pir` and
 `receiver-pir` over verified HTTPS, naming each origin as Host and SNI. The edge
 translates canonical paths to existing backend aliases where needed. Recovery
 metadata and encrypted History queries share the query server's active publication. It

@@ -51,7 +51,6 @@
       "transparent:pir-publisher:lib:pir_publisher",
       "transparent:pir-publisher:test:lifecycle",
       "transparent:pir-e2e-tests:test:event_codec_bounds",
-      "transparent:pir-e2e-tests:test:service_round_trip",
       "transparent:pir-e2e-tests:test:shard_filters",
       "transparent:pir-e2e-tests:test:transparent_host_processes",
       "transparent:pir-e2e-tests:test:transparent_provider_installation",

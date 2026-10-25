@@ -57,7 +57,7 @@ Retained qualification bundles keep their historical `examples/` artifact labels
 the builder copies the current binaries into those evidence paths.
 Enhance has its own [index](../enhance/README.md).
 
-The [filter API](filter-api.md), [range envelope](filter-envelope.md), and [filter crate reference](https://github.com/zakura-core/wallet-libraries/blob/main/zakura/transparent-filter/README.md) remain active detailed references. Their formats have separate versioning from shard schema.
+The [shard filter API](filter-api.md) and [filter crate reference](https://github.com/zakura-core/wallet-libraries/blob/main/zakura/transparent-filter/README.md) remain active detailed references. Their formats have separate versioning from shard schema.
 
 ## Maintenance
 

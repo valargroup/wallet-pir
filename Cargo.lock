@@ -3679,7 +3679,6 @@ dependencies = [
  "pir-publication",
  "pir-query-server",
  "pir-service-discovery",
- "prometheus",
  "reqwest",
  "serde",
  "serde_json",

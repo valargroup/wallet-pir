@@ -42,15 +42,6 @@ runs:
     - uses: actions/upload-artifact@v4
       if: inputs.cuda != 'true' && (inputs.family == 'transparent')
       with:
-        name: transparent-filter-${{ github.sha }}
-        path: release-bundles/transparent-filter/transparent-filter.tar.gz
-        overwrite: true
-        compression-level: 0
-        if-no-files-found: error
-        retention-days: 14
-    - uses: actions/upload-artifact@v4
-      if: inputs.cuda != 'true' && (inputs.family == 'transparent')
-      with:
         name: transparent-shard-${{ github.sha }}
         path: release-bundles/transparent-shard/transparent-shard.tar.gz
         overwrite: true

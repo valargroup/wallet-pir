@@ -1,9 +1,11 @@
 # Filter measurement utilities
 
 These CLI tools support format-specific studies of public transparent filters.
-They are not the private shard retrieval implementation. Read the current
-[filter API](../../../docs/transparent/filter-api.md) and
-[envelope](../../../docs/transparent/filter-envelope.md) before interpreting results.
+They are not the private shard retrieval implementation. The per-block
+filters they study are no longer served; read the
+[filter API](https://github.com/valargroup/wallet-pir/blob/002e82e3/docs/transparent/filter-api.md) and
+[envelope](https://github.com/valargroup/wallet-pir/blob/002e82e3/docs/transparent/filter-envelope.md)
+at their last revision before interpreting results.
 
 - `transparent_pir_collect.py`: collect canonical block and resolved-script samples.
 - `transparent_filter_build.py`: build BIP 158 filters with the Rust CLI.
