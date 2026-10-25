@@ -33,9 +33,13 @@ SETTINGS = {
         'listen': '127.0.0.1:8095', 'state_dir': '/var/lib/display-worker',
         'publisher': 'https://publisher.example.invalid', 'publisher_network': 'main',
         'publisher_genesis': '00' * 32},
-    ('receiver', 'serve-publication'): {
-        'config_path': '/etc/receiver-serve/config.json',
-        'publication_record': '/etc/receiver-serve/record/publication.json',
-        'publication_root': '/srv/receiver-serve/publications', 'state_dir': '/var/lib/receiver-serve',
-        'bind': '127.0.0.1:18390', 'rpc_urls': ['http://127.0.0.1:8232'], 'no_auth': True},
+    ('receiver', 'query'): {
+        'config_path': '/etc/receiver-query/config.json', 'state_dir': '/srv/receiver-query',
+        'listen': '127.0.0.1:18390', 'management_listen': '127.0.0.1:18391',
+        'publisher': 'https://receiver-publisher.example.invalid', 'genesis': [0] * 32,
+        'activation_height': 3428143},
+    ('receiver', 'server'): {
+        'config_path': '/etc/receiver-publisher/config.json', 'management_listen': '127.0.0.1:18381',
+        'chain': {'rpc_url': 'http://127.0.0.1:8232', 'no_auth': True},
+        'receiver': {'data_dir': '/srv/receiver-pir/index', 'bind': '127.0.0.1:18380'}},
 }

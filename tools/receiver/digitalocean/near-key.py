@@ -72,7 +72,7 @@ def main(argv=None):
         return 2
     inventory = descriptors.load_inventory(inventory_path)
     service = descriptors.load_descriptors(ROOT / 'tools/deploy/services.toml')['receiver']
-    (server,) = descriptors.targets(service, inventory)
+    (server,) = [target for target in descriptors.targets(service, inventory) if target.role.name == 'server']
     prefix = ['sudo', '-n', '--'] if inventory.hosts[server.host].get('sudo') else []
     # Stages a key file no unit names yet, under the lock; a locked deploy activates it (see the docstring).
     command = SSHExecutor(inventory).raw_transport(server.host) + [

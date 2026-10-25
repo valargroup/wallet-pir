@@ -1,5 +1,7 @@
 //! Receiver serving from publisher-authorized immutable HTTPS objects.
 mod material;
+mod routes;
+pub use routes::{router_with_health, HealthFields};
 mod sync;
 
 use crate::{public::Slot, readiness::Readiness, Result};
@@ -77,7 +79,13 @@ impl Config {
     }
 }
 
-pub async fn run(config: Config, wallet: Slot, readiness: Readiness, stop: Shutdown) -> Result<()> {
+pub async fn run(
+    config: Config,
+    wallet: Slot,
+    operator: Slot,
+    readiness: Readiness,
+    stop: Shutdown,
+) -> Result<()> {
     config.validate()?;
     let publications = Publications::new(
         Duration::from_secs(config.retention_seconds),
@@ -89,10 +97,9 @@ pub async fn run(config: Config, wallet: Slot, readiness: Readiness, stop: Shutd
         async move { active }
     });
     let lifecycle = sync::synchronization(&config, publications.clone())?;
-    wallet.install(receiver_pir_server::router_with_health(
-        publications.clone(),
-        Arc::new(Default::default),
-    ));
+    let routes = router_with_health(publications.clone(), Arc::new(Default::default));
+    operator.install(routes.clone());
+    wallet.install(routes);
     // A normal stop drains HTTP first. An error still fences admission and any
     // response that outlived its publisher authorization.
     struct Fence(Publications);

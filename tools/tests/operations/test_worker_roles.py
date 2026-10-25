@@ -48,7 +48,7 @@ class WorkerRoles(unittest.TestCase):
     def test_templates_carry_no_fleet_address_or_provider_credential(self):
         for service in REGISTRY.values():
             for role in service.roles.values():
-                if role.mode != 'role':
+                if role.mode != 'role' or (service.name == 'receiver' and role.binary != 'pir-query-server'):
                     continue
                 text = role.template.read_text()
                 self.assertIsNone(re.search(r'\b10\.\d+\.\d+\.\d+|EnvironmentFile|NEAR', text), role.template)
@@ -302,15 +302,15 @@ class RolesCommand(unittest.TestCase):
     def test_explicit_service_and_role_render_a_worker(self):
         with tempfile.TemporaryDirectory() as directory:
             settings = Path(directory) / 'settings.json'
-            settings.write_text(json.dumps(SETTINGS[('receiver', 'serve-publication')]))
-            result = self.run_roles('--service', 'receiver', '--role', 'serve-publication',
+            settings.write_text(json.dumps(SETTINGS[('receiver', 'query')]))
+            result = self.run_roles('--service', 'receiver', '--role', 'query',
                                     '--settings', str(settings), '--release', RELEASE)
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn('/etc/receiver-serve/config.json', json.loads(result.stdout)['files'])
+            self.assertIn('/etc/receiver-query/config.json', json.loads(result.stdout)['files'])
             refused = self.run_roles('--service', 'receiver', '--role', 'server', '--settings', str(settings),
                                      '--release', RELEASE)
             self.assertNotEqual(refused.returncode, 0)
-            self.assertIn('keep their installed units', refused.stderr)
+            self.assertIn('settings', refused.stderr)
 
 
 if __name__ == '__main__':

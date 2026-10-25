@@ -44,11 +44,13 @@ the active publication warm; transport failures remove a recent replica after
 three consecutive failures spanning five seconds, and an answer that does not
 attest removes it at once.
 
-Receiver has no controller or lease either: one process indexes and serves, and
-its canonical guard revokes every session when an anchor it still serves leaves
-the chain. In `serve-publication` mode the operator's local publication record
-takes the indexer's place as the source of what to serve; the process verifies
-each record and its anchor before activating it, and the same guard applies.
+Receiver uses the root publisher's chain observations and scheduler. Its guard
+withdraws authority before rewinding an orphaned index or correcting history.
+Each root query server downloads immutable Receiver objects over HTTPS, verifies
+their bindings, and checks publisher authority immediately before activation.
+Approved answers remain available during transient publisher failures. A restart
+requires fresh authorization; withdrawal and correction fences invalidate old
+and in-flight answers through the shared publication lifecycle.
 
 ## Preparation and refusal kinds
 
@@ -61,7 +63,7 @@ private failures out of public responses; Transparent control replies carry the
 same `error` string, and Receiver's
 public refusals below are untouched. The kind appears only in private reports
 (`last_preparation` in Transparent
-control status, `publication.refusal` on Receiver health) and in the
+control status, Receiver synchronization status on root management) and in the
 operations `worker-report`, which keeps process, identity, publication,
 preparation and readiness separate and never infers encrypted correctness.
 
@@ -77,7 +79,7 @@ read it through accessors and change it only through the owner's operations:
 | Enhance | `EnhanceJournal` appends/rewinds; complete hashed inventories bind rows/setup/packing | publisher owns publication; each serving role owns local activation | `Arc` of the activated view or shard |
 | Status | `Generation`; identity changes only by `reidentified`/`reobserved`, content only by preparing anew | `Controller`, distributed roles | `Arc<Generation>` |
 | Transparent | candidate downloaded and verified from the HTTPS publisher | shard and display `live` modules, driven by their HTTPS managers | active publication runtimes |
-| Receiver | `PublicationRecord::read` | `serve-publication` loop | `Publication` |
+| Receiver | verified HTTPS inventory, tables, setup and filters | root `PublicationAdapter` lifecycle | `Arc<Publication>` |
 
 Constructors say which checks they make. Structural checks (lengths, ordering,
 hex form, layout) happen when a record or manifest is read or prepared;

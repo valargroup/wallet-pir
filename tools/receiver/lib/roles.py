@@ -1,73 +1,69 @@
-"""External Receiver worker role: `receiver-directory serve-publication`.
-
-The rendered configuration names an operator-owned publication record and the
-directory publications are staged under, both read-only; the state directory
-is the only writable path. The preflight check is the service's own loader in
-`--check` mode: it verifies the recorded publication exactly as startup does
-and exits without serving. No partner key is ever part of this role.
-"""
-from pathlib import PurePosixPath
-
+"""Render Receiver root hosts without mutating infrastructure or reading secrets."""
+import re
+from urllib.parse import urlsplit
 from wallet_pir_ops.paths import ROOT
-from wallet_pir_ops.role_config import address, directory, number, settings_of, worker as render_worker
+from wallet_pir_ops.role_config import address, directory, number, settings_of, worker
 
-TEMPLATE = ROOT / 'tools/receiver/deploy/receiver-serve-publication.service'
+QUERY_TEMPLATE = ROOT / 'tools/receiver/deploy/receiver-query.service'
+PUBLISHER_TEMPLATE = ROOT / 'tools/receiver/digitalocean/receiver-pir.service.in'
 
-
-def serve_publication(settings, *, release, template=None):
-    s = settings_of(settings, ('config_path', 'publication_record', 'publication_root', 'state_dir', 'bind',
-                               'rpc_urls'),
-                    ('cookie', 'no_auth', 'poll_seconds', 'min_rows'))
-    config_path, record, root, state = (directory(s[name]) for name in
-                                        ('config_path', 'publication_record', 'publication_root', 'state_dir'))
-    urls = s['rpc_urls']
-    if not isinstance(urls, list) or not urls or any(not isinstance(u, str) or not u.startswith('http://')
-                                                     for u in urls):
-        raise ValueError('rpc_urls must list http:// node endpoints')
-    cookie, no_auth = s.get('cookie'), s.get('no_auth', False)
-    if (cookie is None) == (no_auth is not True):
-        raise ValueError('set exactly one of cookie and no_auth')
-    config = {'publication_record': record, 'bind': address(s['bind'], 'bind'), 'state_dir': state,
-              'rpc_urls': urls}
-    reads = [config_path, directory(str(PurePosixPath(record).parent)), root]
-    if cookie is not None:
-        config['cookie'] = directory(cookie)
-        reads.append(config['cookie'])
-    else:
-        config['no_auth'] = True
-    for name in ('poll_seconds', 'min_rows'):
+def query(settings, *, release, template=None):
+    """Render an HTTPS-only Receiver query host and its offline check."""
+    s = settings_of(settings, ('config_path', 'state_dir', 'listen', 'management_listen',
+                               'publisher', 'genesis', 'activation_height'),
+                    ('publisher_ca', 'poll_seconds', 'bootstrap_max_bytes',
+                     'table_memory_mib', 'retention_seconds'))
+    config_path, state = directory(s['config_path']), directory(s['state_dir'])
+    origin = urlsplit(s['publisher'])
+    if (origin.scheme != 'https' or not origin.netloc or origin.username is not None
+            or origin.password is not None or origin.path not in ('', '/') or origin.query or origin.fragment):
+        raise ValueError('Receiver publisher must be an HTTPS origin')
+    genesis = s['genesis']
+    if (not isinstance(genesis, list) or len(genesis) != 32
+            or any(type(byte) is not int or not 0 <= byte <= 255 for byte in genesis)):
+        raise ValueError('Receiver genesis must contain 32 bytes')
+    body = {'publisher': s['publisher'], 'genesis': genesis, 'state_dir': state,
+            'activation_height': int(number(s['activation_height'], 'activation_height', 1))}
+    readonly = [config_path]
+    if s.get('publisher_ca') is not None:
+        body['publisher_ca'] = directory(s['publisher_ca'])
+        readonly.append(body['publisher_ca'])
+    for name in ('poll_seconds', 'bootstrap_max_bytes', 'table_memory_mib', 'retention_seconds'):
         if name in s:
-            config[name] = int(number(s[name], name, 1))
-    template = TEMPLATE.read_text() if template is None else template
-    return render_worker(template, directory(release) + '/receiver-directory',
-                         ['serve-publication', '--config', config_path],
-                         configurations={config_path: config}, writable=[state],
-                         readonly=list(dict.fromkeys(reads)), settings=s,
-                         check=('serve-publication', '--check', '--config', config_path))
+            body[name] = int(number(s[name], name, 1))
+    document = {'management_listen': address(s['management_listen'], 'management_listen'),
+                'public_listen': address(s['listen'], 'listen'),
+                'receiver': {'enabled': True, 'settings': body}}
+    return worker(QUERY_TEMPLATE.read_text() if template is None else template,
+                  directory(release) + '/pir-query-server', ['--config', config_path],
+                  configurations={config_path: document}, writable=[state], readonly=readonly,
+                  settings=s, check=('--config', config_path, '--check'))
 
+def publisher(settings, *, release, template=None):
+    """Preserve the existing Receiver store under the root publisher's chain feed."""
+    s = settings_of(settings, ('config_path', 'management_listen', 'chain', 'receiver'), ('near_key_id',))
+    config_path = directory(s['config_path'])
+    body = dict(s['receiver'])
+    state = directory(body['data_dir'])
+    document = {'management_listen': address(s['management_listen'], 'management_listen'),
+                'chain': s['chain'], 'receiver': {'enabled': True, 'settings': body}}
+    readonly = [config_path]
+    if s['chain'].get('rpc_cookie') is not None:
+        readonly.append(directory(s['chain']['rpc_cookie']))
+    key_id = s.get('near_key_id', 'disabled')
+    if not isinstance(key_id, str) or not re.fullmatch(r'[A-Za-z0-9_.-]+', key_id):
+        raise ValueError('near_key_id must name an installed audit file, without path syntax')
+    text = (PUBLISHER_TEMPLATE.read_text() if template is None else template).replace('@NEAR_KEY@', key_id)
+    return worker(text,
+                  directory(release) + '/pir-publisher', ['--config', config_path],
+                  configurations={config_path: document}, writable=[state], readonly=readonly,
+                  settings=s, check=('--config', config_path, '--check'))
 
 def report(service, role, health, ready_status):
-    """Receiver health, separated into the report's axes (see wallet_pir_ops.worker_report)."""
-    if health is None:
-        return {'executable': {'binary_sha256': 'unobserved'}, 'publication': 'unobserved',
-                'preparation': 'unobserved', 'readiness': 'unobserved'}
-    identity = health.get('identity') or {}
-    serving = health.get('serving')
-    if role == 'serve-publication':
-        worker = health.get('publication') or {}
-        publication = {'assigned': worker.get('assigned'), 'loaded': worker.get('loaded'), 'serving': serving}
-        preparation = {'preparing': worker.get('preparing'), 'refusal': worker.get('refusal')}
-        verified = worker.get('loaded') is not None
-    else:
-        publication = {'assigned': 'unsupported', 'loaded': serving, 'serving': serving}
-        preparation = 'unsupported'
-        verified = serving is not None
-    return {
-        'executable': {'binary_sha256': identity.get('binary_sha256'), 'incarnation': identity.get('incarnation')},
-        'publication': publication,
-        'preparation': preparation,
-        # The operator's record is the authority here; the worker activates it
-        # itself once it verifies and its anchor is canonical.
-        'readiness': {'verified': verified, 'warm': serving is not None, 'authorized': serving is not None,
-                      'ready': serving is not None, 'epoch': health.get('epoch')},
-    }
+    """Root management reports readiness; object presence grants no authority."""
+    identity = (health or {}).get('identity') or {}
+    return {'executable': {'binary_sha256': identity.get('binary_sha256', 'unobserved'),
+                           'incarnation': identity.get('incarnation')},
+            'publication': health if health is not None else 'unobserved',
+            'preparation': 'unobserved',
+            'readiness': {'ready': bool(health and health.get('ready') and ready_status == 200)}}

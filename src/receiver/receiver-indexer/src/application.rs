@@ -2095,68 +2095,6 @@ mod tests {
         assert!(!rows.exists());
     }
 
-    /// A staged check verifies every segment of a one-shot inventory but keeps none
-    /// prepared: every table and filter it lists reloads from the staged files. Staged
-    /// serving keeps its prepared tables within the budget: a sealed shard and the recent
-    /// tier are four tables against a budget of two.
-    #[cfg(feature = "qualification-tests")]
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn a_staged_check_keeps_no_prepared_segment() {
-        use crate::serve_publication::{load, PublicationRecord};
-        let mut paused = Paused::new(|_| {}).await;
-        paused.args.shard_target = Some(1);
-        paused.extend(&[super::common::receiver()], 0, 0);
-        paused.extend(&[], 1, 0);
-        let rpc = std::slice::from_ref(&paused.rpc);
-        let genesis = Network::Mainnet.genesis_hash();
-        refresh(&paused.args, rpc, genesis, None, &mut State::default())
-            .await
-            .unwrap();
-        let root = paused.dir.path().join("publications");
-        let layout = std::fs::read_dir(&root)
-            .unwrap()
-            .map(|e| e.unwrap().file_name().into_string().unwrap())
-            .find_map(|n| n.strip_suffix(".inventory.json").map(str::to_owned))
-            .unwrap();
-        let path = paused.dir.path().join("record.json");
-        let record = json!({"directory": root, "revision": layout});
-        std::fs::write(&path, record.to_string()).unwrap();
-        let config = serde_json::from_value(json!({
-            "publication_record": path, "bind": "127.0.0.1:18380",
-            "state_dir": paused.dir.path().join("state"),
-            "rpc_urls": ["http://127.0.0.1:1"], "no_auth": true,
-        }))
-        .unwrap();
-        let record = PublicationRecord::read(&path).unwrap();
-        let checked = load(&record, &config, None).unwrap();
-        let shards = checked.publication().inventory().shards();
-        assert_eq!(shards.iter().filter(|s| s.filter.is_some()).count(), 1);
-        assert_eq!(checked.publication().segments().len(), 2);
-        assert_eq!(checked.publication().held_bytes(), 0);
-        let budget = 2 * receiver_pir_server::tables::resident_bytes(
-            zakura_pir_publisher::receiver::session::MIN_ROWS,
-        );
-        let publications = Publications::new(DEFAULT_RETENTION, budget);
-        let served = load(&record, &config, Some(&publications)).unwrap();
-        assert_eq!(served.publication().held_bytes(), 0);
-        assert!(publications.tables().resident() <= budget);
-        // A staged rows file replaced by a longer one is refused before it is read.
-        let staged = checked.publication().segments()[0].payments.clone();
-        let revision = staged
-            .payment_manifest()
-            .unwrap()
-            .directory
-            .revision()
-            .unwrap();
-        let rows = root.join(format!("{}.rows", hex::encode(revision)));
-        let mut longer = std::fs::read(&rows).unwrap();
-        longer.extend_from_slice(&[0; 4096]);
-        std::fs::write(&rows, longer).unwrap();
-        let tables = receiver_pir_server::tables::Tables::new(1 << 30);
-        assert!(tables.get(&staged).is_err());
-        assert_eq!(tables.resident(), 0);
-    }
-
     #[cfg(feature = "qualification-tests")]
     /// A stored manifest over the manifest size bound does not stop a restart: its table
     /// is discarded as a leftover and prepared again, and a wallet reads it as usual.

@@ -6,22 +6,6 @@
     ],
     "full": []
   },
-  "receiver-indexer": {
-    "fast": [],
-    "full": [
-      "indexer",
-      "serve_publication"
-    ]
-  },
-  "receiver-pir-server": {
-    "fast": [
-      "ci_smoke"
-    ],
-    "full": [
-      "http",
-      "library_client"
-    ]
-  },
   "receiver-store": {
     "fast": [],
     "full": [
@@ -29,8 +13,12 @@
     ]
   },
   "status-publisher": {
-    "fast": ["object_access_http"],
-    "full": ["live_lookup"]
+    "fast": [
+      "object_access_http"
+    ],
+    "full": [
+      "live_lookup"
+    ]
   },
   "status-shared": {
     "fast": [],
@@ -60,7 +48,8 @@
   "pir-query-server": {
     "fast": [
       "operator",
-      "ci_smoke"
+      "ci_smoke",
+      "receiver_ci_smoke"
     ],
     "full": [
       "assignment",
@@ -73,7 +62,9 @@
       "wallet_anchor",
       "wallet_continuation",
       "wallet_recut",
-      "wallet_sync"
+      "wallet_sync",
+      "receiver_http",
+      "receiver_library_client"
     ]
   },
   "pir-publisher": {
@@ -81,7 +72,9 @@
       "lifecycle",
       "commands"
     ],
-    "full": []
+    "full": [
+      "receiver"
+    ]
   },
   "pir-e2e-tests": {
     "fast": [

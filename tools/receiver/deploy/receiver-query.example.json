@@ -1,0 +1,48 @@
+{
+  "management_listen": "127.0.0.1:18381",
+  "public_listen": "127.0.0.1:18380",
+  "receiver": {
+    "enabled": true,
+    "settings": {
+      "publisher": "https://receiver-pir.valargroup.dev",
+      "state_dir": "/srv/wallet-pir-query/receiver",
+      "genesis": [
+        8,
+        206,
+        61,
+        151,
+        49,
+        176,
+        0,
+        192,
+        131,
+        56,
+        69,
+        92,
+        138,
+        74,
+        107,
+        208,
+        93,
+        161,
+        110,
+        38,
+        177,
+        29,
+        170,
+        27,
+        145,
+        113,
+        132,
+        236,
+        232,
+        15,
+        4,
+        0
+      ],
+      "activation_height": 3428143,
+      "table_memory_mib": 4096,
+      "retention_seconds": 600
+    }
+  }
+}

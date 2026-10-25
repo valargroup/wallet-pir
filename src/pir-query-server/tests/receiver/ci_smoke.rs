@@ -1,11 +1,11 @@
 //! Bounded wallet retrieval and refusal checks through a real HTTP listener.
-#[path = "../../receiver-store/tests/common/mod.rs"]
+#[path = "../../../receiver/receiver-store/tests/common/mod.rs"]
 mod common;
-#[path = "common/history.rs"]
+#[path = "../../../receiver/receiver-pir-server/tests/common/history.rs"]
 mod history;
-#[path = "common/prepared.rs"]
+#[path = "../../../receiver/receiver-pir-server/tests/common/prepared.rs"]
 mod prepared;
-#[path = "common/router.rs"]
+#[path = "../../../receiver/receiver-pir-server/tests/common/router.rs"]
 mod router;
 use common::{manifest, receiver, record};
 use history::{history, Accepted, Session};

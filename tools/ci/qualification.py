@@ -120,7 +120,9 @@ def build(family):
         return
     command = ['cargo', 'build', '--locked', '--release']
     if family == 'receiver':
-        command += ['-p', 'receiver-indexer', '--bin', 'receiver-directory', '--bin', 'receiver-probe']
+        command += ['-p', 'receiver-indexer', '-p', 'pir-publisher', '-p', 'pir-query-server',
+                    '--features', 'pir-publisher/receiver,pir-query-server/receiver',
+                    '--bin', 'pir-publisher', '--bin', 'pir-query-server', '--bin', 'receiver-probe']
     elif family == 'transparent':
         # The history and display processes are pir-query-server with both
         # Transparent features; the admin tools are transparent-tools binaries.

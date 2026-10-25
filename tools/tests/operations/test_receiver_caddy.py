@@ -2,7 +2,7 @@
 
 A stub `ssh` runs the helper's remote program locally, with `/etc/caddy`,
 `/opt/receiver-pir` and `/proc/` moved under a temporary root. Stub `systemctl`,
-`caddy`, `curl` and `receiver-directory` model the Droplet: a successful reload
+`caddy`, `curl` and `pir-publisher` model the Droplet: a successful reload
 copies the live Caddyfile to `run/caddy.running`, the configuration the probe and
 the public routes answer from, and `# stub:` lines in a Caddyfile make them fail.
 """
@@ -74,7 +74,7 @@ STUBS = {
         print('200' if '# stub: expose ' + urlsplit(sys.argv[-1]).path + '\\n' in running else '404', end='')
     ''',
 }
-# The running release's `receiver-directory`, whose `probe` misses while the
+# The running release's `pir-publisher`, whose `probe` misses while the
 # running file has `# stub: probe fails`, or its `@wallet` matcher lacks one of the
 # routes named in a `route` file beside the binary, the routes that release reads.
 PROBE = '''\
@@ -163,9 +163,10 @@ class StubDroplet(unittest.TestCase):
         self.running.write_text(LIVE)
         self.release = self.root / 'opt/receiver-pir/releases' / ('ab' * 32)
         self.release.mkdir(parents=True)
-        script(self.release / 'receiver-directory', PROBE)
+        script(self.release / 'pir-publisher', PROBE)
+        script(self.release / 'receiver-probe', PROBE)
         (self.root / 'proc/4242').mkdir(parents=True)
-        (self.root / 'proc/4242/exe').symlink_to(self.release / 'receiver-directory')
+        (self.root / 'proc/4242/exe').symlink_to(self.release / 'pir-publisher')
         bin_dir = self.dir / 'bin'
         bin_dir.mkdir()
         (bin_dir / 'ssh').write_text(STUB_SSH.format(python=sys.executable))
@@ -313,7 +314,8 @@ class ReceiverCutover(StubDroplet):
         self.previous = self.root / 'opt/receiver-pir/releases' / ('cd' * 32)
         self.previous.mkdir(parents=True)
         self.previous, self.release = self.previous.resolve(), self.release.resolve()
-        script(self.previous / 'receiver-directory', PROBE)
+        script(self.previous / 'pir-publisher', PROBE)
+        script(self.previous / 'receiver-probe', PROBE)
         (self.previous / 'route').write_text(' '.join(PREVIOUS_ROUTES))
         (self.release / 'route').write_text(' '.join(wallet_routes(LIVE)))
         self.live.write_text(PREVIOUS)
@@ -327,7 +329,7 @@ class ReceiverCutover(StubDroplet):
     def run_release(self, release):
         """Makes the receiver's main process run `release`."""
         (self.root / 'proc/4242/exe').unlink()
-        (self.root / 'proc/4242/exe').symlink_to(release / 'receiver-directory')
+        (self.root / 'proc/4242/exe').symlink_to(release / 'pir-publisher')
 
     def deploy(self, fails=False, commits=False):
         """A stand-in for the deploy tool: `deploy` runs this release and its exact check,
@@ -341,7 +343,7 @@ class ReceiverCutover(StubDroplet):
                 self.run_release(self.previous)
                 return 0
             self.run_release(self.release)
-            check = subprocess.run([str(self.release / 'receiver-directory'), 'probe'], env=self.env,
+            check = subprocess.run([str(self.release / 'receiver-probe')], env=self.env,
                                    capture_output=True)
             if commits:
                 return 1
@@ -397,7 +399,7 @@ class ReceiverCutover(StubDroplet):
         self.assertEqual(backup.read_text(), PREVIOUS)
         # The deploy's check, then the inventory's probe, both from the new release.
         probes = [json.loads(line)[0] for line in self.lines('probe')]
-        self.assertEqual(probes, [str(self.release / 'receiver-directory')] * 2)
+        self.assertEqual(probes, [str(self.release / 'receiver-probe')] * 2)
         # Rolling back restores both, verified with the previous binary, keeping both
         # backups even within the same second.
         status, output = self.cutover(backup.read_text(), ['rollback', 'receiver'], self.deploy())

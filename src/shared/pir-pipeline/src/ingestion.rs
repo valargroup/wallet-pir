@@ -39,7 +39,7 @@ pub struct ChainObservation {
 #[derive(Clone, Debug)]
 pub struct ChainSettings {
     pub rpc_url: String,
-    pub rpc_cookie: PathBuf,
+    pub rpc_cookie: Option<PathBuf>,
     pub poll: Duration,
 }
 

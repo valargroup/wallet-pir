@@ -32,7 +32,10 @@ where
         .cloned()
         .ok_or("enabled transparent_history publisher needs the root chain settings")?;
     config.rpc_url = chain.rpc_url.clone();
-    config.rpc_cookie = chain.rpc_cookie.clone();
+    config.rpc_cookie = chain
+        .rpc_cookie
+        .clone()
+        .ok_or("History publisher requires a node cookie")?;
     let mut writable_paths = vec![config.publication_root.clone()];
     if !config.follow_journal {
         writable_paths.push(config.data_dir.clone());
@@ -45,6 +48,9 @@ where
         path: "/v1/status",
         rule: ReadinessRule::Body(serving),
     }];
+    if chain.rpc_cookie.is_none() {
+        return Err("Transparent publisher requires a node cookie".into());
+    }
     let resources = PublisherResources {
         listeners: vec![config.listen],
         writable_paths,
@@ -57,7 +63,13 @@ where
             let feed = context
                 .chain
                 .ok_or("History publisher started without the root chain")?;
-            let rpc = crate::ingest::zakura::connect(&chain.rpc_url, &chain.rpc_cookie)?;
+            let rpc = crate::ingest::zakura::connect(
+                &chain.rpc_url,
+                chain
+                    .rpc_cookie
+                    .as_ref()
+                    .ok_or("Transparent publisher requires a node cookie")?,
+            )?;
             crate::history::controller::run_managed(
                 config,
                 rpc,
@@ -82,6 +94,9 @@ where
     let chain = chain
         .cloned()
         .ok_or("enabled transaction_details publisher needs the root chain settings")?;
+    if chain.rpc_cookie.is_none() {
+        return Err("Transparent publisher requires a node cookie".into());
+    }
     let resources = PublisherResources {
         listeners: vec![config.status_listen],
         writable_paths: vec![config.root.clone(), config.journal.clone()],
@@ -98,7 +113,13 @@ where
             let feed = context
                 .chain
                 .ok_or("transaction-detail publisher started without the root chain")?;
-            let rpc = crate::ingest::zakura::connect(&chain.rpc_url, &chain.rpc_cookie)?;
+            let rpc = crate::ingest::zakura::connect(
+                &chain.rpc_url,
+                chain
+                    .rpc_cookie
+                    .as_ref()
+                    .ok_or("Transparent publisher requires a node cookie")?,
+            )?;
             crate::tx_detail::service::run(
                 config,
                 rpc,

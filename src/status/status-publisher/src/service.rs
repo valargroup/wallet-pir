@@ -27,7 +27,12 @@ pub async fn run<E: PublisherExecutor + IngestionExecutor>(
 ) -> Result<()> {
     config.validate()?;
     let publisher = Publisher::new(config.publisher)?;
-    let rpc = NodeClient::from_cookie_file(chain.rpc_url, chain.rpc_cookie)?;
+    let rpc = NodeClient::from_cookie_file(
+        chain.rpc_url,
+        chain
+            .rpc_cookie
+            .ok_or("Status publisher requires a node cookie")?,
+    )?;
     pir_pipeline::publisher::dedicated_runtime("status-publisher", move || async move {
         publisher.run_managed(rpc, feed, http, stop, executor).await
     })
@@ -47,6 +52,9 @@ pub fn configure<E: PublisherExecutor + IngestionExecutor>(
     let chain = chain
         .cloned()
         .ok_or("enabled status publisher needs the root chain settings")?;
+    if chain.rpc_cookie.is_none() {
+        return Err("Status publisher requires a node cookie".into());
+    }
     let resources = PublisherResources {
         listeners: vec![config.publisher.private_listen],
         writable_paths: vec![config.publisher.state_dir.clone()],

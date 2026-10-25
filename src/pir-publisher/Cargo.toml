@@ -38,6 +38,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
+hex = "0.4"
+zakura-server-chain = { path = "../shared/pir-chain", default-features = false, features = ["receiver", "testing-node"] }
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
 
@@ -48,3 +50,8 @@ path = "tests/lifecycle.rs"
 [[test]]
 name = "commands"
 path = "tests/commands.rs"
+
+[[test]]
+name = "receiver"
+path = "tests/receiver.rs"
+required-features = ["receiver"]

@@ -332,7 +332,7 @@ class ReceiverTrustBoundary(unittest.TestCase):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         root = Path(directory.name)
-        text = text.replace('reverse_proxy 10.70.0.11:18380', f'reverse_proxy 127.0.0.1:{upstream.port}')
+        text = text.replace('{$RECEIVER_QUERY_UPSTREAM}', f'127.0.0.1:{upstream.port}')
         text = text.replace('{\n\tservers {', '{\n\tadmin off\n\tskip_install_trust\n\tauto_https disable_redirects\n'
                             f'\thttp_port {free_port()}\n\thttps_port {port}\n'
                             f'\tstorage file_system {root / "storage"}\n\tservers {{', 1)

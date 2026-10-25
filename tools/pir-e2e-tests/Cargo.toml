@@ -18,6 +18,7 @@ cuda = ["enhance-shared?/cuda"]
 qualification-tests = []
 # The copied query-host entrypoint the process tests start.
 query-host = ["dep:pir-query-server"]
+receiver = ["dep:receiver-indexer", "pir-publisher/receiver", "pir-query-server/receiver"]
 publisher-host = ["dep:pir-publisher"]
 transparent-history = []
 transparent-detail = []
@@ -101,6 +102,7 @@ wallet-recovery-tests = [
 ]
 
 [dependencies]
+receiver-indexer = { path = "../../src/receiver/receiver-indexer", optional = true }
 pir-service-discovery = { path = "../../src/shared/pir-service-discovery" }
 tempfile = { version = "3", optional = true }
 pir-publisher = { path = "../../src/pir-publisher", optional = true }

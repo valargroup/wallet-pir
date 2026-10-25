@@ -60,7 +60,10 @@ fn follow(
     use pir_pipeline::ingestion::ChainFollower;
     let client = RpcClient::new(
         chain.rpc_url,
-        Credentials::read_once(&chain.rpc_cookie)?,
+        match chain.rpc_cookie {
+            Some(path) => Credentials::read_once(&path)?,
+            None => Credentials::None,
+        },
         "pir-publisher-follower",
         HttpPolicy::SHARED,
     )?;

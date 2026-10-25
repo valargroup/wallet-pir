@@ -330,12 +330,12 @@ mod tests {
         ))
         .unwrap();
         let layout = config.validate().unwrap();
-        assert_eq!(layout.products.len(), 4);
+        assert_eq!(layout.products.len(), 5);
         // Management, the one shared wallet listener, Enhance and Status
         // private control listeners, and one provider listener per
         // Transparent product.
         assert_eq!(layout.listeners.len(), 6);
-        assert_eq!(layout.public.len(), 4);
+        assert_eq!(layout.public.len(), 5);
     }
 
     #[cfg(feature = "transparent-history")]

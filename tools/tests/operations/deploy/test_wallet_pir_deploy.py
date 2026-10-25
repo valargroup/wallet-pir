@@ -68,16 +68,24 @@ STATUS_QUERY_OLD = b'pir-query-server built from c5a6486'
 STATUS_QUERY_NEW = b'pir-query-server built from a later revision'
 STATUS_LEGACY = '/opt/wallet-pir/releases/c5a6486/native'
 RECEIVER_TEMPLATE = ROOT / 'tools/receiver/digitalocean/receiver-pir.service.in'
-RECEIVER_OLD = b'receiver-directory built from c7f6d296'
-RECEIVER_NEW = b'receiver-directory built from a later revision'
-RECEIVER_CURRENT = '/opt/receiver-pir/current/receiver-directory'
+RECEIVER_OLD = b'pir-publisher built from c7f6d296'
+RECEIVER_NEW = b'pir-publisher built from a later revision'
+RECEIVER_CURRENT = '/opt/receiver-pir/current/pir-publisher'
 NEAR_KEY = '2026-10-01'
 NEAR_KEY_FILE = '/etc/receiver-pir/near-%s.env'
-RECEIVER_LIVE = units.render(RECEIVER_TEMPLATE.read_text(), {'RELEASE': '/opt/receiver-pir/current', 'NEAR_KEY': NEAR_KEY})
+from tools.receiver.lib.roles import publisher as receiver_publisher
+RECEIVER_SETTINGS = {
+    'config_path': '/etc/receiver-pir/publisher.json', 'management_listen': '127.0.0.1:18381',
+    'near_key_id': NEAR_KEY, 'chain': {'rpc_url': 'http://node.example', 'rpc_cookie': None, 'poll_ms': 1000},
+    'receiver': {'data_dir': '/srv/receiver-pir/index', 'bind': '127.0.0.1:18380'},
+}
+def receiver_unit(release, key=NEAR_KEY):
+    return receiver_publisher({**RECEIVER_SETTINGS, 'near_key_id': key}, release=release).unit
+RECEIVER_LIVE = receiver_unit('/opt/receiver-pir/current')
 # The unit installed by hand before the tool, with the optional unversioned key file.
 RECEIVER_HAND_INSTALLED = RECEIVER_LIVE.replace('EnvironmentFile=-' + NEAR_KEY_FILE % NEAR_KEY,
                                                 'EnvironmentFile=-/etc/receiver-pir/near.env')
-RECEIVER_PROBE = ['{release_dir}/receiver-directory', 'probe', '--origin', 'https://receiver.example', '--no-auth']
+RECEIVER_PROBE = ['{release_dir}/receiver-probe', '--origin', 'https://receiver.example', '--no-auth']
 
 
 def receiver_release(sha):
@@ -138,8 +146,7 @@ INVENTORY = {
             'exact_check': {'host': 'coordinator', 'argv': ['/usr/local/bin/exact', '{release_dir}']},
         },
         'receiver': {
-            'template_vars': {'NEAR_KEY': NEAR_KEY},
-            'roles': {'server': [{'host': 'receiver-01', 'vars': {'listen': '10.0.0.11:18380'}}]},
+                        'roles': {'server': [{'host': 'receiver-01', 'vars': {'management_listen': '127.0.0.1:18381'}, 'settings': RECEIVER_SETTINGS}]},
             'exact_check': {'host': 'receiver-01', 'argv': RECEIVER_PROBE, 'timeout': 120},
         },
     },
@@ -179,7 +186,7 @@ class Fleet(unittest.TestCase):
         self.status_binary.write_bytes(STATUS_NEW)
         self.status_query_binary = self.dir / 'status-pir-query-server'
         self.status_query_binary.write_bytes(STATUS_QUERY_NEW)
-        self.receiver_binary = self.dir / 'receiver-directory'
+        self.receiver_binary = self.dir / 'pir-publisher'
         self.receiver_binary.write_bytes(RECEIVER_NEW)
 
     def deployer(self, name='enhance', only=None, service=None):
@@ -229,12 +236,13 @@ class Fleet(unittest.TestCase):
 
         Key files for `NEAR_KEY` and the legacy `near.env` are installed.
         """
-        files = {RECEIVER_CURRENT: RECEIVER_OLD, NEAR_KEY_FILE % NEAR_KEY: 'NEAR_INTENTS_EXPLORER=old\n',
+        files = {**receiver_publisher(RECEIVER_SETTINGS, release='/opt/receiver-pir/current').files, RECEIVER_CURRENT: RECEIVER_OLD, NEAR_KEY_FILE % NEAR_KEY: 'NEAR_INTENTS_EXPLORER=old\n',
                  '/etc/receiver-pir/near.env': 'NEAR_INTENTS_EXPLORER=old\n'}
+        self.fake.product_check = lambda host, argv: (0, 'valid offline configuration')
         self.fake.install('receiver-01', 'receiver-pir.service', live, (), files)
         # Identity is nested, and `serving` stays null until the first publication.
         self.fake.health_shapes[('receiver-01', 'receiver-pir.service')] = lambda ready, exe: {
-            'identity': {'binary_sha256': exe}, 'serving': 'cd' * 32 if ready else None, 'epoch': 0}
+            'identity': {'binary_sha256': exe}, 'ready': bool(ready)}
         deployer = self.deployer('receiver')
         deployer.capture_baseline()
         self.fake.log.clear()
@@ -244,8 +252,8 @@ class Fleet(unittest.TestCase):
         """`(deployer, sha)` for a host provisioned as the runbook says: release `sha` running the
         template's unit with ` (bootstrap)` on its Description."""
         sha = sha256(RECEIVER_NEW)
-        self.fake.put('receiver-01', receiver_release(sha) + '/receiver-directory', RECEIVER_NEW)
-        managed = units.render(RECEIVER_TEMPLATE.read_text(), {'RELEASE': receiver_release(sha), 'NEAR_KEY': NEAR_KEY})
+        self.fake.put('receiver-01', receiver_release(sha) + '/pir-publisher', RECEIVER_NEW)
+        managed = receiver_unit(receiver_release(sha))
         return self.receiver_fleet(re.sub(r'(?m)^Description=.*$', r'\g<0> (bootstrap)', managed, count=1)), sha
 
     def restarts(self):
@@ -860,11 +868,10 @@ class ReceiverTests(Fleet):
         self.assertEqual(journal.hosts[0]['drift'], drift)
         self.assertEqual(self.restarts(), [('receiver-01', 'receiver-pir.service')])
         self.assertEqual(self.running('receiver-01', 'receiver-pir.service'), sha)
-        self.assertEqual(self.unit(), units.render(RECEIVER_TEMPLATE.read_text(),
-                                                   {'RELEASE': receiver_release(sha), 'NEAR_KEY': NEAR_KEY}))
+        self.assertEqual(self.unit(), receiver_unit(receiver_release(sha)))
         self.assertEqual(self.fake.unit_paths('receiver-01', 'receiver-pir.service'),
                          ['/etc/systemd/system/receiver-pir.service'])
-        self.assertIn('--bind 10.70.0.11:18380', self.command())
+        self.assertIn('--config /etc/receiver-pir/publisher.json', self.command())
         self.assertEqual(self.fake.read('receiver-01', RECEIVER_CURRENT), RECEIVER_OLD.decode())
         self.fake.log.clear()
         deployer.rollback()
@@ -888,8 +895,7 @@ class ReceiverTests(Fleet):
         self.assertEqual(journal.status, 'committed')
         self.assertEqual(self.restarts(), [('receiver-01', 'receiver-pir.service')])
         self.assertEqual(self.fake.runs[-1], ('receiver-01', probe_argv(sha)))
-        self.assertEqual(self.unit(), units.render(RECEIVER_TEMPLATE.read_text(),
-                                                   {'RELEASE': receiver_release(sha), 'NEAR_KEY': NEAR_KEY}))
+        self.assertEqual(self.unit(), receiver_unit(receiver_release(sha)))
         # The managed unit again is a no-op: no transaction and no check.
         self.fake.log.clear()
         runs = len(self.fake.runs)
@@ -913,7 +919,7 @@ class ReceiverTests(Fleet):
         self.receiver_fleet().deploy(sha, self.receiver_binary)
         deployed = self.unit()
         template = self.dir / 'receiver-pir.service.in'
-        template.write_text(RECEIVER_TEMPLATE.read_text().replace('--concurrency 12', '--concurrency 16'))
+        template.write_text(RECEIVER_TEMPLATE.read_text().replace('RestartSec=15', 'RestartSec=20'))
         service = SERVICES['receiver']
         changed = dataclasses.replace(service, roles={**service.roles, 'server': dataclasses.replace(
             service.roles['server'], template=template)})
@@ -923,26 +929,26 @@ class ReceiverTests(Fleet):
         # plan shows them as drift for review.
         with self.assertRaisesRegex(DeployError, 'allow-unit-drift'):
             deployer.deploy(sha)
-        self.assertIn('--concurrency 16', '\n'.join(line for line in self.lines if 'drift Service.ExecStart' in line))
+        self.assertIn('20', '\n'.join(line for line in self.lines if 'drift Service.RestartSec' in line))
         self.assertEqual(self.fake.log, [])
         journal = deployer.deploy(sha, allow_drift=True)
         self.assertEqual(journal.status, 'committed')
         self.assertEqual(self.restarts(), [('receiver-01', 'receiver-pir.service')])
-        self.assertIn('--concurrency 16', self.unit())
-        self.assertIn(' --concurrency 16 ', self.command())
+        self.assertIn('RestartSec=20', self.unit())
+        self.assertIn('--config /etc/receiver-pir/publisher.json', self.command())
         self.assertEqual(self.running('receiver-01', 'receiver-pir.service'), sha)
         self.fake.log.clear()
         deployer.rollback()
         # Same executable either way; the restart picks up the restored unit.
         self.assertEqual(self.restarts(), [('receiver-01', 'receiver-pir.service')])
         self.assertEqual(self.unit(), deployed)
-        self.assertIn(' --concurrency 12 ', self.command())
+        self.assertIn('RestartSec=15', self.unit())
 
     def test_a_server_that_never_publishes_is_rolled_back(self):
         deployer = self.receiver_fleet()
         sha = sha256(RECEIVER_NEW)
         self.fake.unhealthy.add(('receiver-01', sha))
-        with self.assertRaisesRegex(DeployError, 'not verified within 300s: health serving is None'):
+        with self.assertRaisesRegex(DeployError, 'not verified within 300s: health ready is False'):
             deployer.deploy(sha, self.receiver_binary)
         self.assertEqual(self.running('receiver-01', 'receiver-pir.service'), sha256(RECEIVER_OLD))
         self.assertEqual(self.unit(), RECEIVER_LIVE)
@@ -963,27 +969,26 @@ class ReceiverTests(Fleet):
         self.assertEqual(deployer.deploy(sha, self.receiver_binary).status, 'committed')
         self.assertEqual(seen, [('receiver-01', 120, True, 'verifying', sha)])
 
-    def test_template_values_cannot_add_unit_lines_or_path_segments(self):
-        deployer = self.receiver_fleet()
+    def test_audit_file_ids_cannot_add_unit_lines_or_path_segments(self):
         sha = sha256(RECEIVER_NEW)
+        deployer = self.receiver_fleet()
         document = json.loads(self.inventory_path.read_text())
         for value in ['ab\nExecStartPre=/bin/sh -c id', 'ab cd', '../ab', 'ab/cd', 'a=b', '"ab"', '']:
             with self.subTest(value=value):
-                document['services']['receiver']['template_vars']['NEAR_KEY'] = value
+                document['services']['receiver']['roles']['server'][0]['settings']['near_key_id'] = value
                 self.inventory_path.write_text(json.dumps(document))
-                inventory = descriptors.load_inventory(self.inventory_path)
-                with self.assertRaisesRegex(descriptors.DescriptorError, 'template_vars.NEAR_KEY'):
-                    descriptors.template_values(SERVICES['receiver'], inventory, sha)
-                deployer.inventory = inventory
+                original = self.inventory
+                self.inventory = descriptors.load_inventory(self.inventory_path)
+                deployer = self.deployer('receiver')
+                self.inventory = original
                 with self.assertRaisesRegex(DeployError, 'refused before any change'):
                     deployer.deploy(sha, self.receiver_binary, allow_drift=True)
                 self.assertEqual(self.fake.log, [])
-        self.assertEqual(descriptors.template_values(SERVICES['receiver'], self.inventory, sha)['NEAR_KEY'], NEAR_KEY)
 
     def rotated(self, key):
         """A receiver deployer whose inventory names NEAR key file `key`, as a rotation sets it."""
         document = json.loads(self.inventory_path.read_text())
-        document['services']['receiver']['template_vars']['NEAR_KEY'] = key
+        document['services']['receiver']['roles']['server'][0]['settings']['near_key_id'] = key
         self.inventory_path.write_text(json.dumps(document))
         self.inventory = descriptors.load_inventory(self.inventory_path)
         return self.deployer('receiver')
@@ -1076,7 +1081,7 @@ class ReceiverTests(Fleet):
                 self.assertEqual(self.unit(), RECEIVER_LIVE)
                 self.assertEqual(Journal.load(self.state, 'receiver').status, 'rolled-back')
                 # The verified release stays staged for a retry; only units roll back.
-                self.assertEqual(self.fake.read('receiver-01', receiver_release(sha) + '/receiver-directory'),
+                self.assertEqual(self.fake.read('receiver-01', receiver_release(sha) + '/pir-publisher'),
                                  RECEIVER_NEW.decode())
 
 
@@ -1122,7 +1127,7 @@ class UnitTests(unittest.TestCase):
         self.assertEqual(SERVICES['enhance'].order,
                          ('worker', 'external-worker', 'packing-router', 'query-ingress', 'combined'))
         self.assertEqual(SERVICES['status'].order, ('worker', 'external-worker', 'router', 'combined'))
-        self.assertEqual(SERVICES['receiver'].order, ('server', 'serve-publication'))
+        self.assertEqual(SERVICES['receiver'].order, ('server', 'query'))
         publisher = SERVICES['publisher']
         self.assertEqual(publisher.binary, 'pir-publisher')
         self.assertEqual(publisher.order, ('server',))
@@ -1136,7 +1141,7 @@ class UnitTests(unittest.TestCase):
         self.assertNotIn('coordinator', enhance.roles)
         self.assertNotIn('controller', SERVICES['status'].roles)
         self.assertEqual(SERVICES['receiver'].artifact_kinds, ('receiver-pir',))
-        self.assertIn('receiver-directory', cli.load_release().BINARIES['receiver-pir'])
+        self.assertIn('pir-publisher', cli.load_release().BINARIES['receiver-pir'])
         (server,) = descriptors.targets(SERVICES['receiver'], inventory)
         self.assertEqual(descriptors.exact_check(SERVICES['receiver'], inventory)['host'], server.host)
 
@@ -1147,8 +1152,11 @@ class UnitTests(unittest.TestCase):
         text = (DEPLOY / 'deploy.toml').read_text().replace('template = "', 'template = "%s/' % DEPLOY)
         text += (ROOT / 'tools/receiver/digitalocean/service.toml').read_text().replace(
             'template = "receiver-pir.service.in"', 'template = "'+str(RECEIVER_TEMPLATE)+'"')
+        text = text.replace('template = "../deploy/receiver-query.service"',
+                            'template = "' + str(ROOT / 'tools/receiver/deploy/receiver-query.service') + '"')
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / 'deploy.toml'
+            text += '\n[services.template-test]\nroot="/opt/test"\nbinary="test"\nself_check=["--help"]\norder=["server"]\n[services.template-test.roles.server]\nunit="test.service"\nmode="template"\ntemplate="' + str(RECEIVER_TEMPLATE) + '"\nhealth="http://127.0.0.1/health"\nowns_unit = true\n'
             for old, new in [('\nowns_unit = true\n', '\nowns_unit = "yes"\n'),
                              ('mode = "role"\n', 'mode = "exec-drop-in"\nowns_unit = true\n')]:
                 with self.subTest(new=new):

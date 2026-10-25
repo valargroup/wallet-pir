@@ -1,0 +1,21 @@
+{
+  "management_listen": "127.0.0.1:18381",
+  "chain": {
+    "rpc_url": "http://10.70.0.19:8232",
+    "rpc_cookie": null, "no_auth": true,
+    "poll_ms": 1000
+  },
+  "receiver": {
+    "enabled": true,
+    "settings": {
+      "data_dir": "/srv/receiver-pir/index",
+      "min_rows": 8192,
+      "depth": 2,
+      "bind": "127.0.0.1:18380",
+      "batch_size": 64,
+      "concurrency": 12,
+      "near_since": 1790640000,
+      "near_poll_seconds": 60
+    }
+  }
+}

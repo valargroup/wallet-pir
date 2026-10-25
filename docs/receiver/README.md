@@ -20,9 +20,9 @@ optional payout audit store are this repository's `receiver-store` package. The
 indexer enables the checks before storing a payment and before serving a
 publication, and a wallet checks a retrieved payment before crediting it.
 Dependencies run one way from wallet-pir to wallet-libraries; wallet-libraries
-never consumes wallet-pir packages. `receiver-pir-server` serves publications
-over HTTP using only the query server's module. `receiver-indexer` builds them from a Zakura node; its
-binary is `receiver-directory`. The service shares process identity and
+never consumes wallet-pir packages. `receiver-pir-server` holds reusable publication and evaluator primitives.
+`pir-query-server` owns HTTP serving, admission and synchronization. `receiver-indexer` builds them from a Zakura node; its
+services run through `pir-publisher` and `pir-query-server`. The service shares process identity and
 admission (`pir-control`), metrics (`pir-observability`) and the PIR profile
 (`pir-native`) with the other services, and reads the node through
 the server-only chain adapters (`zakura-server-chain`, `src/shared/pir-chain`), which decode
@@ -36,12 +36,11 @@ block hints; its work token borrows those dependencies. Shared preparation
 consumes that token, building the publication from the committed chain index
 alone, and passes the prepared product candidate to owner publication. The
 optional payout audit only supplies the report health serves beside it. The final
-canonical check and epoch-fenced atomic activation remain product owned; one-shot
+canonical check and epoch-fenced distribution commit remain publisher owned; one-shot
 publication writes the publication's files instead. Preparation failure keeps
-committed progress for retry. `receiver-directory` configures these calls and
-independently wires the HTTP server, canonical guard and optional payout audit;
-the guard continues checking served anchors throughout both phases. This
-standard-path adapter adds no HTTP source. The shared acquisition seam accepts
+committed progress for retry. `pir-publisher` configures these calls and
+independently wires its distribution listener, canonical guard and optional payout audit;
+the guard continues checking served anchors throughout both phases. Query hosts receive prepared objects over HTTPS and never contact the node. The shared acquisition seam accepts
 product work without owning a store, protocol, queue or authority ([lifecycle boundaries](../enhance/architecture.md#ingestion-application)).
 
 ## Publisher distribution
@@ -242,7 +241,7 @@ canonical counterpart.
 | `POST /receiver/v1/query` | One encrypted payment or witness row query |
 | `GET /receiver/v1/block-filters/head` | Rolling hint availability |
 | `GET /receiver/v1/block-filters/:revision/:from/:limit` | Bounded consecutive block filters |
-| `GET /v1/receiver/health` | Process identity, the served inventory, the indexer's report and this process's NEAR reads (operators only) |
+| `GET /v1/receiver/health` | Query process identity and the served inventory (management listener only) |
 
 A query holds `RPQ1`, the session ID, a fresh 16-byte nonce, the packing key and
 the encrypted row selection. The response echoes that 52-byte header. The
@@ -276,85 +275,33 @@ zero means no indexed payment in that publication, not an unused address. Missin
 or inconsistent pages and transport failures are errors, never absence or a
 cleartext fallback.
 
-## Running the indexer and server
+## Running the publisher and query server
 
-```sh
-cargo build --locked --release -p receiver-indexer --bin receiver-directory
-receiver-directory --data-dir /srv/receiver-pir/index --rpc-url http://127.0.0.1:8232 \
-  --cookie /path/to/.cookie --serve --min-rows 8192
-```
+Continuous ingestion runs through `pir-publisher --config FILE` with the Receiver
+feature and product section enabled. The root chain feed owns tip observations,
+RPC configuration and scheduling; Receiver applies its default two-block depth.
+The existing SQLite index, correction revision, witness checkpoints and sealed
+material remain in `data_dir`. Optional payout audit credentials stay only on the
+publisher. Its private product listener exposes HTTPS distribution behind the
+edge, rather than wallet query routes.
 
-`receiver-directory --help` and the `Config` documentation in
-`src/receiver/receiver-indexer/src/service.rs` describe every flag. The indexer requires
-mainnet and indexes from Ironwood activation to `--depth` (default 2) blocks below
-the tip of the freshest mainnet `--rpc-url` node, which runs the whole pass and
-must still be on mainnet to publish; the next poll checks each node's genesis and
-ranks them again. `--no-auth` replaces
-`--cookie`, which is read on every request. Each batch of raw blocks is checked
-against the saved parent, heights, merkle roots, Action positions, terminal hash and
-tree size before it is stored. A restart or reorg rewinds to the last saved
-canonical block; a reorg below the start height needs a rebuild in a new directory.
+Queries run through `pir-query-server --config FILE` with the Receiver feature.
+Use the [Receiver-only examples](../../tools/receiver/deploy/) or add the Receiver
+section to the root query configuration. The query host consumes publisher HTTPS
+only and needs no node or payout-audit credentials. Root `--check` validates the
+configuration offline; it never opens state or grants serving authority.
 
-Without `--serve`, one run writes its publication's files under `publications/` and
-prints a summary. With `--serve`, it polls every `--poll-seconds`, prepares each
-canonical tip in memory and serves on `--bind`, a loopback or private address
-behind a TLS proxy. At a paused tip the publication keeps serving, and the
-optional audit's latest report replaces only the report health serves with it. A
-guard revokes every session once a node shows a served anchor is off its
-chain. A replaced inventory stays available for `--retention-seconds`. Logs go to standard error, filtered by `RUST_LOG`. See [the DigitalOcean deployment](../../tools/receiver/digitalocean/README.md).
+One-shot maintenance uses `pir-publisher receiver publish --data-dir PATH
+--rpc-url URL --no-auth` (or a node cookie). It prepares the same publication files
+without a continuous runtime. `receiver-probe` remains the independent encrypted
+payment, witness and filter diagnostic. Its optional `--health-url` checks a
+private publisher audit report at `/operator/receiver/health` when one is available; it never sends node credentials
+to the query service.
 
-With an optional partner key in `NEAR_INTENTS_EXPLORER`, the server audits completed ZEC payouts in `providers.sqlite`. The audit retains reported receiver/transaction pairs and a bounded feed cursor, not a global list of issued addresses. Its report counts missing or uncheckable payouts. It does not gate indexing, hints, PIR publication or wallet issuance, and without a key the service runs without it. An audit read error leaves its cursor unchanged. Inspect health's `near.reads` when verifying the partner key separately.
-
-### Serving operator-staged publications
-
-`receiver-directory serve-publication --config FILE` serves publications an
-operator stages, from the same binary, without indexing: it opens no index
-database, ingests no blocks and reads no partner key. The JSON configuration
-(unknown fields refused) names `publication_record`, `bind` (loopback or
-private), `state_dir`, `rpc_urls`, and `cookie` or `"no_auth": true`, with the
-optional `poll_seconds` and `min_rows` of the indexer. The record
-is `{"directory": "/abs/path", "revision": "<64 hex>"}`: stage the complete
-directory a one-shot run writes, a `<layout>.inventory.json` listing each shard's
-segments by payment and companion table revision and its filter by digest, each
-payment table's `<revision>.json` and `.rows`, each companion's own
-`<witness revision>.witness.json` and `.witness`, and each filter's
-`<digest>.filter`, then point the record at the layout's identity, the SHA-256 of
-its bytes, atomically (write beside it, rename over it). It is a private local control input; there is no update route.
-
-Staged serving publishes the staged inventory only. Rolling hint routes return unavailable, so wallets use direct PIR. Run its probe with `--without-block-filters`. Indexing deployments retain the default probe, which requires live hints.
-
-Each record is verified in full before it can serve: the layout must digest to the
-recorded identity and be for mainnet, every manifest must hold its listed revision
-and at least `min_rows`, the rows must match their digest and every record must
-check, every companion witness table must bind to its payment table and supply each
-record's payload as the indexer checks it, every filter must hold its digest, and
-the shards must form one contiguous inventory from Ironwood activation. The
-server library re-validates the rows record by record while preparing PIR. Its anchor must then be canonical on the freshest node. Updates
-are serial: a newer record supersedes one still preparing, a record that does
-not verify is refused while the last valid publication keeps serving, and the
-publication rules above (epochs, monotonic coverage, retention of displaced
-inventories) are unchanged. The canonical guard runs independently
-throughout and revokes on a confirmed reorg; an outage keeps serving. A revoked
-but still-recorded publication is verified and confirmed again. A restart
-re-reads the record and verifies everything before serving; the
-`serve-publication.json` status file in `state_dir` is a report, never an input.
-`history-revision.json` beside it records the highest history revision accepted,
-written before a correction serves, and a record below it is refused, so a restart
-never serves older, uncorrected history again. Deleting it is an explicit rollback.
-Health's `publication` field reports the assigned, loaded and preparing records
-and the latest refusal, typed as `invalid_source`, `unavailable`,
-`noncanonical` or `superseded`. `--check` runs the same verification of the
-recorded publication and exits without serving. The publisher remains trusted
-for completeness. Operators install it as the `receiver.serve-publication`
-external worker ([operations](../operations.md#external-workers)).
-
-`receiver-directory probe --origin <url> --health-url <private health URL>
---rpc-url <node> --no-auth`, or `receiver-probe` with the same
-arguments on the monitor host, is a `pir-monitor` service probe with an embedded
-mainnet fixture. It checks the served inventory head's anchor against independent
-nodes, captures every chunk, checks the fixture shard's filter when it is sealed,
-looks up a pinned historical payment in that shard's segments over live encrypted
-PIR, reads its companion payload over live encrypted PIR by the record's ordinal, and validates current block hints against the node. A final payload must fold from the fixture's commitment to the node's root for that Ironwood shard (`z_getsubtreesbyindex`). A provisional one, for a shard the chain has not completed, has no independent oracle here, so the probe reports it `oracle_unavailable` rather than passing. Retained fixtures must match their block's filter. A pruned fixture is still recovered through PIR. Provider feed freshness is not a deployment gate. `--max-lag` defaults to 12 blocks.
+The root public listener mounts only wallet operations under `/receiver/v1/` and
+`/v1/receiver/`. `/v1/receiver/health` is available only on the root management
+listener. Production cutover is a separate approved transactional deployment; the
+old continuous and operator-staged serving commands have been removed.
 
 ## Wallet use
 
@@ -365,8 +312,10 @@ PIR, reads its companion payload over live encrypted PIR by the record's ordinal
 `cargo test -p receiver-store` covers publications and store restart and
 rollback, commitment ranges, completed Ironwood shards, sealed shards and
 corrections.
-`cargo test -p receiver-pir-server` tests the HTTP service with the canonical
-library client. `cargo test -p receiver-indexer` covers indexing with synthetic
+`cargo test -p pir-query-server --features receiver --lib receiver::` tests HTTP
+and HTTPS synchronization with the canonical library client.
+`cargo test -p pir-publisher --features receiver --test receiver` covers the root
+maintenance process, SQLite resume, canonical withdrawal and restart. `cargo test -p receiver-indexer` covers indexing with synthetic
 blocks, sealing on placement, witness capacity and target with oversized-block
 segments, sealed shards served through the library client with filters and
 witnesses, restart reconstruction, reorgs across a seal and of witness

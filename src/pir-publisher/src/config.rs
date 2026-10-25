@@ -42,7 +42,10 @@ pub struct Config {
 #[serde(deny_unknown_fields)]
 pub struct Chain {
     pub rpc_url: String,
-    pub rpc_cookie: std::path::PathBuf,
+    pub rpc_cookie: Option<std::path::PathBuf>,
+    /// Explicitly permit an RPC endpoint with authentication disabled.
+    #[serde(default)]
+    pub no_auth: bool,
     #[serde(default = "default_poll_ms")]
     pub poll_ms: u64,
 }
@@ -58,10 +61,11 @@ impl Chain {
             || url.host_str().is_none()
             || !url.username().is_empty()
             || url.password().is_some()
-            || !self.rpc_cookie.is_absolute()
+            || self.rpc_cookie.as_ref().is_some_and(|p| !p.is_absolute())
+            || self.no_auth == self.rpc_cookie.is_some()
             || self.poll_ms == 0
         {
-            return Err("chain needs a credential-free HTTP RPC URL, an absolute cookie path and nonzero poll_ms".into());
+            return Err("chain needs a credential-free HTTP RPC URL, an absolute cookie path or explicit no_auth, and nonzero poll_ms".into());
         }
         Ok(pir_pipeline::ingestion::ChainSettings {
             rpc_url: self.rpc_url.clone(),

@@ -111,7 +111,7 @@
             "tools/*/deploy/*worker*",
             "tools/*/deploy/*router*",
             "tools/*/deploy/*query-ingress*",
-            "tools/receiver/deploy/receiver-serve-publication.service",
+            "tools/receiver/deploy/receiver-query.service",
             "tools/receiver/digitalocean/receiver-pir.service.in"
           ]
         }

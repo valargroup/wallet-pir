@@ -1,6 +1,7 @@
 //! The production router for tests that need no owner health fields.
 #![allow(dead_code)]
-use receiver_pir_server::{router_with_health, Publications};
+use pir_query_server::receiver::router_with_health;
+use receiver_pir_server::Publications;
 
 /// [`router_with_health`] whose health reports only its own fields.
 pub fn router_with_publications(publications: Publications) -> axum::Router {

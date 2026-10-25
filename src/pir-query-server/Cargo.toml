@@ -103,6 +103,8 @@ status = [
     "dep:url",
 ]
 receiver = [
+    "dep:hex",
+    "dep:pir-observability",
     "dep:receiver-pir-server",
     "dep:pir-control",
     "dep:pir-publication",
@@ -218,3 +220,18 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 # Burst campaigns sample this process's resident memory.
 sysinfo = "0.36"
 tower = { version = "0.5", features = ["util"] }
+
+[[test]]
+name = "receiver_http"
+path = "tests/receiver/http.rs"
+required-features = ["receiver"]
+
+[[test]]
+name = "receiver_ci_smoke"
+path = "tests/receiver/ci_smoke.rs"
+required-features = ["receiver"]
+
+[[test]]
+name = "receiver_library_client"
+path = "tests/receiver/library_client.rs"
+required-features = ["receiver"]

@@ -2182,6 +2182,7 @@ dependencies = [
  "pir-query-server",
  "pir-service-discovery",
  "pir-sync-manager",
+ "receiver-indexer",
  "reqwest",
  "serde",
  "serde_json",
@@ -2273,6 +2274,7 @@ dependencies = [
  "axum",
  "clap",
  "enhance-publisher",
+ "hex",
  "pir-node-rpc",
  "pir-pipeline",
  "pir-service-discovery",
@@ -2287,6 +2289,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "transparent-publisher",
+ "zakura-server-chain",
 ]
 
 [[package]]
@@ -2758,6 +2761,7 @@ dependencies = [
  "hex",
  "pir-pipeline",
  "pir-publication",
+ "pir-query-server",
  "receiver-pir-server",
  "receiver-store",
  "reqwest",
@@ -2783,8 +2787,6 @@ version = "0.0.1"
 dependencies = [
  "axum",
  "hex",
- "pir-control",
- "pir-observability",
  "pir-publication",
  "reqwest",
  "serde",

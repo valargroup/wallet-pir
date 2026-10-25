@@ -12,8 +12,6 @@ autobins = false
 zakura-pir-query-server = { version = "=0.0.1-rc2", default-features = false, features = ["receiver"] }
 axum = "0.7"
 hex = "0.4"
-pir-control = { path = "../../shared/pir-control", features = ["admission"] }
-pir-observability = { path = "../../shared/pir-observability", features = ["http"] }
 serde_json = "1"
 sha2 = "0.10"
 serde = { version = "1", features = ["derive"] }

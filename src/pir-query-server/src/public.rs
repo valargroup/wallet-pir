@@ -33,7 +33,7 @@ impl Slot {
         *self.0.write().unwrap() = None;
     }
 
-    async fn forward(self, request: Request) -> Response {
+    pub(crate) async fn forward(self, request: Request) -> Response {
         let router = self.0.read().unwrap().clone();
         match router {
             Some(router) => match router.oneshot(request).await {

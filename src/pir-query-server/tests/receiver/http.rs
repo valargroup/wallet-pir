@@ -1,11 +1,11 @@
 //! Receiver PIR evaluation and the HTTP service that wallets reach through a [`Transport`].
-#[path = "../../receiver-store/tests/common/mod.rs"]
+#[path = "../../../receiver/receiver-store/tests/common/mod.rs"]
 mod common;
-#[path = "common/history.rs"]
+#[path = "../../../receiver/receiver-pir-server/tests/common/history.rs"]
 mod history;
-#[path = "common/prepared.rs"]
+#[path = "../../../receiver/receiver-pir-server/tests/common/prepared.rs"]
 mod prepared;
-#[path = "common/router.rs"]
+#[path = "../../../receiver/receiver-pir-server/tests/common/router.rs"]
 mod router;
 use common::{manifest, receiver, record};
 use history::{history, Accepted, Session};
@@ -251,14 +251,14 @@ async fn health_serves_the_owners_report() {
 #[tokio::test]
 async fn health_reports_the_owners_fields_beside_its_own() {
     let reads = std::sync::Arc::new(AtomicUsize::new(0));
-    let fields: receiver_pir_server::HealthFields = {
+    let fields: pir_query_server::receiver::HealthFields = {
         let reads = reads.clone();
         std::sync::Arc::new(move || {
             let value = serde_json::json!({"reads": reads.load(Ordering::SeqCst), "serving": "x"});
             value.as_object().unwrap().clone()
         })
     };
-    let server = serve_router(receiver_pir_server::router_with_health(
+    let server = serve_router(pir_query_server::receiver::router_with_health(
         Publications::default(),
         fields,
     ))

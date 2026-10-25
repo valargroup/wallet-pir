@@ -24,7 +24,14 @@ receiver-pir.valargroup.dev {
 	# health over the private network on port 18380.
 	@wallet path /receiver/v1/inventory /receiver/v1/inventory/* /receiver/v1/query /receiver/v1/public/* /receiver/v1/shard-filters/* /receiver/v1/block-filters/* /v1/receiver/inventory /v1/receiver/inventory/* /v1/receiver/query /v1/receiver/public/* /v1/receiver/shard-filters/* /v1/receiver/block-filters/*
 	handle @wallet {
-		reverse_proxy 10.70.0.11:18380
+		reverse_proxy {$RECEIVER_QUERY_UPSTREAM}
+	}
+
+	# The Receiver host publishes prepared inputs; queries run on the configured
+	# existing query host. Set RECEIVER_QUERY_UPSTREAM during the approved cutover.
+	@provider path /.well-known/pir-service-discovery /provider/receiver/v1/*
+	handle @provider {
+		reverse_proxy 127.0.0.1:18380
 	}
 
 	handle {
