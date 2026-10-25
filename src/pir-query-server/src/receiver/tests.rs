@@ -241,6 +241,7 @@ async fn https_authority_controls_real_wallet_queries_and_restart() {
     let publications = Publications::default();
     let mut lifecycle = sync::synchronization(&config, publications.clone()).unwrap();
     lifecycle.synchronize().await.unwrap();
+    lifecycle.adapter().check_unused_revocations();
     let mount = crate::public::receiver();
     mount.slot.install(receiver_pir_server::router_with_health(
         publications.clone(),
@@ -285,6 +286,24 @@ async fn https_authority_controls_real_wallet_queries_and_restart() {
         .unwrap()
         .status()
         .is_success());
+    let predecessor_objects: Vec<_> = origin.objects.lock().unwrap().keys().cloned().collect();
+    origin.publish(0, 2);
+    lifecycle.synchronize().await.unwrap();
+    for object in predecessor_objects {
+        assert!(
+            config.state_dir.join("objects").join(object).exists(),
+            "ordinary positive successor keeps predecessor files"
+        );
+    }
+    assert!(first.page(common::receiver(), 0).await.unwrap().is_some());
+    origin.publish(0, 3);
+    origin.corrupt.store(true, Ordering::SeqCst);
+    assert!(lifecycle.synchronize().await.is_err());
+    assert!(
+        first.page(common::receiver(), 0).await.unwrap().is_some(),
+        "failed replacement leaves retained answers available"
+    );
+    origin.corrupt.store(false, Ordering::SeqCst);
     origin.available.store(false, Ordering::SeqCst);
     assert!(lifecycle.synchronize().await.is_err());
     assert!(

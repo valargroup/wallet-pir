@@ -39,8 +39,7 @@ pub(super) fn synchronization(
             config: config.clone(),
             owner,
             publications,
-            views: Vec::new(),
-            current: None,
+            views: Arc::default(),
         },
         source,
         floor,
@@ -56,6 +55,10 @@ pub(super) struct Receiver {
     config: Config,
     owner: Arc<std::fs::File>,
     publications: Publications,
+    views: Arc<Mutex<Views>>,
+}
+#[derive(Default)]
+struct Views {
     views: Vec<View>,
     current: Option<ViewIdentity>,
 }
@@ -71,17 +74,38 @@ pub(super) struct Loaded {
     filters: Option<BlockWindow>,
 }
 impl Receiver {
-    fn revoke(&mut self) -> (Publications, Vec<ViewIdentity>) {
-        self.current = None;
-        let ids = self.views.drain(..).map(|view| view.id).collect();
-        (self.publications.clone(), ids)
+    #[cfg(test)]
+    pub(super) fn check_unused_revocations(&self) {
+        let mut copy = Self {
+            config: self.config.clone(),
+            owner: self.owner.clone(),
+            publications: self.publications.clone(),
+            views: self.views.clone(),
+        };
+        let before = self.views.lock().unwrap().views.len();
+        drop(copy.fence_serving());
+        drop(copy.close_admission());
+        assert_eq!(self.views.lock().unwrap().views.len(), before);
+        assert!(self.publications.current_anchor().is_some());
+    }
+
+    fn revoke(&self) -> impl std::future::Future<Output = Vec<ViewIdentity>> + Send + 'static {
+        let views = self.views.clone();
+        let publications = self.publications.clone();
+        async move {
+            let mut views = views.lock().unwrap();
+            views.current = None;
+            let ids = views.views.drain(..).map(|view| view.id).collect();
+            publications.revoke();
+            ids
+        }
     }
     fn expire(&mut self) {
-        // Expires ordinary retention before checking weak references. An
-        // in-flight response still holds its directory and its lazy files.
         drop(self.publications.live());
-        self.views.retain(|view| {
-            Some(&view.id) == self.current.as_ref()
+        let mut views = self.views.lock().unwrap();
+        let current = views.current.clone();
+        views.views.retain(|view| {
+            Some(&view.id) == current.as_ref()
                 || view
                     .directory
                     .lock()
@@ -110,30 +134,29 @@ impl PublicationAdapter for Receiver {
     fn fence_serving(
         &mut self,
     ) -> impl std::future::Future<Output = Vec<ViewIdentity>> + Send + 'static {
-        let (publications, ids) = self.revoke();
-        async move {
-            publications.revoke();
-            ids
-        }
+        self.revoke()
     }
     fn invalidate_views(
         &mut self,
         _views: Vec<ViewIdentity>,
     ) -> impl std::future::Future<Output = ()> + Send + 'static {
-        let (publications, _) = self.revoke();
+        let revoke = self.revoke();
         async move {
-            publications.revoke();
+            revoke.await;
         }
     }
     fn close_admission(&mut self) -> impl std::future::Future<Output = ()> + Send + 'static {
-        let (publications, _) = self.revoke();
+        let revoke = self.revoke();
         async move {
-            publications.revoke();
+            revoke.await;
         }
     }
     async fn serving_subjects(&mut self, _: &Envelope<Self>) -> Vec<(ViewIdentity, Subject)> {
         self.expire();
         self.views
+            .lock()
+            .unwrap()
+            .views
             .iter()
             .map(|view| (view.id.clone(), view.inventory.anchors()))
             .collect()
@@ -148,7 +171,7 @@ impl PublicationAdapter for Receiver {
             .as_ref()
             .ok_or("Receiver envelope has no publication")?;
         let id = ViewIdentity(reference.publication);
-        if self.current.as_ref() == Some(&id) {
+        if self.views.lock().unwrap().current.as_ref() == Some(&id) {
             return Ok(PublicationPlan::Deferred);
         }
         let object = reference.inventory.clone();
@@ -221,6 +244,9 @@ impl PublicationAdapter for Receiver {
     async fn retained_views(&mut self) -> Vec<(ViewIdentity, ViewRequirement)> {
         self.expire();
         self.views
+            .lock()
+            .unwrap()
+            .views
             .iter()
             .map(|view| (view.id.clone(), ViewRequirement::Serving))
             .collect()
@@ -269,8 +295,11 @@ impl PublicationAdapter for Receiver {
         ))
     }
     fn installed(&mut self, view: View) {
-        self.current = Some(view.id.clone());
-        self.views.push(view);
+        {
+            let mut views = self.views.lock().unwrap();
+            views.current = Some(view.id.clone());
+            views.views.push(view);
+        }
         self.expire();
     }
     async fn release_peer(&mut self, _: &Self::Report) -> PeerHandover {
@@ -282,7 +311,7 @@ impl PublicationAdapter for Receiver {
         {
             None
         } else {
-            self.current.clone()
+            self.views.lock().unwrap().current.clone()
         }
     }
 }

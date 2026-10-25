@@ -164,7 +164,6 @@ PRODUCT_HOST_FEATURES = {
     'enhance': 'pir-e2e-tests/enhance-fast',
     'transparent': 'pir-e2e-tests/transparent-tests',
     'status': 'pir-publisher/status-tests',
-    'receiver': 'pir-query-server/receiver',
 }
 
 # A fast target that requires one of these is compiled only for a diff that
@@ -481,6 +480,7 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
     # not enable them, and ci_smoke only names history.
     if 'pir-query-server' in stable['names']:
         stable['features'].update(TRANSPARENT_QUERY_ROLES)
+        stable['features'].add('pir-query-server/receiver')
     commands = []
     command = _compile_command(stable, options)
     if command:

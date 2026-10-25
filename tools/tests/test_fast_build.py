@@ -372,12 +372,14 @@ class FastBuildTests(unittest.TestCase):
         # on every compile so a smaller diff cannot drop testing-node.
         self.assertEqual(stable_features, sorted({
             *fast_build.TRANSPARENT_QUERY_ROLES,
+            'pir-query-server/receiver',
             'zakura-server-chain/enhance',
             'zakura-server-chain/testing-node',
             'zakura-server-chain/transparent',
         }))
         self.assertFalse(set(stable_features) & set(fast_build.PRODUCT_HOST_FEATURES.values()))
         self.assertEqual(hint_features, sorted({
+            'pir-query-server/receiver',
             'pir-e2e-tests/enhance-fast',
             *fast_build.HINT_HOST_ROLES,
             'zakura-server-chain/enhance',
@@ -417,6 +419,7 @@ class FastBuildTests(unittest.TestCase):
         self.assertNotIn('ci_hint', tests)
         self.assertEqual(features, sorted({
             *fast_build.TRANSPARENT_QUERY_ROLES,
+            'pir-query-server/receiver',
             'zakura-server-chain/enhance',
             'zakura-server-chain/testing-node',
             'zakura-server-chain/transparent',
@@ -443,6 +446,7 @@ class FastBuildTests(unittest.TestCase):
         builds = self._cargo_tests(['enhance-shared', 'transparent-publisher'])
         self.assertEqual(self._command_parts(builds[0])[3], sorted({
             *fast_build.TRANSPARENT_QUERY_ROLES,
+            'pir-query-server/receiver',
             'zakura-server-chain/enhance',
             'zakura-server-chain/testing-node',
             'zakura-server-chain/transparent',
