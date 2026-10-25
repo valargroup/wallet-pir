@@ -1,4 +1,5 @@
 //! Consumer-owned packing activation and exact worker handover.
+use super::consumer::{Cleanup, EnhanceConsumer, Incoming, Role as ConsumerRole};
 use super::evaluation::Evaluate;
 use crate::enhance::{
     peers::WorkerEndpoint,
@@ -20,7 +21,11 @@ use enhance_shared::{
     runtime::Packing,
 };
 use pir_control::admission::{read_body, BodyError, Queue, Refusal};
-use pir_pipeline::consumer::polling::SyncTask;
+use pir_pipeline::{
+    consumer::{polling::SyncTask, ConsumerEngine},
+    Input,
+};
+use pir_publication::VerifiedObjects;
 use serde::Deserialize;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -108,6 +113,7 @@ struct Retired {
 #[derive(Default)]
 struct Inner {
     active: Option<Arc<Loaded>>,
+    incoming: Option<Incoming<BTreeMap<u64, Vec<Peer>>>>,
     retained: BTreeMap<String, Arc<Loaded>>,
     pins: BTreeMap<(String, String), Instant>,
     retired: Vec<Retired>,
@@ -247,13 +253,17 @@ impl PackingRouter {
     }
     pub fn synchronizer(&self) -> Result<Synchronizer, Error> {
         Ok(Synchronizer {
-            router: self.clone(),
+            engine: ConsumerEngine::new(EnhanceConsumer::new(
+                RouterConsumer {
+                    router: self.clone(),
+                },
+                Client::new(
+                    &self.root,
+                    &self.config.source,
+                    self.authority.safety.clone(),
+                )?,
+            )),
             pacing: Pacing::default(),
-            client: Client::new(
-                &self.root,
-                &self.config.source,
-                self.authority.safety.clone(),
-            )?,
             _ownership: self
                 .synchronization
                 .clone()
@@ -416,6 +426,20 @@ impl PackingRouter {
         for (manifest, peers) in retired {
             self.release(&manifest, &peers).await;
         }
+        let incoming = self
+            .inner
+            .lock()
+            .unwrap()
+            .incoming
+            .as_ref()
+            .map(|hold| (hold.manifest.clone(), hold.peers.clone()));
+        if let Some((manifest, held)) = incoming {
+            if self.authority.fresh(&manifest).await.is_ok() {
+                if let Ok(Some(peers)) = self.peers(&manifest).await {
+                    *held.lock().unwrap() = peers;
+                }
+            }
+        }
         for view in views {
             if self.authority.fresh(&view.manifest).await.is_ok() {
                 if let Ok(Some(peers)) = self.peers(&view.manifest).await {
@@ -535,15 +559,32 @@ impl Drop for Outstanding {
 }
 
 pub struct Synchronizer {
-    router: PackingRouter,
-    client: Client,
+    engine: ConsumerEngine<EnhanceConsumer<RouterConsumer>>,
     _ownership: tokio::sync::OwnedSemaphorePermit,
     pacing: Pacing,
 }
-impl Synchronizer {
-    async fn advance(&mut self) -> Result<(), Error> {
-        self.client.begin().await?;
-        let response = self.client.current().await?;
+struct RouterConsumer {
+    router: PackingRouter,
+}
+enum RouterSelection {
+    Reuse(Arc<Loaded>),
+    Load {
+        domains: Vec<enhance_shared::publication::Domain>,
+        cached: BTreeMap<String, Arc<Packing>>,
+    },
+}
+struct RouterMaterial {
+    packing: BTreeMap<u64, Arc<Packing>>,
+    objects: BTreeMap<u64, Object>,
+}
+impl ConsumerRole for RouterConsumer {
+    type Selection = RouterSelection;
+    type Material = RouterMaterial;
+    type Promise = Arc<Mutex<BTreeMap<u64, Vec<Peer>>>>;
+    fn safety(&self) -> &Safety {
+        &self.router.authority.safety
+    }
+    fn observed(&mut self) {
         // An invalidated active view no longer promises service. In-flight
         // requests keep their Arcs and byte charges until their fenced bodies end.
         {
@@ -565,36 +606,49 @@ impl Synchronizer {
                 }
             }
         }
-        let Some(manifest) = response.current.manifest.clone() else {
-            return Ok(());
-        };
-        let observed =
-            Lease::from_response(response.clone(), &manifest, &self.router.authority.safety)?;
-        if self
+    }
+    fn abandon(&mut self) -> Option<Cleanup> {
+        let incoming = self.router.inner.lock().unwrap().incoming.take()?;
+        let router = self.router.clone();
+        Some(Box::pin(async move {
+            let peers = incoming.peers.lock().unwrap().clone();
+            router.release(&incoming.manifest, &peers).await;
+        }))
+    }
+    async fn select(
+        &mut self,
+        response: &enhance_shared::publication::AuthorityResponse,
+        client: &mut Client,
+    ) -> Result<Input<RouterSelection>, Error> {
+        let manifest = response
+            .current
+            .manifest
+            .as_ref()
+            .ok_or("missing Enhance manifest")?;
+        if let Some(view) = self
             .router
             .inner
             .lock()
             .unwrap()
             .active
             .as_ref()
-            .is_some_and(|view| view.manifest == manifest)
+            .filter(|view| view.manifest == *manifest)
+            .cloned()
         {
-            self.router.authority.install(manifest, observed)?;
-            return Ok(());
+            return Ok(Input::Work(RouterSelection::Reuse(view)));
         }
         if self.router.inner.lock().unwrap().retained.len() >= protocol::RETAINED_GENERATIONS - 1 {
             tracing::warn!("router publication deferred while upstream retains prior views");
-            return Ok(());
+            return Ok(Input::Deferred);
         }
-        let inventory = self
-            .client
+        let inventory = client
             .inventory(
                 response
                     .current
                     .inventory
                     .as_ref()
                     .ok_or("missing inventory")?,
-                &manifest,
+                manifest,
             )
             .await?;
         let domains = inventory
@@ -631,7 +685,7 @@ impl Synchronizer {
         };
         if let Err(error) = self.router.budget.admit_mappings(missing) {
             tracing::warn!(%error, "router replacement deferred by capacity; retaining valid active material");
-            return Ok(());
+            return Ok(Input::Deferred);
         }
         let mut keep = domains
             .iter()
@@ -649,7 +703,68 @@ impl Synchronizer {
                 keep.extend(view.objects.values().map(|object| object.sha256.clone()));
             }
         }
-        self.client.collect(&keep)?;
+        client.collect(&keep)?;
+        let cached = {
+            let inner = self.router.inner.lock().unwrap();
+            inner
+                .material
+                .iter()
+                .filter(|(key, _)| keys.contains(*key))
+                .filter_map(|(key, material)| {
+                    material.upgrade().map(|material| (key.clone(), material))
+                })
+                .collect()
+        };
+        Ok(Input::Work(RouterSelection::Load { domains, cached }))
+    }
+    fn objects(&self, selection: &RouterSelection) -> Vec<Object> {
+        match selection {
+            RouterSelection::Reuse(_) => Vec::new(),
+            RouterSelection::Load { domains, cached } => domains
+                .iter()
+                .filter(|domain| {
+                    let key = digest(&(
+                        &domain.packing.sha256,
+                        domain.plan.shard.logical_rows,
+                        domain.reference().expect("validated domain"),
+                    ));
+                    !cached.contains_key(&key)
+                })
+                .map(|domain| domain.packing_object())
+                .collect(),
+        }
+    }
+    async fn reserve(
+        &mut self,
+        manifest: &Manifest,
+        selection: &RouterSelection,
+    ) -> Result<Option<Self::Promise>, Error> {
+        let Some(peers) = self.router.peers(manifest).await? else {
+            return Ok(None);
+        };
+        let peers = Arc::new(Mutex::new(peers));
+        if !matches!(selection, RouterSelection::Reuse(_)) {
+            self.router.inner.lock().unwrap().incoming = Some(Incoming {
+                manifest: manifest.clone(),
+                peers: peers.clone(),
+            });
+        }
+        Ok(Some(peers))
+    }
+    async fn load(
+        &mut self,
+        selection: RouterSelection,
+        files: VerifiedObjects,
+    ) -> Result<RouterMaterial, Error> {
+        let (domains, cached) = match selection {
+            RouterSelection::Reuse(view) => {
+                return Ok(RouterMaterial {
+                    packing: view.packing.clone(),
+                    objects: view.objects.clone(),
+                })
+            }
+            RouterSelection::Load { domains, cached } => (domains, cached),
+        };
         let mut packing = BTreeMap::new();
         let mut objects = BTreeMap::new();
         for domain in domains {
@@ -659,15 +774,8 @@ impl Synchronizer {
                 domain.plan.shard.logical_rows,
                 domain.reference()?,
             ));
-            let cached = self
-                .router
-                .inner
-                .lock()
-                .unwrap()
-                .material
-                .get(&key)
-                .and_then(Weak::upgrade);
-            let material = if let Some(material) = cached {
+            let reused = cached.get(&key).cloned();
+            let material = if let Some(material) = reused {
                 material
             } else {
                 {
@@ -676,7 +784,7 @@ impl Synchronizer {
                         .material
                         .retain(|_, material| material.strong_count() > 0);
                 }
-                let path = self.client.object(&object).await?;
+                let checked = files.get(&object.reference())?;
                 let (sender, receiver) = tokio::sync::oneshot::channel();
                 let budget = self.router.budget.clone();
                 let descriptor = domain.packing.clone();
@@ -685,8 +793,8 @@ impl Synchronizer {
                 self.router
                     .loader
                     .send(Box::new(move || {
-                        let result = enhance_shared::prepared_packing::load(
-                            &path,
+                        let result = enhance_shared::prepared_packing::load_verified(
+                            &checked,
                             &descriptor,
                             rows,
                             &budget,
@@ -712,19 +820,48 @@ impl Synchronizer {
             packing.insert(domain.plan.shard.id, material);
             objects.insert(domain.plan.shard.id, object);
         }
-        let Some(peers) = self.router.peers(&manifest).await? else {
-            return Ok(());
+        Ok(RouterMaterial { packing, objects })
+    }
+    async fn confirm(
+        &mut self,
+        manifest: &Manifest,
+        promise: &mut Self::Promise,
+    ) -> Result<bool, Error> {
+        let Some(peers) = self.router.peers(manifest).await? else {
+            return Ok(false);
         };
-        let lease = self.client.renew(&manifest, &observed).await?;
+        *promise.lock().unwrap() = peers;
+        Ok(true)
+    }
+    fn install(
+        &mut self,
+        manifest: Manifest,
+        material: RouterMaterial,
+        peers: Self::Promise,
+        lease: Lease,
+    ) -> Result<(), Error> {
         let guard = self.router.authority.install(manifest.clone(), lease)?;
         guard.check()?;
+        if let Some(active) = self
+            .router
+            .inner
+            .lock()
+            .unwrap()
+            .active
+            .as_ref()
+            .filter(|active| active.manifest == manifest)
+        {
+            *active.peers.lock().unwrap() = peers.lock().unwrap().clone();
+            return Ok(());
+        }
         let loaded = Arc::new(Loaded {
             manifest,
-            packing,
-            objects,
-            peers: Mutex::new(peers),
+            packing: material.packing,
+            objects: material.objects,
+            peers: Mutex::new(peers.lock().unwrap().clone()),
         });
         let mut inner = self.router.inner.lock().unwrap();
+        inner.incoming = None;
         if let Some(old) = inner.active.replace(loaded) {
             let old_id = digest(&old.manifest);
             if inner
@@ -743,20 +880,18 @@ impl Synchronizer {
         }
         Ok(())
     }
+}
+impl Synchronizer {
     pub async fn poll_once(&mut self) -> Result<(), Error> {
-        let router = self.router.clone();
+        let router = self.engine.context().role.router.clone();
         router.maintain().await;
-        let advance = self.advance();
-        tokio::pin!(advance);
-        let mut timer = tokio::time::interval(MAINTENANCE);
-        timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        timer.tick().await;
-        loop {
-            tokio::select! {
-                result = &mut advance => return result,
-                _ = timer.tick() => router.maintain().await,
-            }
-        }
+        pir_pipeline::consumer::polling::maintain_during(
+            self.engine.synchronize(),
+            MAINTENANCE,
+            || router.maintain(),
+        )
+        .await
+        .map(|_| ())
     }
 }
 impl SyncTask for Synchronizer {
@@ -767,11 +902,13 @@ impl SyncTask for Synchronizer {
         self.pacing.finish("router", result)
     }
     async fn wait_until(&mut self, deadline: tokio::time::Instant) {
-        let deadline = self.pacing.deadline(deadline);
-        while tokio::time::Instant::now() < deadline {
-            tokio::time::sleep_until(deadline.min(tokio::time::Instant::now() + MAINTENANCE)).await;
-            self.router.maintain().await;
-        }
+        let router = self.engine.context().role.router.clone();
+        pir_pipeline::consumer::polling::maintain_during(
+            tokio::time::sleep_until(self.pacing.deadline(deadline)),
+            MAINTENANCE,
+            || router.maintain(),
+        )
+        .await;
     }
     fn report(&self, result: &Result<Option<Deferral>, Error>) {
         if let Err(error) = result {

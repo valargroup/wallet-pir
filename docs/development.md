@@ -306,7 +306,7 @@ Transparent history, transaction-detail and Status supply its product tasks.
 Neither grants serving authority by itself. The transport-neutral `ConsumerEngine` runs the shared publication lifecycle with the HTTPS envelope adapter in `pir-sync-manager` and the transport-free
 `pir-publication` contract (object references, pointer succession, durable
 floors, object cache and publisher object store); Status is its first adopter,
-and other products still keep their own replay records and promotion. Product
-code retains schemas, directory locks, validation, preparation and activation.
-Enhance does not use it yet. Status uses the same polling and backoff; its
+and Enhance composes its existing lease and replay protocol with the same
+consumer engine. Product code retains schemas, directory locks, validation,
+preparation and activation. Transparent and Receiver adoption follows separately. Status uses the same polling and backoff; its
 wallet still rejects observations older than twenty seconds.

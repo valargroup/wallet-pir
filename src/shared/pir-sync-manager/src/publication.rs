@@ -368,6 +368,7 @@ impl<A: PublicationAdapter> Consumer for EnvelopeConsumer<A> {
     type Loaded = A::Loaded;
     type Artifacts = VerifiedObjects;
     type Validation = (ViewIdentity, A::AuthoritySubject);
+    type Authority = ();
     type Report = A::Report;
 
     async fn settle(&mut self) -> Result<(), Error> {
@@ -428,7 +429,7 @@ impl<A: PublicationAdapter> Consumer for EnvelopeConsumer<A> {
             }
         }
     }
-    async fn reserve(&mut self, selected: &Self::Candidate) -> Result<PeerReservation, Error> {
+    async fn reserve(&mut self, selected: &mut Self::Candidate) -> Result<PeerReservation, Error> {
         self.adapter.reserve_candidate(&selected.candidate).await
     }
     async fn obtain(&mut self, selected: &Self::Candidate) -> Result<VerifiedObjects, Error> {
@@ -482,13 +483,14 @@ impl<A: PublicationAdapter> Consumer for EnvelopeConsumer<A> {
         );
         self.check_authority(observed, subjects).await
     }
-    async fn confirm(&mut self, loaded: &A::Loaded) -> Result<PeerReservation, Error> {
+    async fn confirm(&mut self, loaded: &mut A::Loaded) -> Result<PeerReservation, Error> {
         self.adapter.reserve_peer(loaded).await
     }
     async fn commit(
         &mut self,
         loaded: A::Loaded,
         checked: Self::Validation,
+        _authority: (),
     ) -> Result<(A::Report, PeerHandover), Error> {
         EnvelopeConsumer::commit(self, checked.0, loaded).await
     }

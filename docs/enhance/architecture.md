@@ -192,7 +192,12 @@ Enhance serving roles and the private evaluation messages in its `enhance`
 module; the root mounts the public routes. Neither has a publisher or
 chain-reader dependency. Shared transport
 lives in `pir-sync-manager` and scheduling in `pir-pipeline::consumer::polling`;
-Enhance policy stays in Enhance.
+Enhance's worker, packing router and ingress use the shared consumer engine.
+Their adapter retains the existing replay and lease rules, assignment and memory
+budgets. Checked open files carry download verification through row preparation
+and packing maps. Incoming peer holds are distinct from the serving view, renewed
+during loading, and released by an owned cleanup before another attempt. Enhance
+policy stays in Enhance.
 The root hosts are `pir-publisher` and `pir-query-server`; product crates are
 libraries. Test/workload composition belongs under `tools/`.
 

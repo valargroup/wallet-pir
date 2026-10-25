@@ -81,8 +81,18 @@ async fn evaluation_failure(backend: MatvecConfig) {
             format: enhance_shared::prepared_packing::FORMAT,
         },
     };
+    let mut checked = VerifiedObjects::default();
+    for object in &domain.rows {
+        checked.insert(
+            pir_publication::VerifiedObjectFile::open(
+                object.path(root.path()).unwrap(),
+                &object.reference(),
+            )
+            .unwrap(),
+        );
+    }
     let faults = Arc::new(Faults::default());
-    let loaded = scoped(&faults, || worker.load(vec![domain])).unwrap();
+    let loaded = scoped(&faults, || worker.load(vec![domain], &checked)).unwrap();
     let manifest = Manifest {
         recovery_epoch: 0,
         placement_revision: 1,

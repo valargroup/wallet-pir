@@ -30,6 +30,7 @@ impl Consumer for Recipe {
     type Loaded = u64;
     type Artifacts = ();
     type Validation = u64;
+    type Authority = ();
     type Report = u64;
     async fn settle(&mut self) -> Result<(), Error> {
         self.record("settle");
@@ -53,7 +54,7 @@ impl Consumer for Recipe {
         self.record("select");
         Ok(Input::Work(*observed))
     }
-    async fn reserve(&mut self, _: &u64) -> Result<PeerReservation, Error> {
+    async fn reserve(&mut self, _: &mut u64) -> Result<PeerReservation, Error> {
         self.record("reserve");
         Ok(PeerReservation::Reserved)
     }
@@ -83,11 +84,11 @@ impl Consumer for Recipe {
         }
         Ok(())
     }
-    async fn confirm(&mut self, _: &u64) -> Result<PeerReservation, Error> {
+    async fn confirm(&mut self, _: &mut u64) -> Result<PeerReservation, Error> {
         self.record("confirm");
         Ok(PeerReservation::Reserved)
     }
-    async fn commit(&mut self, loaded: u64, _: u64) -> Result<(u64, PeerHandover), Error> {
+    async fn commit(&mut self, loaded: u64, _: u64, _: ()) -> Result<(u64, PeerHandover), Error> {
         self.record("commit");
         Ok((loaded, PeerHandover::Complete))
     }

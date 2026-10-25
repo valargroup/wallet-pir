@@ -207,36 +207,48 @@ pub fn verify(path: &Path, a: &Artifact) -> Result<(), String> {
 }
 pub fn load(
     path: &Path,
-    a: &Artifact,
+    artifact: &Artifact,
     rows: u64,
     budget: &crate::PackingBudget,
 ) -> Result<Packing, String> {
-    if a.format != FORMAT || !valid_len(a.bytes, rows)? {
+    if artifact.format != FORMAT || !valid_len(artifact.bytes, rows)? {
         return Err("incompatible prepared artifact".into());
     }
-    let mut file = File::open(path).map_err(|e| e.to_string())?;
-    if file.metadata().map_err(|e| e.to_string())?.len() != a.bytes {
-        return Err("prepared artifact length mismatch".into());
-    }
-    let mut hash = Sha256::new();
-    let mut buffer = [0u8; 65536];
-    loop {
-        let n = file.read(&mut buffer).map_err(|e| e.to_string())?;
-        if n == 0 {
-            break;
-        }
-        hash.update(&buffer[..n]);
-    }
-    if hex::encode(hash.finalize()) != a.sha256 {
-        return Err("prepared artifact checksum mismatch".into());
-    }
-    // Authenticate the same inode that is mapped, even across path replacement.
+    let file = File::open(path).map_err(|e| e.to_string())?;
     let mut permissions = file.metadata().map_err(|e| e.to_string())?.permissions();
     permissions.set_readonly(true);
     file.set_permissions(permissions)
         .map_err(|e| e.to_string())?;
-    let pack = Packing::map_prepared(&file, rows, budget)?;
-    crate::artifact::release_file_cache(&file);
+    let checked = pir_publication::VerifiedObjectFile::open(
+        path.into(),
+        &pir_publication::ObjectReference {
+            sha256: artifact.sha256.clone(),
+            bytes: artifact.bytes,
+        },
+    )
+    .map_err(|e| e.to_string())?;
+    load_verified(&checked, artifact, rows, budget)
+}
+
+/// Map the exact object already checked by the transfer owner. Artifact
+/// geometry and session binding still belong to Enhance's prepared format.
+pub fn load_verified(
+    checked: &pir_publication::VerifiedObjectFile,
+    artifact: &Artifact,
+    rows: u64,
+    budget: &crate::PackingBudget,
+) -> Result<Packing, String> {
+    if artifact.format != FORMAT || !valid_len(artifact.bytes, rows)? {
+        return Err("incompatible prepared artifact".into());
+    }
+    if checked.reference().sha256 != artifact.sha256 || checked.reference().bytes != artifact.bytes
+    {
+        return Err("checked packing file does not match descriptor".into());
+    }
+    checked.check().map_err(|e| e.to_string())?;
+    let pack = Packing::map_prepared(checked.file(), rows, budget)?;
+    checked.check().map_err(|e| e.to_string())?;
+    crate::artifact::release_file_cache(checked.file());
     Ok(pack)
 }
 

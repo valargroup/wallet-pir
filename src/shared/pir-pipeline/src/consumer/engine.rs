@@ -48,11 +48,11 @@ impl<C: Consumer> ConsumerEngine<C> {
         self.context.check_serving(&observation).await?;
         if self.pending_loaded.is_none() {
             let started = Instant::now();
-            let candidate = match self.context.select(&observation).await? {
+            let mut candidate = match self.context.select(&observation).await? {
                 Input::Work(candidate) => candidate,
                 Input::Unchanged | Input::Deferred => return Ok(self.deferred().await),
             };
-            if self.context.reserve(&candidate).await? == PeerReservation::PeerAdvanced {
+            if self.context.reserve(&mut candidate).await? == PeerReservation::PeerAdvanced {
                 self.context.deferred(DeferralReason::PeerAdvanced).await;
                 return Ok(self.deferred().await);
             }
@@ -85,11 +85,11 @@ impl<C: Consumer> ConsumerEngine<C> {
         let validation = self.context.validate(&latest, loaded)?;
         self.context.phase_finished("revalidate", started.elapsed());
         let started = Instant::now();
-        self.context.authorize(&latest, &validation).await?;
+        let authority = self.context.authorize(&latest, &validation).await?;
         self.context.phase_finished("authority", started.elapsed());
         let loaded = self
             .pending_loaded
-            .as_ref()
+            .as_mut()
             .expect("the candidate is pending");
         if self.context.confirm(loaded).await? == PeerReservation::PeerAdvanced {
             self.pending_loaded = None;
@@ -101,7 +101,7 @@ impl<C: Consumer> ConsumerEngine<C> {
             .take()
             .expect("the candidate is reserved");
         let started = Instant::now();
-        let (report, handover) = self.context.commit(loaded, validation).await?;
+        let (report, handover) = self.context.commit(loaded, validation, authority).await?;
         self.context.phase_finished("commit", started.elapsed());
         Ok(ConsumerPass::Committed { report, handover })
     }

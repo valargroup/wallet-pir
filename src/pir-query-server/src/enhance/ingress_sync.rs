@@ -1,4 +1,5 @@
 //! Public wallet routing follows publisher metadata and privately pinned routers.
+use super::consumer::{Cleanup, EnhanceConsumer, Incoming, Role as ConsumerRole};
 use crate::enhance::{
     peers::RouterEndpoint,
     synchronization::{
@@ -17,7 +18,11 @@ use enhance_shared::protocol::{
     self, digest, Manifest, QueryBinding, HEADER_BYTES, RETAINED_GENERATIONS,
 };
 use pir_control::admission::{client_key, read_body, BodyError, ClientSlots};
-use pir_pipeline::consumer::polling::SyncTask;
+use pir_pipeline::{
+    consumer::{polling::SyncTask, ConsumerEngine},
+    Input,
+};
+use pir_publication::VerifiedObjects;
 use serde::Deserialize;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -91,6 +96,7 @@ struct Retired {
 #[derive(Default)]
 struct Inner {
     active: Option<Arc<Loaded>>,
+    incoming: Option<Incoming<BTreeMap<u64, Vec<Peer>>>>,
     retained: Vec<Arc<Loaded>>,
     retired: Vec<Retired>,
     cursor: usize,
@@ -252,13 +258,17 @@ impl QueryIngress {
     }
     pub fn synchronizer(&self) -> Result<Synchronizer, Error> {
         Ok(Synchronizer {
-            ingress: self.clone(),
+            engine: ConsumerEngine::new(EnhanceConsumer::new(
+                IngressConsumer {
+                    ingress: self.clone(),
+                },
+                Client::new(
+                    &self.root,
+                    &self.config.source,
+                    self.authority.safety.clone(),
+                )?,
+            )),
             pacing: Pacing::default(),
-            client: Client::new(
-                &self.root,
-                &self.config.source,
-                self.authority.safety.clone(),
-            )?,
             _ownership: self
                 .synchronization
                 .clone()
@@ -413,6 +423,20 @@ impl QueryIngress {
         for (manifest, peers) in released {
             self.release(&manifest, &peers).await;
         }
+        let incoming = self
+            .inner
+            .lock()
+            .unwrap()
+            .incoming
+            .as_ref()
+            .map(|hold| (hold.manifest.clone(), hold.peers.clone()));
+        if let Some((manifest, held)) = incoming {
+            if self.authority.fresh(&manifest).await.is_ok() {
+                if let Ok(Some(peers)) = self.peers(&manifest).await {
+                    *held.lock().unwrap() = peers;
+                }
+            }
+        }
         let mut seen = BTreeSet::new();
         for view in views {
             if seen.insert(digest(&view.manifest))
@@ -478,39 +502,66 @@ impl QueryIngress {
     }
 }
 pub struct Synchronizer {
-    ingress: QueryIngress,
-    client: Client,
+    engine: ConsumerEngine<EnhanceConsumer<IngressConsumer>>,
     _ownership: tokio::sync::OwnedSemaphorePermit,
     pacing: Pacing,
 }
-impl Synchronizer {
-    pub async fn poll_once(&mut self) -> Result<(), Error> {
-        self.ingress.maintain().await;
-        self.client.begin().await?;
-        let response = self.client.current().await?;
-        let Some(manifest) = response.current.manifest.clone() else {
-            return Ok(());
-        };
-        let observed =
-            Lease::from_response(response.clone(), &manifest, &self.ingress.authority.safety)?;
+struct IngressConsumer {
+    ingress: QueryIngress,
+}
+enum IngressSelection {
+    Refresh,
+    New,
+}
+impl ConsumerRole for IngressConsumer {
+    type Selection = IngressSelection;
+    type Material = ();
+    type Promise = Arc<Mutex<BTreeMap<u64, Vec<Peer>>>>;
+    fn safety(&self) -> &Safety {
+        &self.ingress.authority.safety
+    }
+    fn abandon(&mut self) -> Option<Cleanup> {
+        let incoming = self.ingress.inner.lock().unwrap().incoming.take()?;
+        let ingress = self.ingress.clone();
+        Some(Box::pin(async move {
+            let peers = incoming.peers.lock().unwrap().clone();
+            ingress.release(&incoming.manifest, &peers).await;
+        }))
+    }
+    async fn select(
+        &mut self,
+        response: &enhance_shared::publication::AuthorityResponse,
+        _: &mut Client,
+    ) -> Result<Input<IngressSelection>, Error> {
+        let manifest = response
+            .current
+            .manifest
+            .as_ref()
+            .ok_or("missing Enhance manifest")?;
+        let mut inner = self.ingress.inner.lock().unwrap();
+        if inner
+            .active
+            .as_ref()
+            .is_some_and(|view| view.manifest == *manifest)
         {
-            let mut inner = self.ingress.inner.lock().unwrap();
-            if inner
-                .active
-                .as_ref()
-                .is_some_and(|view| view.manifest == manifest)
-            {
-                self.ingress.authority.install(manifest, observed)?;
-                return Ok(());
-            }
-            // Make room before asking downstream to retain another generation.
-            if inner.retained.len() >= RETAINED_GENERATIONS - 1 {
-                let old = inner.retained.remove(0);
-                QueryIngress::retire(&mut inner, old);
-            }
+            return Ok(Input::Work(IngressSelection::Refresh));
         }
+        if inner.retained.len() >= RETAINED_GENERATIONS - 1 {
+            let old = inner.retained.remove(0);
+            QueryIngress::retire(&mut inner, old);
+        }
+        Ok(Input::Work(IngressSelection::New))
+    }
+    fn objects(&self, _: &IngressSelection) -> Vec<enhance_shared::publication::Object> {
+        Vec::new()
+    }
+    async fn reserve(
+        &mut self,
+        manifest: &Manifest,
+        selection: &IngressSelection,
+    ) -> Result<Option<Self::Promise>, Error> {
         self.ingress.maintain().await;
-        let peers = match self.ingress.peers(&manifest).await {
+        let peers = match self.ingress.peers(manifest).await {
             Ok(peers) => {
                 self.ingress.inner.lock().unwrap().blocked = None;
                 peers
@@ -523,20 +574,71 @@ impl Synchronizer {
             }
         };
         let Some(peers) = peers else {
-            return Ok(());
+            return Ok(None);
         };
-        let lease = self.client.renew(&manifest, &observed).await?;
+        let peers = Arc::new(Mutex::new(peers));
+        if matches!(selection, IngressSelection::New) {
+            self.ingress.inner.lock().unwrap().incoming = Some(Incoming {
+                manifest: manifest.clone(),
+                peers: peers.clone(),
+            });
+        }
+        Ok(Some(peers))
+    }
+    async fn load(&mut self, _: IngressSelection, _: VerifiedObjects) -> Result<(), Error> {
+        Ok(())
+    }
+    async fn confirm(
+        &mut self,
+        manifest: &Manifest,
+        held: &mut Self::Promise,
+    ) -> Result<bool, Error> {
+        let Some(peers) = self.ingress.peers(manifest).await? else {
+            return Ok(false);
+        };
+        *held.lock().unwrap() = peers;
+        Ok(true)
+    }
+    fn install(
+        &mut self,
+        manifest: Manifest,
+        _: (),
+        peers: Self::Promise,
+        lease: Lease,
+    ) -> Result<(), Error> {
         let guard = self.ingress.authority.install(manifest.clone(), lease)?;
         guard.check()?;
+        let mut inner = self.ingress.inner.lock().unwrap();
+        if let Some(active) = inner
+            .active
+            .as_ref()
+            .filter(|active| active.manifest == manifest)
+        {
+            *active.peers.lock().unwrap() = peers.lock().unwrap().clone();
+            return Ok(());
+        }
+        inner.incoming = None;
         let loaded = Arc::new(Loaded {
             manifest,
-            peers: Mutex::new(peers),
+            peers: Mutex::new(peers.lock().unwrap().clone()),
         });
-        let mut inner = self.ingress.inner.lock().unwrap();
         if let Some(old) = inner.active.replace(loaded) {
             inner.retained.push(old);
         }
         Ok(())
+    }
+}
+impl Synchronizer {
+    pub async fn poll_once(&mut self) -> Result<(), Error> {
+        let ingress = self.engine.context().role.ingress.clone();
+        ingress.maintain().await;
+        pir_pipeline::consumer::polling::maintain_during(
+            self.engine.synchronize(),
+            MAINTENANCE,
+            || ingress.maintain(),
+        )
+        .await
+        .map(|_| ())
     }
 }
 impl SyncTask for Synchronizer {
@@ -547,11 +649,13 @@ impl SyncTask for Synchronizer {
         self.pacing.finish("ingress", result)
     }
     async fn wait_until(&mut self, deadline: tokio::time::Instant) {
-        let deadline = self.pacing.deadline(deadline);
-        while tokio::time::Instant::now() < deadline {
-            tokio::time::sleep_until(deadline.min(tokio::time::Instant::now() + MAINTENANCE)).await;
-            self.ingress.maintain().await;
-        }
+        let ingress = self.engine.context().role.ingress.clone();
+        pir_pipeline::consumer::polling::maintain_during(
+            tokio::time::sleep_until(self.pacing.deadline(deadline)),
+            MAINTENANCE,
+            || ingress.maintain(),
+        )
+        .await;
     }
     fn report(&self, result: &Result<Option<Deferral>, Error>) {
         if let Err(error) = result {
@@ -570,7 +674,16 @@ impl SyncTask for Synchronizer {
     fn terminal(&self, error: &Error) -> bool {
         pir_sync_manager::is_incompatible(error.as_ref())
             || (error.downcast_ref::<CoverageMismatch>().is_some()
-                && self.ingress.inner.lock().unwrap().active.is_none())
+                && self
+                    .engine
+                    .context()
+                    .role
+                    .ingress
+                    .inner
+                    .lock()
+                    .unwrap()
+                    .active
+                    .is_none())
     }
 }
 impl QueryIngress {

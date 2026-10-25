@@ -202,6 +202,13 @@ impl ObjectCache {
             file: Some(file),
         })
     }
+    /// Disk charge of every directory entry, including unfinished transfers.
+    pub fn occupied_bytes(&self) -> io::Result<u64> {
+        fs::read_dir(&self.directory)?.try_fold(0u64, |sum, entry| {
+            sum.checked_add(entry?.metadata()?.len())
+                .ok_or_else(|| io::Error::other("cache size overflow"))
+        })
+    }
     /// Remove every promoted object not in `retained`. Unrelated and partial
     /// files are left alone.
     pub fn collect_unreferenced(&self, retained: &BTreeSet<String>) -> io::Result<()> {
