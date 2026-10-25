@@ -56,7 +56,7 @@ jobs:
           [[ "$SHA" =~ ^[0-9a-f]{40}$ ]]
           status=$(gh api "repos/$GITHUB_REPOSITORY/compare/main...$SHA" --jq '.status')
           [[ "$status" == identical || "$status" == behind ]]
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
@@ -66,7 +66,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ inputs.ref }}
         run: python3 tools/ci/release.py resolve --sha "$SHA" --kind enhance-pir-native-cuda
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
         with:
           name: enhance-pir-native-cuda-${{ inputs.ref }}
           path: cuda-artifact
@@ -124,7 +124,7 @@ jobs:
           fi
       - name: Preserve validation and rollback evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: enhance-cuda-deployment-${{ github.run_id }}
           path: |

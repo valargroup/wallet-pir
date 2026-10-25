@@ -71,7 +71,7 @@ jobs:
       enhance_infra: ${{ steps.affected.outputs.enhance_infra }}
       transparent_infra: ${{ steps.affected.outputs.transparent_infra }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
           ref: ${{ github.sha }}
       - name: Select affected full suites
@@ -112,7 +112,7 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.select.outputs.test_matrix) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
           ref: ${{ github.sha }}
       - uses: ./.github/actions/rust-setup
@@ -126,7 +126,7 @@ jobs:
         env:
           SHARD: ${{ matrix.shard }}
         run: python3 tools/ci/local_repro.py "python3 tools/ci/test_matrix.py run --shard $SHARD --output .local-pir/qualification/$SHARD.json"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: qualification-${{ matrix.family }}-${{ github.sha }}-${{ github.run_attempt }}-${{ matrix.shard }}
           path: ${{ runner.temp }}/qualification/*.json
@@ -156,7 +156,7 @@ jobs:
       CXXFLAGS: -mpclmul
       CFLAGS: -mpclmul
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
           ref: ${{ github.sha }}
       - uses: ./.github/actions/rust-setup
@@ -184,7 +184,7 @@ jobs:
     if: ${{ !cancelled() && needs.select.result == 'success' && needs.select.outputs.transparent == 'true' && needs.test-shards.result == 'success' }}
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
           ref: ${{ github.sha }}
       - uses: ./.github/actions/verify-qualification
@@ -197,10 +197,10 @@ jobs:
     name: Validate Enhance infrastructure
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
           ref: ${{ github.sha }}
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd  # v3
         with:
           terraform_version: 1.14.8
           terraform_wrapper: false
@@ -238,10 +238,10 @@ jobs:
     name: Validate transparent elastic infrastructure
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
           ref: ${{ github.sha }}
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd  # v3
         with:
           terraform_version: 1.14.8
           terraform_wrapper: false
@@ -263,13 +263,13 @@ jobs:
     name: Validate selected helper checks
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
           ref: ${{ github.sha }}
       - name: Read repository Rust toolchain
         id: helper-toolchain
         run: umask 022 && python3 -c 'import os,tomllib; t=tomllib.load(open("rust-toolchain.toml","rb"))["toolchain"]["channel"]; print("toolchain="+t, file=open(os.environ["GITHUB_OUTPUT"],"a"))'
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec  # stable
         with:
           toolchain: ${{ steps.helper-toolchain.outputs.toolchain }}
           components: rustfmt, clippy
@@ -295,7 +295,7 @@ jobs:
       CXXFLAGS: -mpclmul
       CFLAGS: -mpclmul
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
           ref: ${{ github.sha }}
       - uses: ./.github/actions/rust-setup
@@ -317,7 +317,7 @@ jobs:
     if: ${{ !cancelled() && needs.select.result == 'success' && needs.select.outputs.enhance == 'true' && needs.test-shards.result == 'success' }}
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
           ref: ${{ github.sha }}
       - uses: ./.github/actions/verify-qualification
@@ -333,7 +333,7 @@ jobs:
     env:
       RUST_TEST_THREADS: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
           ref: ${{ github.sha }}
       - uses: ./.github/actions/rust-setup
@@ -357,7 +357,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - uses: ./.github/actions/rust-setup
         with:
           lane: full-lint
@@ -377,7 +377,7 @@ jobs:
     if: ${{ !cancelled() && needs.select.result == 'success' && needs.select.outputs.receiver == 'true' && needs.test-shards.result == 'success' && needs.receiver-lint.result == 'success' }}
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
           ref: ${{ github.sha }}
       - uses: ./.github/actions/verify-qualification
@@ -424,7 +424,7 @@ jobs:
     env:
       RUSTFLAGS: -C target-cpu=x86-64-v3 -C target-feature=+pclmulqdq
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
           persist-credentials: false
       - name: Prepare operations candidate
@@ -465,7 +465,7 @@ jobs:
         if: always() && inputs.family != 'ops'
         continue-on-error: true
         run: umask 022 && python3 tools/ci/cargo_cache.py report
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: candidate-${{ inputs.family }}-${{ github.sha }}
           path: release-bundles/**/*.tar.gz
@@ -479,7 +479,7 @@ jobs:
     needs: [complete, build]
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
           persist-credentials: false
       - uses: ./.github/actions/qualify-artifacts
@@ -510,10 +510,10 @@ jobs:
           umask 022
           apt-get update -qq
           apt-get install -y -qq build-essential ca-certificates curl git libclang-dev protobuf-compiler python3 pkg-config libssl-dev
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec  # stable
         with:
           toolchain: 1.97.1
       - name: Identify native CUDA Cargo cache
@@ -524,7 +524,7 @@ jobs:
       # Main-only job: these entries are trusted and never read PR output.
       - name: Restore native CUDA Cargo cache
         id: restore
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2
         with:
           prefix-key: v1-wallet-pir
           shared-key: ${{ steps.identity.outputs.shared-key }}
@@ -557,7 +557,7 @@ jobs:
         if: always()
         continue-on-error: true
         run: umask 022 && python3 tools/ci/cargo_cache.py report
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: candidate-native-cuda-${{ github.sha }}
           path: release-bundles-native-cuda/enhance-pir-native-cuda/enhance-pir-native-cuda.tar.gz
@@ -571,7 +571,7 @@ jobs:
     needs: [complete, build-cuda]
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
           persist-credentials: false
       - uses: ./.github/actions/qualify-artifacts
@@ -584,7 +584,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.query-candidate
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
@@ -605,7 +605,7 @@ jobs:
         run: |
           python3 tools/ci/release.py assemble --kind pir-query-server --sha "$GITHUB_SHA" --output .local-pir/query-candidate
           python3 tools/scripts/wallet-pir-bundle.py assemble --sha "$GITHUB_SHA" --archive .local-pir/query-candidate/wallet-pir-ops.tar.gz
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: unified-query-candidate-${{ github.sha }}
           path: .local-pir/query-candidate/
@@ -618,7 +618,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.publisher-only
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
@@ -667,7 +667,7 @@ jobs:
           cp "$CARGO_TARGET_DIR/release-fast/rate-query" "$CARGO_TARGET_DIR/release-fast/txid-rate" .local-pir/publisher-candidate/
           cp "$CARGO_TARGET_DIR/release-fast/enhance-pir-cli" "$CARGO_TARGET_DIR/release-fast/enhance-pir-load-test" .local-pir/publisher-candidate/
           sha256sum .local-pir/publisher-candidate/pir-query-server .local-pir/publisher-candidate/enhance-pir-cli .local-pir/publisher-candidate/enhance-pir-load-test .local-pir/publisher-candidate/rate-query .local-pir/publisher-candidate/txid-rate .local-pir/publisher-candidate/*.tar.gz .local-pir/publisher-candidate/transparent-regression .local-pir/publisher-candidate/regression-export .local-pir/publisher-candidate/txid-quality-canary > .local-pir/publisher-candidate/SHA256SUMS
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: transparent-publisher-candidate-${{ github.sha }}
           path: .local-pir/publisher-candidate/

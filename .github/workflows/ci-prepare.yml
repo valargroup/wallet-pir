@@ -38,7 +38,7 @@ jobs:
     runs-on: ${{ fromJSON(github.ref == 'refs/heads/main' && vars.WALLET_PIR_MAIN_RUNNER || '"ubuntu-24.04"') }}
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
           fetch-depth: 1
       - name: Fetch comparison revision
@@ -107,7 +107,7 @@ jobs:
           done
       - name: Retain complete correctness case and stage receipts
         if: always() && inputs.correctness
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: complete-correctness-${{ github.run_id }}-${{ github.run_attempt }}
           path: |

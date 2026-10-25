@@ -81,12 +81,12 @@ jobs:
           done
           (( CUTOFF > START && CUTOFF <= ANCHOR )) || { echo "start < cutoff <= anchor required"; exit 1; }
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
           ref: ${{ inputs.ref }}
           persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec  # stable
         with:
           toolchain: 1.97.1
 
@@ -126,7 +126,7 @@ jobs:
           jq -c '{schema, tool_sha, genesis_hash, start_height, cutoff_height, anchor_height, anchor_hash, seed, per_class, classes, clients: (.clients | length)}' sample/sample.json
           sha256sum sample/sample.json | tee sample/SHA256SUMS
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         if: always()
         with:
           name: transparent-script-sample

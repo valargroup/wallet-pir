@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       # The caller gates this entire workflow before setup. cudarc dynamically
       # loads driver/NVRTC libraries; no toolkit or driver is installed here.
       - uses: ./.github/actions/rust-setup
@@ -43,7 +43,7 @@ jobs:
           python3 tools/ci/stage.py tests:status-cpu-mixed-build -- cargo test --locked --profile release-fast
           -p pir-cuda -p status-shared --features pir-cuda/cuda --lib
           fixed_inputs_pin_public_material_and_answer
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: qualification-cuda-${{ github.sha }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/cuda-receipts/*.json
