@@ -2355,13 +2355,12 @@ mod tests {
         )
     }
 
-    /// A sealed shard's companion, in written passes that prepare no PIR, is provisional
-    /// at each tip until its payment's Ironwood shard completes, and is rebuilt when a
-    /// reorg replaces the block after the seal while its payment table stays. Payloads
-    /// equal a fresh rebuild. `witness_dependencies_follow_reorgs_after_a_seal` checks
-    /// the same over served PIR under `qualification-tests`.
+    /// One history crosses witness finality and both reorg boundaries. A provisional
+    /// companion follows the tip, a completed one freezes, and replacing either
+    /// block rebuilds its witness without changing the payment table. Each payload
+    /// is checked against an independent rebuild from the stored commitments.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn written_companions_stay_provisional_and_follow_a_reorg() {
+    async fn written_companions_follow_reorgs_before_and_after_finality() {
         let one = super::common::receiver();
         let mut paused = Paused::new(|_| {}).await;
         paused.args.shard_target = Some(1);
@@ -2388,24 +2387,11 @@ mod tests {
         let (_, reorged) = shards[0][0].payment(one);
         assert_eq!(reorged, fresh(&paused.store(), &[payment.position])[0]);
         assert_ne!(reorged, provisional);
-    }
-
-    /// A sealed shard's companion, in written passes that prepare no PIR, freezes at the
-    /// block completing its payment's Ironwood shard and stays unchanged after it, and
-    /// is rebuilt when a reorg replaces that block though the payment table is unchanged.
-    /// Payloads equal a fresh rebuild. `witness_dependencies_follow_reorgs_after_a_seal`
-    /// checks the same over served PIR under `qualification-tests`.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn written_companions_freeze_and_follow_a_reorg_of_the_completing_block() {
-        let one = super::common::receiver();
-        let mut paused = Paused::new(|_| {}).await;
-        paused.args.shard_target = Some(1);
-        let mut state = State::default();
-        paused.extend(&[one], 4, 0);
-        paused.extend(&[], (1 << 16) - 15, 0);
+        // Continue the same history through the block that completes the shard.
         let completing = paused.extend(&[], 20, 0);
         let (_, shards) = one_shot(&paused, &mut state).await;
-        let (payments, w3) = first_written(&shards);
+        let (p3, w3) = first_written(&shards);
+        assert_eq!(p3, payments);
         assert_eq!(w3.tree_height, completing.height);
         let (payment, final_payload) = shards[0][0].payment(one);
         assert_eq!(

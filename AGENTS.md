@@ -96,6 +96,7 @@ subcommands, and product features are selected independently.
   concurrent work use separate worktrees/target lanes; reuse each lane across
   edits. Do not create a new cold target per command or weaken trust boundaries.
 - Keep fast-suite fixtures small enough to finish in a few seconds; retain deployed-size parameter combinations in full qualification.
+- Keep fast tests focused on key observable behavior; delete obsolete or redundant cases before adding runner or scheduling complexity.
 - When a test needs a published predecessor, reuse the shared fixture, damage an open artifact in place, and build or decode a full artifact only for the property that test checks.
 - Prioritize integration tests for complex script workflows; avoid trivial or implementation-detail tooling tests, retaining focused tests only for consequential gaps.
 

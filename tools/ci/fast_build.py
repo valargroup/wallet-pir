@@ -16,14 +16,10 @@ and RocksDB chain-node targets stay in qualification.
 The Enhance and Transparent reader targets stay on this command: dropping
 `testing-node` rebuilds every consumer. Campaign targets are never
 selected. Test programs retain their package directory and Cargo environment.
-The filter library and the Enhance and Receiver runtime libraries run alone on
-fewer than eight cores, counting any cgroup CPU quota. On eight cores the query
-host's Status cases form three groups that overlap one another and finish
-before the pool. That wave is the whole process limit, so the Enhance
-publication library joins the pool. Below eight cores Status stays one program
-so a generation prepare keeps the machine, and the Enhance publication library
-runs alone before the pool. The remaining programs share a pool of at most
-three processes.
+The Enhance and Receiver runtime libraries run alone below eight cores,
+counting any cgroup CPU quota. Status stays in one process so its cases share
+prepared material instead of copying a multi-gigabyte fixture across lanes.
+The remaining programs share a pool of at most three processes.
 """
 import json
 import os
@@ -78,57 +74,12 @@ def publisher_runs_alone(name, kinds):
 
 
 def status_runs_alone(name, kinds, names):
-    """Status sync cases each prepare a generation on every core.
-
-    One generation prepare is a 96 MiB database. Sharing those cores with the
-    pool, or with the publisher, pushes a single case past its budget. The
-    query host's Status groups therefore finish before either of those. Three
-    groups overlap one another on an eight-core runner; their prepares are
-    the long part of this program.
-    """
+    """One shared Status fixture runs before the ordinary test pool."""
     return (name == 'pir-query-server' and 'lib' in kinds
             and any(case.startswith('status::') for case in names))
 
 
-def status_case_weight(name):
-    """Relative prepare cost, so the Status lanes finish together.
-
-    The numbers follow the warm fast run's case times. Equal weights piled the
-    long prepares onto one lane and the pool waited for that lane.
-    """
-    weighted = (
-        ('changed_material_during_loading', 9),
-        ('metadata_only_refresh_reuses_verified_material', 9),
-        ('a_candidate_activates_only_under_a_live_answer', 9),
-        ('router_commits_its_workers_retained_predecessor', 7),
-        ('a_metadata_refresh_during_the_load', 8),
-        ('a_new_publication_during_authority_check', 4),
-        ('consumer_restart_requires_https_authority', 4),
-        ('resumed_candidates_are_rejected', 3),
-        ('prepared_candidate_proof_binds', 2),
-        ('status_polling_reserves_time', 2),
-    )
-    for fragment, weight in weighted:
-        if fragment in name:
-            return weight
-    return 1
-
-
-def balance_status_lanes(names, lanes):
-    """Largest-first assignment. Equal weights still cover every name once."""
-    if lanes <= 1:
-        return [sorted(names)]
-    ordered = sorted(names, key=lambda name: (-status_case_weight(name), name))
-    buckets = [[] for _ in range(lanes)]
-    totals = [0] * lanes
-    for name in ordered:
-        index = min(range(lanes), key=lambda lane: (totals[lane], lane))
-        buckets[index].append(name)
-        totals[index] += status_case_weight(name)
-    return [sorted(bucket) for bucket in buckets if bucket]
-
-
-def assign_status_lanes(parts, package, kinds, discovered):
+def isolate_status_fixture(parts, package, kinds, discovered):
     """Mark Status partitions exclusive without marking the host's other roles."""
     for part in parts:
         args = part['args']
@@ -137,7 +88,6 @@ def assign_status_lanes(parts, package, kinds, discovered):
         status_only = cases is None or all(case.startswith('status::') for case in cases)
         if status_only and status_runs_alone(package, kinds, selected):
             part['exclusive'] = True
-            part['exclusive_group'] = 'status'
     return parts
 
 
@@ -364,10 +314,14 @@ def bounded_programs(program, names):
     Each process retains immutable fixture reuse across dozens of cases. Keep
     the small-runner publisher protection and real HTTP integrations intact.
     """
-    # Status roles, hosted by the query server, pay for one process-local
-    # generation per group. Two groups let those prepares overlap. Every other
-    # suite keeps about forty-eight cases so immutable fixtures stay together.
-    group = 31 if program.get('package') == 'pir-query-server' else 48
+    group = 48
+    status = {name for name in names if name.startswith('status::')}
+    if (program.get('package') == 'pir-query-server' and status
+            and not program['integration'] and not program['exclusive']):
+        remaining = sorted(names - status)
+        partitions = [remaining, sorted(status)] if remaining else [sorted(status)]
+        return [dict(program, args=[*program['args'], '--exact', *cases],
+                     case_count=len(cases)) for cases in partitions if cases]
     if program['integration'] or program['exclusive'] or len(names) <= group:
         return [program]
     lanes = min(3, (len(names) + group - 1) // group)
@@ -380,17 +334,7 @@ def bounded_programs(program, names):
     ordered = sorted(names)
     distribution = [name for name in ordered
                     if name.startswith('history::controller::distribution_tests::')]
-    status = [name for name in ordered if name.startswith('status::')]
-    if program.get('package') == 'pir-query-server' and status and len(status) < len(names):
-        # Every Status case prepares on every core. Eight cores run three
-        # groups, which is the whole process limit, so those prepares overlap
-        # each other and the host's other roles stay in the pool. Below eight
-        # CPUs one group keeps the process-local generation cache and the
-        # whole machine, which is what holds a prepare under 30 seconds.
-        status_lanes = 3 if available_cpus() >= 8 and len(status) > 2 else 1
-        remaining = sorted(names - set(status))
-        partitions = [remaining, *balance_status_lanes(status, status_lanes)]
-    elif program.get('package') == 'transparent-publisher' and distribution:
+    if program.get('package') == 'transparent-publisher' and distribution:
         # These cases share expensive immutable native producer bytes. Keep
         # them in one process; each consumer still has its own files and HTTP.
         remaining = sorted(names - set(distribution))
@@ -622,8 +566,8 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
                              integration=integration,
                              # Its real reference packing and independent oracle
                              # must not compete with the runtime's matrix fixtures.
-                             # Status is marked after the split: only its lanes
-                             # stay exclusive, and the host's other roles join the pool.
+                             # Only the shared Status fixture stays exclusive;
+                             # the host's other roles join the ordinary pool.
                              exclusive=publisher_runs_alone(name, target['kind'])
                              or runtime_runs_alone(name, target['kind'])
                              or identity == ('pir-e2e-tests', 'ci_hint')
@@ -636,7 +580,7 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
                      for part in bounded_programs(program, names)]
         else:
             parts = bounded_programs(program, names)
-        programs.extend(assign_status_lanes(parts, name, target['kind'], names))
+        programs.extend(isolate_status_fixture(parts, name, target['kind'], names))
     if actual_integrations != expected_integrations or expected_units - actual_units:
         raise ValueError(f'fast test executables mismatch: missing_units={sorted(expected_units-actual_units)}, '
                          f'missing_integrations={sorted(expected_integrations-actual_integrations)}, '

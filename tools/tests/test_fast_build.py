@@ -106,59 +106,23 @@ class FastBuildTests(unittest.TestCase):
         [shard] = fast_build.bounded_programs(program, only_distribution)
         self.assertCountEqual(shard['args'][1:], only_distribution)
 
-    def test_status_preparation_splits_once_and_other_suites_keep_larger_groups(self):
-        names = {f'status::sync::tests::case_{index:02d}' for index in range(37)}
-        status = dict(package='pir-query-server', integration=False, exclusive=False,
-                      args=[], case_count=len(names))
-        shards = fast_build.bounded_programs(status, names)
-        self.assertEqual(len(shards), 2)
-        actual = [case for shard in shards for case in shard['args'][1:]]
-        self.assertCountEqual(actual, names)
-        hosted = names | {f'transparent::validation::tests::case_{index:02d}' for index in range(60)}
-        with patch.object(fast_build, 'available_cpus', return_value=8):
-            shards = fast_build.bounded_programs(status, hosted)
-        self.assertEqual(len(shards), 4)
-        self.assertFalse(any(case.startswith('status::') for case in shards[0]['args'][1:]))
-        self.assertCountEqual([case for shard in shards for case in shard['args'][1:]], hosted)
-        self.assertEqual(len(shards) - 1, 3)
-        self.assertCountEqual([case for shard in shards[1:] for case in shard['args'][1:]], names)
-        scheduled = fast_build.assign_status_lanes(shards, 'pir-query-server', ['lib'], hosted)
-        self.assertFalse(scheduled[0].get('exclusive'))
-        self.assertTrue(all(part['exclusive_group'] == 'status' for part in scheduled[1:]))
-        with patch.object(fast_build, 'available_cpus', return_value=4):
-            small = fast_build.bounded_programs(status, hosted)
-        self.assertEqual(len(small), 2)
-        self.assertFalse(any(case.startswith('status::') for case in small[0]['args'][1:]))
-        self.assertTrue(all(case.startswith('status::') for case in small[1]['args'][1:]))
-        other = dict(status, package='receiver-indexer')
-        self.assertEqual(fast_build.bounded_programs(other, names), [other])
-        wide = {f'application::tests::case_{index:02d}' for index in range(90)}
-        with patch.object(fast_build, 'available_cpus', return_value=8):
-            shards = fast_build.bounded_programs(dict(other, case_count=len(wide)), wide)
-        self.assertEqual(len(shards), 3)
-        self.assertCountEqual([case for shard in shards for case in shard['args'][1:]], wide)
-        with patch.object(fast_build, 'available_cpus', return_value=4):
-            shards = fast_build.bounded_programs(dict(other, case_count=len(wide)), wide)
-        self.assertEqual(len(shards), 2)
-
-    def test_status_lanes_split_the_long_prepares(self):
-        heavy = {
-            'status::sync::tests::changed_material_during_loading_still_allows_forward_progress',
-            'status::sync::tests::metadata_only_refresh_reuses_verified_material_under_live_authority',
-            'status::sync::tests::a_candidate_activates_only_under_a_live_answer_for_its_exact_envelope',
-            'status::sync::tests::a_metadata_refresh_during_the_load_commits_the_loaded_material_as_latest',
-            'status::sync::tests::router_commits_its_workers_retained_predecessor_and_releases_the_worker',
-        }
-        names = heavy | {f'status::sync::tests::case_{index:02d}' for index in range(30)}
-        hosted = names | {f'transparent::validation::tests::case_{index:02d}' for index in range(20)}
-        status = dict(package='pir-query-server', integration=False, exclusive=False,
-                      args=[], case_count=len(hosted))
-        with patch.object(fast_build, 'available_cpus', return_value=8):
-            shards = fast_build.bounded_programs(status, hosted)
-        lanes = [set(shard['args'][1:]) for shard in shards[1:]]
-        self.assertEqual(len(lanes), 3)
-        self.assertTrue(all(len(lane & heavy) <= 2 for lane in lanes))
-        self.assertEqual(set().union(*lanes) & heavy, heavy)
+    def test_status_cases_share_one_process_and_preserve_other_roles(self):
+        status_names = {f'status::sync::tests::case_{index:02d}' for index in range(37)}
+        other_names = {f'transparent::validation::tests::case_{index:02d}' for index in range(60)}
+        program = dict(package='pir-query-server', integration=False, exclusive=False,
+                       args=[], case_count=len(status_names | other_names))
+        for cpus in (3, 8):
+            with self.subTest(cpus=cpus), patch.object(fast_build, 'available_cpus', return_value=cpus):
+                parts = fast_build.bounded_programs(program, status_names | other_names)
+                parts = fast_build.isolate_status_fixture(parts, 'pir-query-server', ['lib'],
+                                                       status_names | other_names)
+            self.assertEqual(len(parts), 2)
+            self.assertCountEqual(parts[0]['args'][1:], other_names)
+            self.assertFalse(parts[0].get('exclusive'))
+            self.assertCountEqual(parts[1]['args'][1:], status_names)
+            self.assertTrue(parts[1]['exclusive'])
+        [part] = fast_build.bounded_programs(program, status_names)
+        self.assertCountEqual(part['args'][1:], status_names)
 
     def test_cgroup_quota_bounds_available_cpus(self):
         root = Path(self.directory.name) / 'cgroup'

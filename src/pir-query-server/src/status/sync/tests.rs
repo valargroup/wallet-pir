@@ -763,10 +763,11 @@ fn committed(pass: PublicationPass<u64>) -> (u64, PeerHandover) {
     }
 }
 
-/// One prepared generation for this snapshot and identity, stamped at `observed_ms`.
+/// One prepared database per snapshot, stamped with each case's publication identity.
 ///
-/// The units do not depend on the observation time. Cases in this process share
-/// the prepared material and only restamp freshness.
+/// Generation numbers and freshness do not change the database. Sync tests
+/// exercise loading and authority over that material; preparation and incremental
+/// updates have their own independent tests in status-shared.
 fn cached_generation(
     snapshot: &status_shared::index::Snapshot,
     generation: u64,
@@ -774,21 +775,15 @@ fn cached_generation(
     observed_ms: u64,
     previous: Option<&Generation>,
 ) -> Generation {
-    type Key = ([u8; 32], u64, u64, Option<[u8; 32]>);
-    static CACHE: OnceLock<Mutex<std::collections::HashMap<Key, Generation>>> = OnceLock::new();
-    let key = (
-        snapshot.digest,
-        generation,
-        recovery_epoch,
-        previous.map(|prior| prior.manifest().rows_digest),
-    );
+    static CACHE: OnceLock<Mutex<std::collections::HashMap<[u8; 32], Generation>>> =
+        OnceLock::new();
     let mut cache = CACHE.get_or_init(Default::default).lock().unwrap();
-    let prepared = cache.entry(key).or_insert_with(|| {
+    let prepared = cache.entry(snapshot.digest).or_insert_with(|| {
         Generation::prepare(snapshot, generation, recovery_epoch, 1, previous)
             .unwrap()
             .0
     });
-    prepared.clone().reobserved(observed_ms)
+    prepared.reidentified(generation, recovery_epoch, observed_ms)
 }
 
 /// An expired publication is expected source coordination. It must not make
@@ -1437,13 +1432,13 @@ async fn candidate_deferred_by_an_advance() -> AdvancedCandidate {
 /// envelope it was revalidated under: neither an answer replayed from an
 /// earlier envelope nor a live answer for another anchor activates it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
-async fn a_candidate_refuses_replayed_or_substituted_authority_answers() {
+async fn a_candidate_requires_live_authority_before_activation() {
     let AdvancedCandidate {
         source,
         server,
         worker,
         mut task,
-        inventory,
+        mut inventory,
         earlier,
         // Hold the directories, TLS terminator and service until the end.
         _root,
@@ -1487,27 +1482,7 @@ async fn a_candidate_refuses_replayed_or_substituted_authority_answers() {
     assert!(!task
         .floor()
         .is_invalidated(&ViewIdentity(inventory.manifest.id())));
-    server.abort();
-}
-
-/// After an advance deferred the candidate, a withdrawal during its next
-/// check leaves nothing serving, and the same material republished under a
-/// live answer for its exact envelope then activates.
-#[tokio::test(flavor = "multi_thread", worker_threads = 3)]
-async fn a_candidate_activates_only_under_a_live_answer_for_its_exact_envelope() {
-    let AdvancedCandidate {
-        source,
-        server,
-        worker,
-        mut task,
-        mut inventory,
-        // Hold the directories, TLS terminator and service until the end.
-        _root,
-        _tls,
-        _service,
-        ..
-    } = candidate_deferred_by_an_advance().await;
-
+    *source.replayed_check.write().unwrap() = None;
     // A withdrawal during the candidate's check leaves nothing serving.
     source.advance_during_check.store(true, Ordering::SeqCst);
     source.withdraw_during_check.store(true, Ordering::SeqCst);

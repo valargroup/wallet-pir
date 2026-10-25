@@ -180,15 +180,11 @@ three Cargo-reported test programs concurrently. The publisher library builds
 full archive runtimes on every core of a 4-core hosted runner, so it runs alone
 there before the pool; beside it, the encrypted HTTP smokes miss the 30-second
 case deadline. The 8-core fast runner keeps that library in the pool with four
-build threads. The query host's Status cases finish before the pool. One
-generation prepare is a 96 MiB database, and overlapping that prepare with the
-Transparent publisher crosses the 30-second case deadline. On eight cores those cases form
-three groups, balanced so the long prepares are not all in one group, and the
-three groups overlap each other. That wave is the whole process limit, so the
-Enhance publication library returns to the pool. Below eight cores
-Status stays one program so the prepare keeps the machine and its process-local
-generation cache, and the Enhance publication library runs alone before the
-pool. Below eight
+build threads. The query host's Status cases share one process and finish
+before the pool, reusing prepared databases across publication identities.
+Splitting these cases duplicates large native allocations and can exhaust the
+runner's memory ceiling. The Enhance publication library also runs alone.
+Below eight
 CPUs, counting any cgroup quota, the Enhance and Receiver runtime libraries
 also run alone, because single cases overran the 30-second deadline beside
 each other. On those hosts Rust test programs also
@@ -344,6 +340,12 @@ all layouts, one-shard and multi-shard wallets, and request/charge assertions re
 The deployment goal is under ten minutes for all services, including qualification,
 artifact preparation, rollout and query verification. These reductions do not by
 themselves establish that end-to-end timing; record a complete run before claiming it.
+
+Status sync cases share one prepared database per snapshot and run in one
+exclusive process. Publication identities reuse those allocations. Their
+HTTP peers, writable caches, authority checks and failure controls remain
+independent. Running three Status processes multiplies the large native
+working set and can kill the runner at its memory ceiling.
 
 ## Warm runners
 
