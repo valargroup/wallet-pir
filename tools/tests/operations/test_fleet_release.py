@@ -201,5 +201,94 @@ class FleetReleasePlanTests(unittest.TestCase):
         self.assertTrue(fleet_release.validate_request(bad))
 
 
+class Hosts:
+    """Read-only fleet observations: units, staged releases and discovery answers."""
+    def __init__(self, units, reports, discovery):
+        self.units, self.reports, self.discovery = units, reports, discovery
+        self.calls = []
+
+    def probe_unit(self, host, unit):
+        self.calls.append(('probe', host))
+        sha = self.units.get((host, unit))
+        return {'active_state': 'active' if sha else 'inactive', 'exe_sha256': sha}
+
+    def sha256(self, host, path):
+        sha = path.split('/releases/')[1].split('/')[0]
+        return sha if (host, sha) in self.reports else None
+
+    def run(self, host, argv, timeout):
+        self.calls.append(('run', host, tuple(argv)))
+        sha = argv[0].split('/releases/')[1].split('/')[0]
+        report_text = self.reports[(host, sha)]
+        return (2, 'unexpected argument') if report_text is None else (0, report_text)
+
+    def http_get(self, host, url, timeout=5):
+        if url not in self.discovery:
+            raise OSError('connection refused')
+        return self.discovery[url]
+
+
+class ObservationTests(unittest.TestCase):
+    def test_observation_reads_running_release_contract_and_discovery(self):
+        old, legacy = '1' * 64, '2' * 64
+        units = {('query-01', 'wallet-pir-query.service'): old, ('pub-01', 'pir-publisher.service'): legacy}
+        reports = {('query-01', old): json.dumps(report('pir-query-server', 1, QUERY_PRODUCTS)),
+                   ('pub-01', legacy): None}
+        discovery = {ORIGIN + '/.well-known/pir-service-discovery':
+                     (200, json.dumps({'service': 'pir-publisher', 'version': '1.4.0'}))}
+        hosts = Hosts(units, reports, discovery)
+        inventory = load(inventory_document(distributed=False))
+        observed = fleet_release.observe(REGISTRY, inventory, hosts, request([UNIFIED]))
+        self.assertEqual(observed['processes'][UNIFIED], {'exe_sha256': old, 'contract_major': 1,
+                                                          'previous_staged': True})
+        self.assertEqual(observed['processes'][PUBLISHER], {'exe_sha256': legacy, 'contract_major': None,
+                                                            'previous_staged': True})
+        self.assertEqual(observed['publishers'][ORIGIN], {'major': 1})
+        planned = fleet_release.plan(REGISTRY, inventory, 'e' * 64, request([UNIFIED]), observed)
+        self.assertEqual(planned['problems'], [])
+
+    def test_unreachable_discovery_is_unknown(self):
+        hosts = Hosts({}, {}, {})
+        inventory = load(inventory_document(distributed=False))
+        observed = fleet_release.observe(REGISTRY, inventory, hosts, request([PUBLISHER]))
+        self.assertIsNone(observed['publishers'][ORIGIN]['major'])
+        planned = fleet_release.plan(REGISTRY, inventory, 'e' * 64, request([PUBLISHER]), observed)
+        self.assertTrue(any('unknown' in problem for problem in planned['problems']))
+        self.assertTrue(any('no running executable observed' in problem for problem in planned['problems']))
+
+
+class CommandTests(unittest.TestCase):
+    def test_plan_then_preflight_refuses_a_stale_review(self):
+        import hashlib
+        from wallet_pir_ops.deploy import cli
+        old = '1' * 64
+        units = {('query-01', 'wallet-pir-query.service'): old, ('pub-01', 'pir-publisher.service'): old}
+        reports = {('query-01', old): json.dumps(report('pir-query-server', 1, QUERY_PRODUCTS)),
+                   ('pub-01', old): json.dumps(report('pir-publisher', 1, QUERY_PRODUCTS))}
+        discovery = {ORIGIN + '/.well-known/pir-service-discovery':
+                     (200, json.dumps({'service': 'pir-publisher', 'version': '1.0.0'}))}
+        with tempfile.TemporaryDirectory() as directory:
+            inventory = Path(directory) / 'inventory.json'
+            inventory.write_bytes(json.dumps(inventory_document(distributed=False)).encode())
+            body = request([UNIFIED], inventory_sha256=hashlib.sha256(inventory.read_bytes()).hexdigest())
+            path = Path(directory) / 'request.json'
+            path.write_text(json.dumps(body))
+            pin = ['--request', str(path), '--request-sha256', hashlib.sha256(path.read_bytes()).hexdigest()]
+            lines = []
+            hosts = Hosts(units, reports, discovery)
+            base = ['--inventory', str(inventory), '--state-dir', directory]
+            self.assertEqual(cli.main([*base, 'fleet-release-plan', *pin], executor=hosts, out=lines.append), 0)
+            planned = json.loads(lines[-1])
+            self.assertEqual(planned['problems'], [])
+            self.assertEqual(cli.main([*base, 'fleet-release-preflight', *pin, '--expect-plan-sha256',
+                                       planned['plan_sha256']], executor=hosts, out=lines.append), 0)
+            units[('query-01', 'wallet-pir-query.service')] = '3' * 64
+            code = cli.main([*base, 'fleet-release-preflight', *pin, '--expect-plan-sha256',
+                             planned['plan_sha256']], executor=hosts, out=lines.append)
+            self.assertNotEqual(code, 0)
+            self.assertIn('stale', lines[-1])
+            self.assertFalse([call for call in hosts.calls if call[0] not in ('probe', 'run')])
+
+
 if __name__ == '__main__':
     unittest.main()
