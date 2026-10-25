@@ -6,7 +6,7 @@ use crate::{
     verify,
 };
 use pir_pipeline::{FailurePolicy, Input};
-#[cfg(test)]
+#[cfg(all(test, feature = "qualification-tests"))]
 use receiver_pir_server::publication::DEFAULT_RETENTION;
 use receiver_pir_server::{publication::Segment, tables::FilterSource, Publication, Publications};
 use receiver_store::{Checkpoint, Config as StoreConfig, Error, PayoutStore, SealedShard, Store};
