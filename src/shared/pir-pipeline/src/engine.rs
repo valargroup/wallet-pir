@@ -1,9 +1,7 @@
 //! One execution order for every prepared publisher, independent of its data.
 use crate::service::Shutdown;
 use crate::{
-    publisher::{
-        Control, Publication, PublicationInput, Publisher, PublisherExecutor, PublisherRun,
-    },
+    publisher::{Control, Publication, Publisher, PublisherExecutor, PublisherRun},
     FailurePolicy,
 };
 
@@ -70,13 +68,7 @@ impl PublisherExecutor for PublisherEngine {
                 while !shutdown.requested() {
                     let attempt = async {
                         publisher.background(*self).await?;
-                        match publisher.acquire().await? {
-                            PublicationInput::NewMaterial(publication)
-                            | PublicationInput::MetadataRefresh(publication) => {
-                                self.publish(publication).await.map(Some)
-                            }
-                            PublicationInput::Unchanged | PublicationInput::Deferred => Ok(None),
-                        }
+                        self.publish_input(publisher.acquire().await?).await
                     }
                     .await;
                     match attempt {

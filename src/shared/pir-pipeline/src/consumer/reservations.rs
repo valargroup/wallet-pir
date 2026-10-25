@@ -65,6 +65,11 @@ impl<K: Eq + Clone, V> Reservations<K, V> {
     /// nothing; older incoming work cannot displace a newer promise.
     pub fn reserve<R: Ord>(&mut self, key: K, value: V, rank: impl Fn(&V) -> R) -> PeerReservation {
         if self.acknowledged.as_ref() == Some(&key) {
+            // The product has revalidated this view. If expiry removed its
+            // physical hold, restore it without displacing incoming work.
+            if self.serving.is_none() {
+                self.serving = Some((key, value));
+            }
             return PeerReservation::Reserved;
         }
         if self.iter().any(|held| rank(held) > rank(&value)) {
@@ -89,9 +94,35 @@ impl<K: Eq + Clone, V> Reservations<K, V> {
         true
     }
 }
+/// Explicit reservation service for consumers without downstream peers.
+#[derive(Clone, Copy, Default)]
+pub struct NoPeers;
+impl NoPeers {
+    pub fn reserve(&self) -> super::PeerReservation {
+        super::PeerReservation::Reserved
+    }
+    pub fn complete(&self) -> super::PeerHandover {
+        super::PeerHandover::Complete
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn a_revalidated_serving_pin_restores_an_expired_hold_without_releasing_the_candidate() {
+        let mut holds = Reservations::default();
+        holds.reserve(1, 1, |v| *v);
+        assert!(holds.acknowledge(&1));
+        holds.retain(|_| false);
+        holds.reserve(2, 2, |v| *v);
+        assert_eq!(holds.reserve(1, 1, |v| *v), PeerReservation::Reserved);
+        assert_eq!(holds.iter().copied().collect::<Vec<_>>(), [1, 2]);
+        assert!(holds.acknowledge(&1));
+        assert_eq!(holds.len(), 2);
+        assert!(holds.acknowledge(&2));
+        assert_eq!(holds.iter().copied().collect::<Vec<_>>(), [2]);
+    }
     #[test]
     fn abandoned_candidates_are_bounded_and_retries_preserve_the_serving_view() {
         let mut holds = Reservations::default();

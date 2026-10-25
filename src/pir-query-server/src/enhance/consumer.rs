@@ -61,10 +61,6 @@ pub(super) trait Role: Send {
     ) -> Result<(), Error>;
 }
 
-/// A role without downstream peer promises still participates in reservation
-/// ordering, explicitly carrying this token through loading and activation.
-pub(super) struct NoPeers;
-
 pub(super) struct EnhanceConsumer<R: Role> {
     pub role: R,
     client: Client,

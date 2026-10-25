@@ -1,7 +1,13 @@
 //! Domain operations supplied to the host's publication engine.
-use super::Control;
 use crate::FailurePolicy;
 use std::{future::Future, pin::Pin};
+
+/// Continue polling or finish a bounded publication run.
+#[derive(Clone, Copy)]
+pub enum Control {
+    Continue,
+    Complete,
+}
 
 /// One source-bound publication. Each phase consumes the preceding phase's
 /// result; only the host sequences them. Product code supplies construction,
@@ -107,6 +113,21 @@ pub trait PublisherExecutor: Clone + Send + Sync + 'static {
         &self,
         publication: P,
     ) -> impl Future<Output = Result<P::Report, P::Error>> + Send;
+    /// Execute one product-selected input with the same order used by service polling.
+    fn publish_input<P: Publication>(
+        &self,
+        input: PublicationInput<P>,
+    ) -> impl Future<Output = Result<Option<P::Report>, P::Error>> + Send {
+        async move {
+            match input {
+                PublicationInput::NewMaterial(publication)
+                | PublicationInput::MetadataRefresh(publication) => {
+                    self.publish(publication).await.map(Some)
+                }
+                PublicationInput::Unchanged | PublicationInput::Deferred => Ok(None),
+            }
+        }
+    }
     fn run<'a, P: Publisher + 'a>(
         &'a self,
         publisher: P,

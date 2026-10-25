@@ -83,3 +83,52 @@ pub mod test_support {
         Some(writer(path, bytes))
     }
 }
+
+/// Read one local record or artifact with the product's explicit byte budget.
+/// Opening follows the caller's existing path policy; this creates no digest
+/// evidence and never grants permission to serve.
+pub fn read_bounded(path: &Path, limit: u64) -> std::io::Result<Vec<u8>> {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)?
+        .take(limit.saturating_add(1))
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > limit {
+        return Err(std::io::Error::other(format!(
+            "{} is larger than {limit} bytes",
+            path.display()
+        )));
+    }
+    Ok(bytes)
+}
+/// Read a fixed-length product artifact without adding a second digest pass.
+pub fn read_exact_len(path: &Path, len: u64) -> std::io::Result<Vec<u8>> {
+    let bytes = read_bounded(path, len)?;
+    if bytes.len() as u64 != len {
+        return Err(std::io::Error::other(format!(
+            "{} is {} bytes, the manifest says {len}",
+            path.display(),
+            bytes.len()
+        )));
+    }
+    Ok(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn local_reads_enforce_the_record_budget_and_manifest_length() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("local-record");
+        std::fs::write(&path, b"abcd").unwrap();
+        assert_eq!(read_bounded(&path, 4).unwrap(), b"abcd");
+        assert!(read_bounded(&path, 3).is_err());
+        assert_eq!(read_exact_len(&path, 4).unwrap(), b"abcd");
+        assert!(read_exact_len(&path, 5).is_err());
+        assert!(read_exact_len(&path, 3).is_err());
+        std::fs::write(&path, []).unwrap();
+        assert!(read_exact_len(&path, 0).unwrap().is_empty());
+        assert!(read_bounded(&directory.path().join("missing"), 4).is_err());
+    }
+}
