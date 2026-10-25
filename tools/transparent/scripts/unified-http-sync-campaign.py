@@ -50,6 +50,39 @@ def build(arguments, log):
             for item in messages if item.get("reason") == "compiler-artifact" and item.get("executable")}
 
 
+def wait_for_case_exit(process, timeout):
+    """Observe exit without reaping, reserving the leader PID through cleanup."""
+    deadline = time.monotonic() + timeout
+    while os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is None:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired(process.args, timeout)
+        time.sleep(min(0.05, remaining))
+
+
+def case_group_has_live_members(process):
+    """Inspect group membership without changing the unreaped leader's ownership."""
+    listing = subprocess.check_output(['ps', '-axo', 'pid=,pgid=,stat='], text=True, timeout=5)
+    members = [(int(group), state) for _, group, state in
+               (line.split() for line in listing.splitlines())]
+    return any(group == process.pid and not state.startswith('Z') for group, state in members)
+
+
+def signal_case_group(process, number):
+    """Signal live members while the caller still owns the unreaped leader PID."""
+    if not case_group_has_live_members(process):
+        return
+    try:
+        os.killpg(process.pid, number)
+    except ProcessLookupError:
+        pass
+    except PermissionError:
+        # macOS can report EPERM when the last live member has just exited.
+        # A real permission refusal remains an error; there is no signal retry.
+        if case_group_has_live_members(process):
+            raise
+
+
 def run_case(binary, case, ignored, output, env, timeout):
     """Run exactly one declared test, refusing a successful zero-test selection."""
     path = output / (case + ".log")
@@ -58,20 +91,27 @@ def run_case(binary, case, ignored, output, env, timeout):
                                    cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT,
                                    start_new_session=True)
         try:
-            code = process.wait(timeout=timeout)
+            wait_for_case_exit(process, timeout)
         finally:
-            # Completed tests own their normal fixture cleanup. After reaping
-            # the leader, its numeric process-group id may no longer be ours.
-            if process.poll() is None:
+            # Keep the leader unreaped until both signals complete. Its PID
+            # still reserves our group even after an abrupt harness exit.
+            try:
+                signal_case_group(process, signal.SIGTERM)
                 try:
-                    os.killpg(process.pid, signal.SIGTERM)
-                except ProcessLookupError:
-                    pass
-                try:
-                    process.wait(timeout=10)
+                    wait_for_case_exit(process, 10)
                 except subprocess.TimeoutExpired:
-                    os.killpg(process.pid, signal.SIGKILL)
-                    process.wait()
+                    pass
+                signal_case_group(process, signal.SIGKILL)
+                cleanup_deadline = time.monotonic() + 2
+                while case_group_has_live_members(process):
+                    if time.monotonic() >= cleanup_deadline:
+                        raise RuntimeError("campaign descendants survived group cleanup")
+                    time.sleep(0.02)
+            finally:
+                try:
+                    code = process.wait(timeout=10)
+                except subprocess.TimeoutExpired as error:
+                    raise RuntimeError("campaign case still running after cleanup") from error
     if code == 0 and not re.search(r"^test result: ok\. 1 passed; 0 failed;", path.read_text(), re.MULTILINE):
         with path.open("a") as log:
             log.write("Campaign refused: the selected test did not report exactly one passed case.\n")

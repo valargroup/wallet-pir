@@ -440,12 +440,15 @@ class LauncherPrerequisiteTests(unittest.TestCase):
 
 
 class UnifiedCampaignTests(unittest.TestCase):
-    def test_zero_test_success_is_rejected_and_the_normal_case_runs(self):
+    def setUp(self):
         import importlib.util
         path = ROOT / 'tools/transparent/scripts/unified-http-sync-campaign.py'
         spec = importlib.util.spec_from_file_location('unified_campaign', path)
-        campaign = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(campaign)
+        self.campaign = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.campaign)
+
+    def test_zero_test_success_is_rejected_and_the_normal_case_runs(self):
+        campaign = self.campaign
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             binary = root / 'fixture-tests'
@@ -454,16 +457,18 @@ class UnifiedCampaignTests(unittest.TestCase):
             binary.chmod(0o700)
             _, case, ignored = campaign.CASES['unified']
             self.assertFalse(ignored)
-            with patch.object(campaign.os, 'killpg', side_effect=PermissionError('expired group')):
+            signal_group = campaign.signal_case_group
+            def signal_owned_group(process, number):
+                self.assertIsNotNone(os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT))
+                signal_group(process, number)
+            with patch.object(campaign, 'signal_case_group', side_effect=signal_owned_group) as cleanup, \
+                 patch.object(campaign.os, 'killpg', side_effect=PermissionError('empty group')):
                 self.assertEqual(campaign.run_case(binary, case, ignored, root, os.environ.copy(), 10), 0)
                 self.assertEqual(campaign.run_case(binary, case, True, root, os.environ.copy(), 10), 1)
+                self.assertGreater(cleanup.call_count, 0)
 
     def test_timed_out_case_still_terminates_its_running_group(self):
-        import importlib.util
-        path = ROOT / 'tools/transparent/scripts/unified-http-sync-campaign.py'
-        spec = importlib.util.spec_from_file_location('unified_campaign', path)
-        campaign = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(campaign)
+        campaign = self.campaign
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             binary = root / 'fixture-tests'
@@ -474,12 +479,57 @@ class UnifiedCampaignTests(unittest.TestCase):
                     campaign.run_case(binary, 'slow_case', False, root, os.environ.copy(), 0.2)
                 self.assertEqual(terminate.call_args_list[0].args[1], campaign.signal.SIGTERM)
 
+    def test_abrupt_case_exit_cleans_a_descendant_ignoring_term(self):
+        import signal
+        campaign = self.campaign
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            child_record = root / 'child.json'
+            child_code = ("import json,os,signal,time; from pathlib import Path; "
+                          "signal.signal(signal.SIGTERM,signal.SIG_IGN); "
+                          f"Path({str(child_record)!r}).write_text(json.dumps(dict(pid=os.getpid(),group=os.getpgrp()))); "
+                          "time.sleep(30)")
+            binary = root / 'fixture-tests'
+            binary.write_text('#!' + sys.executable + '\nimport os,subprocess,sys,time\n'
+                              f'subprocess.Popen([sys.executable,"-c",{child_code!r}])\n'
+                              f'while not os.path.exists({str(child_record)!r}): time.sleep(.01)\n'
+                              'os._exit(7)\n')
+            binary.chmod(0o700)
+            def live(pid):
+                report = subprocess.run(['ps', '-o', 'stat=', '-p', str(pid)],
+                                        capture_output=True, text=True, timeout=2)
+                state = report.stdout.strip()
+                return bool(state) and not state.startswith('Z')
+            try:
+                self.assertEqual(campaign.run_case(binary, 'abrupt', False, root, os.environ.copy(), 5), 7)
+                child = json.loads(child_record.read_text())
+                deadline = time.monotonic() + 2
+                while live(child['pid']) and time.monotonic() < deadline:
+                    time.sleep(.02)
+                self.assertFalse(live(child['pid']), 'an abnormal case must leave no live descendant')
+            finally:
+                if child_record.exists():
+                    child = json.loads(child_record.read_text())
+                    if live(child['pid']) and os.getpgid(child['pid']) == child['group']:
+                        os.kill(child['pid'], signal.SIGKILL)
+
+    def test_permission_refusal_is_only_ignored_when_the_group_is_empty(self):
+        from types import SimpleNamespace
+        campaign = self.campaign
+        for still_live in [False, True]:
+            with self.subTest(still_live=still_live), \
+                 patch.object(campaign.subprocess, 'check_output',
+                              side_effect=['99 123 S\n', '99 123 S\n' if still_live else '99 123 Z\n']), \
+                 patch.object(campaign.os, 'killpg', side_effect=PermissionError('refused')) as send:
+                if still_live:
+                    with self.assertRaises(PermissionError):
+                        campaign.signal_case_group(SimpleNamespace(pid=123), campaign.signal.SIGTERM)
+                else:
+                    campaign.signal_case_group(SimpleNamespace(pid=123), campaign.signal.SIGTERM)
+                self.assertEqual(send.call_count, 1)
+
     def test_later_case_exception_cannot_record_an_earlier_success(self):
-        import importlib.util
-        path = ROOT / 'tools/transparent/scripts/unified-http-sync-campaign.py'
-        spec = importlib.util.spec_from_file_location('unified_campaign', path)
-        campaign = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(campaign)
+        campaign = self.campaign
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             binaries = dict.fromkeys(['pir-publisher', 'pir-query-server', campaign.TEST,
