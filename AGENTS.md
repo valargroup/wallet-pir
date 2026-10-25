@@ -71,6 +71,8 @@ subcommands, and product features are selected independently.
   checks. This includes committed, staged, unstaged and untracked changes.
   `make check-package PACKAGE=<name> TEST=<filter> FEATURES=<features>` selects
   a package. Omit optional variables when unused. `OFFLINE=1` uses fetched deps.
+- CI full is qualification, not a test loop. Before re-dispatching it, run the
+  local command each failed job printed ("Reproduce <job> locally") until it passes.
 - `make check-ops-deploy` is a local development target for the in-memory deploy
   suite. CI and routine validation do not run it; run it only when editing
   `tools/tests/operations/deploy`.

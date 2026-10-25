@@ -69,6 +69,7 @@ check-ops-deploy:
 
 check-ops-contracts:
 	tools/scripts/check-shell-scripts.sh
+	python3 -B tools/transparent/tests/test_activity_candidate.py
 
 check-ops-parents:
 	python3 tools/transparent/tests/test_transparent_parents.py

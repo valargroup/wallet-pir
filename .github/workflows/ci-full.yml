@@ -121,6 +121,11 @@ jobs:
           scope: ${{ matrix.shard }}
       - name: Run assigned qualification targets
         run: umask 022 && python3 tools/ci/test_matrix.py run --shard '${{ matrix.shard }}' --output "$RUNNER_TEMP/qualification/${{ matrix.shard }}.json"
+      - name: Print local reproduction
+        if: failure()
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: python3 tools/ci/local_repro.py "python3 tools/ci/test_matrix.py run --shard $SHARD --output .local-pir/qualification/$SHARD.json"
       - uses: actions/upload-artifact@v4
         with:
           name: qualification-${{ matrix.family }}-${{ github.sha }}-${{ github.run_attempt }}-${{ matrix.shard }}
@@ -165,6 +170,9 @@ jobs:
           node --test tools/transparent/loadtest/tests/apm.test.cjs
           python3 tools/transparent/loadtest/tests/test_compare.py
       - run: python3 tools/ci/full_packages.py --group transparent --lint
+      - name: Print local reproduction
+        if: failure()
+        run: python3 tools/ci/local_repro.py "cargo fmt --all --check && make check-reports && python3 tools/ci/full_packages.py --group transparent --lint"
       - name: Report Cargo cache reuse
         if: always()
         continue-on-error: true
@@ -220,6 +228,9 @@ jobs:
           terraform init -backend=false -input=false -lockfile=readonly
           terraform validate -no-color
           terraform test -no-color
+      - name: Print local reproduction
+        if: failure()
+        run: python3 tools/ci/local_repro.py "(cd tools/infra/digitalocean && terraform fmt -check -recursive && for d in enhance/worker-pool fleet query-serving; do (cd \$d && terraform init -backend=false -input=false -lockfile=readonly && terraform validate && terraform test) || exit 1; done)"
 
   validate-transparent-elastic-infra:
     needs: select
@@ -242,6 +253,9 @@ jobs:
           terraform init -backend=false -input=false -lockfile=readonly
           terraform validate -no-color
           terraform test -no-color
+      - name: Print local reproduction
+        if: failure()
+        run: python3 tools/ci/local_repro.py "(cd tools/infra/digitalocean/transparent/worker-pool && terraform fmt -check -recursive && terraform init -backend=false -input=false -lockfile=readonly && terraform validate && terraform test)"
 
   validate-ops:
     needs: select
@@ -265,12 +279,11 @@ jobs:
         env:
           HELPERS: ${{ needs.select.outputs.helpers }}
         run: umask 022 && python3 tools/ci/helpers.py --full --targets "$HELPERS"
-      - name: Validate current transparent deployment inputs
-        if: contains(needs.select.outputs.helpers, 'check-ops-contracts')
-        # The current candidate validator owns filter/publisher artifact inputs.
-        # Exercise valid inputs and refusal cases; the retired shell wrapper is
-        # no longer an executable deployment contract.
-        run: umask 022 && python3 -B tools/transparent/tests/test_activity_candidate.py
+      - name: Print local reproduction
+        if: failure()
+        env:
+          HELPERS: ${{ needs.select.outputs.helpers }}
+        run: python3 tools/ci/local_repro.py "python3 tools/ci/helpers.py --full --targets '$HELPERS'"
 
   enhance-lint:
     needs: select
@@ -290,6 +303,9 @@ jobs:
           lane: full-lint
           scope: enhance
       - run: python3 tools/ci/full_packages.py --group enhance --lint
+      - name: Print local reproduction
+        if: failure()
+        run: python3 tools/ci/local_repro.py "python3 tools/ci/full_packages.py --group enhance --lint"
       - name: Report Cargo cache reuse
         if: always()
         continue-on-error: true
@@ -326,6 +342,9 @@ jobs:
           scope: shared
       - run: python3 tools/ci/full_packages.py --group shared --lint
       - run: python3 tools/ci/full_packages.py --group shared
+      - name: Print local reproduction
+        if: failure()
+        run: python3 tools/ci/local_repro.py "python3 tools/ci/full_packages.py --group shared --lint && python3 tools/ci/full_packages.py --group shared"
       - name: Report Cargo cache reuse
         if: always()
         continue-on-error: true
@@ -344,6 +363,9 @@ jobs:
           lane: full-lint
           scope: receiver
       - run: python3 tools/ci/full_packages.py --group receiver --lint
+      - name: Print local reproduction
+        if: failure()
+        run: python3 tools/ci/local_repro.py "python3 tools/ci/full_packages.py --group receiver --lint"
       - name: Report Cargo cache reuse
         if: always()
         continue-on-error: true
