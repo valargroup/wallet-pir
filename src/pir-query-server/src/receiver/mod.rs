@@ -109,7 +109,7 @@ pub async fn run(
         }
     }
     let _fence = Fence(publications);
-    let result = crate::synchronization::SyncManager::new(lifecycle)
+    let result = pir_pipeline::consumer::polling::SyncManager::new(lifecycle)
         .with_success_interval(Duration::from_secs(config.poll_seconds))
         .run_until(stop.cancelled())
         .await;

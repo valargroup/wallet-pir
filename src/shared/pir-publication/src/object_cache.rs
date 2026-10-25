@@ -6,11 +6,11 @@
 //! authority; the caller still observes and checks the publication.
 use crate::{
     is_object_digest, open_object_file, verify_object_file, FileIdentity, ObjectReference,
+    ObjectVerification,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs, io,
-    io::Read,
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -32,9 +32,7 @@ pub struct ObjectCache {
 pub struct VerifiedObjectFile {
     path: PathBuf,
     file: fs::File,
-    identity: FileIdentity,
-    #[cfg(test)]
-    reused: bool,
+    verification: ObjectVerification,
 }
 impl VerifiedObjectFile {
     /// Verify a physical file without reusing evidence from another owner.
@@ -44,36 +42,63 @@ impl VerifiedObjectFile {
         Ok(Self {
             path,
             file,
-            identity: verified.identity,
-            #[cfg(test)]
-            reused: false,
+            verification: verified,
         })
+    }
+    pub fn reference(&self) -> &ObjectReference {
+        &self.verification.reference
     }
     pub fn file(&self) -> &fs::File {
         &self.file
     }
     /// Ensure the open file and its name still select the verified inode.
     pub fn check(&self) -> io::Result<()> {
-        self.identity
+        self.verification
+            .identity
             .check(&self.path, &self.file)
             .map_err(io::Error::from)
     }
     /// Read the verified file from the beginning, rejecting concurrent changes.
     pub fn read_bytes(&self) -> io::Result<Vec<u8>> {
-        use std::io::Seek;
+        use std::os::unix::fs::FileExt;
         self.check()?;
-        let mut reader = &self.file;
-        reader.rewind()?;
-        let size = self.file.metadata()?.len();
-        let mut bytes = Vec::new();
-        reader
-            .take(size.saturating_add(1))
-            .read_to_end(&mut bytes)?;
-        self.check()?;
-        if bytes.len() as u64 != size {
-            return Err(io::Error::other("verified object length changed"));
+        let size = self.verification.reference.bytes;
+        let capacity =
+            usize::try_from(size).map_err(|_| io::Error::other("object exceeds address space"))?;
+        let mut bytes = vec![0u8; capacity];
+        let mut read = 0;
+        while read < bytes.len() {
+            let count = self.file.read_at(&mut bytes[read..], read as u64)?;
+            if count == 0 {
+                return Err(io::Error::other("verified object length changed"));
+            }
+            read += count;
         }
+        self.check()?;
         Ok(bytes)
+    }
+}
+
+/// Checked open files retained across transfer and preparation. A lookup binds
+/// the complete expected reference, including length, before reading the handle.
+#[derive(Default)]
+pub struct VerifiedObjects(BTreeMap<String, Arc<VerifiedObjectFile>>);
+impl VerifiedObjects {
+    pub fn insert(&mut self, file: VerifiedObjectFile) {
+        self.0
+            .insert(file.reference().sha256.clone(), Arc::new(file));
+    }
+    pub fn get(&self, expected: &ObjectReference) -> io::Result<Arc<VerifiedObjectFile>> {
+        self.0
+            .get(&expected.sha256)
+            .filter(|file| file.reference() == expected)
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::NotFound, "required checked object is absent")
+            })
+            .cloned()
+    }
+    pub fn read(&self, expected: &ObjectReference) -> io::Result<Vec<u8>> {
+        self.get(expected)?.read_bytes()
     }
 }
 
@@ -154,9 +179,7 @@ impl ObjectCache {
         Ok(Some(VerifiedObjectFile {
             path,
             file,
-            identity: verified.identity,
-            #[cfg(test)]
-            reused: verified.reused,
+            verification: verified,
         }))
     }
     /// Start a new partial file for `object`. Dropping the partial before
@@ -175,6 +198,7 @@ impl ObjectCache {
             directory: self.directory.clone(),
             partial_path,
             target_path,
+            expected: object.clone(),
             file: Some(file),
         })
     }
@@ -199,6 +223,7 @@ pub struct PartialObject {
     directory: PathBuf,
     partial_path: PathBuf,
     target_path: PathBuf,
+    expected: ObjectReference,
     file: Option<fs::File>,
 }
 impl PartialObject {
@@ -209,12 +234,33 @@ impl PartialObject {
             .take()
             .ok_or_else(|| io::Error::other("partial object file already taken"))
     }
+    /// Seal and verify the partial before exposing its completed name. The
+    /// checked handle survives promotion; loading does not hash it again.
+    pub fn promote_verified(self, written: fs::File) -> io::Result<VerifiedObjectFile> {
+        written.set_permissions(fs::Permissions::from_mode(0o444))?;
+        written.sync_all()?;
+        let mut checked = VerifiedObjectFile::open(self.partial_path.clone(), &self.expected)?;
+        checked.check()?;
+        let path = self.promote(written)?;
+        checked.verification.identity = checked
+            .verification
+            .identity
+            .after_rename(&path, &checked.file)?;
+        // A new name must settle before its evidence can be reused by a later
+        // independent open. This handle itself remains checked and usable.
+        checked.verification.reusable = false;
+        checked.path = path;
+        Ok(checked)
+    }
+
     /// Make a completed partial immutable and durable under its expected digest name:
     /// sync file contents, mark it read-only, rename, then sync the directory.
     /// An error before the rename removes the partial and leaves no object; an
     /// error after it leaves a promoted file that the next use re-verifies.
     pub fn promote(mut self, written: fs::File) -> io::Result<PathBuf> {
-        written.set_permissions(fs::Permissions::from_mode(0o444))?;
+        if !written.metadata()?.permissions().readonly() {
+            written.set_permissions(fs::Permissions::from_mode(0o444))?;
+        }
         written.sync_all()?;
         drop(written);
         fs::rename(&self.partial_path, &self.target_path)?;
@@ -235,7 +281,32 @@ impl Drop for PartialObject {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
+    use std::io::{Seek, Write};
+
+    #[test]
+    fn checked_reads_are_independent_of_the_shared_file_cursor() {
+        use std::io::{Seek, SeekFrom};
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("checked");
+        let bytes = vec![7u8; 4096];
+        fs::write(&path, &bytes).unwrap();
+        let checked =
+            Arc::new(VerifiedObjectFile::open(path, &ObjectReference::for_bytes(&bytes)).unwrap());
+        let mut cursor = checked.file();
+        cursor.seek(SeekFrom::Start(17)).unwrap();
+        std::thread::scope(|scope| {
+            for _ in 0..2 {
+                let checked = checked.clone();
+                let expected = &bytes;
+                scope.spawn(move || {
+                    for _ in 0..10 {
+                        assert_eq!(&checked.read_bytes().unwrap(), expected);
+                    }
+                });
+            }
+        });
+        assert_eq!(cursor.stream_position().unwrap(), 17);
+    }
 
     #[test]
     fn settled_objects_reuse_integrity_across_clones_but_not_restarts_or_changes() {
@@ -247,12 +318,16 @@ mod tests {
         // The shared verifier deliberately distrusts the current filesystem
         // timestamp tick; allow this file to settle before recording evidence.
         std::thread::sleep(std::time::Duration::from_millis(1100));
-        assert!(!cache.open_verified(&object).unwrap().unwrap().reused);
+        // Whole-file verification leaves its fresh file at EOF; reuse leaves
+        // a newly opened handle at zero. Observe reads through this file fixture.
+        let first = cache.open_verified(&object).unwrap().unwrap();
+        assert_eq!((&first.file).stream_position().unwrap(), object.bytes);
         let opened = cache.clone().open_verified(&object).unwrap().unwrap();
-        assert!(opened.reused);
+        assert_eq!((&opened.file).stream_position().unwrap(), 0);
         assert_eq!(opened.read_bytes().unwrap(), b"verified");
         let restarted = ObjectCache::open(dir.path().to_path_buf()).unwrap();
-        assert!(!restarted.open_verified(&object).unwrap().unwrap().reused);
+        let reopened = restarted.open_verified(&object).unwrap().unwrap();
+        assert_eq!((&reopened.file).stream_position().unwrap(), object.bytes);
 
         // Equal length and the same digest-shaped name cannot hide corruption.
         fs::write(&path, b"verifieD").unwrap();
@@ -260,7 +335,8 @@ mod tests {
         assert!(opened.read_bytes().is_err());
         fs::remove_file(&path).unwrap();
         fs::write(&path, b"verified").unwrap();
-        assert!(!cache.open_verified(&object).unwrap().unwrap().reused);
+        let replacement = cache.open_verified(&object).unwrap().unwrap();
+        assert_eq!((&replacement.file).stream_position().unwrap(), object.bytes);
         assert!(opened.check().is_err());
         assert!(cache
             .open_verified(&ObjectReference {
@@ -272,6 +348,46 @@ mod tests {
         fs::rename(&path, &target).unwrap();
         std::os::unix::fs::symlink(&target, &path).unwrap();
         assert!(cache.open_verified(&object).is_err());
+    }
+
+    #[test]
+    fn transferred_handles_bind_length_and_detect_replacement_before_loading() {
+        let root = tempfile::tempdir().unwrap();
+        let cache = ObjectCache::open(root.path().into()).unwrap();
+        let expected = ObjectReference::for_bytes(b"checked bytes");
+        let path = cache.object_path(&expected).unwrap();
+        fs::write(&path, b"checked bytes").unwrap();
+        let mut objects = VerifiedObjects::default();
+        objects.insert(cache.open_verified(&expected).unwrap().unwrap());
+        assert_eq!(objects.read(&expected).unwrap(), b"checked bytes");
+        let mut wrong_length = expected.clone();
+        wrong_length.bytes += 1;
+        assert!(objects.read(&wrong_length).is_err());
+        fs::remove_file(&path).unwrap();
+        fs::write(&path, b"checked bytes").unwrap();
+        assert!(
+            objects.read(&expected).is_err(),
+            "a new inode needs its own verification"
+        );
+    }
+
+    #[test]
+    fn invalid_transfers_never_acquire_a_completed_name() {
+        let root = tempfile::tempdir().unwrap();
+        let cache = ObjectCache::open(root.path().into()).unwrap();
+        let expected = ObjectReference::for_bytes(b"valid");
+        for body in [b"bad".as_slice(), b"wrong".as_slice()] {
+            let mut partial = cache.begin_partial(&expected).unwrap();
+            let mut file = partial.take_file().unwrap();
+            file.write_all(body).unwrap();
+            assert!(partial.promote_verified(file).is_err());
+            assert!(!cache.object_path(&expected).unwrap().exists());
+        }
+        let mut partial = cache.begin_partial(&expected).unwrap();
+        let mut file = partial.take_file().unwrap();
+        file.write_all(b"valid").unwrap();
+        let checked = partial.promote_verified(file).unwrap();
+        assert_eq!(checked.read_bytes().unwrap(), b"valid");
     }
 
     #[test]

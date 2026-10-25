@@ -1,11 +1,12 @@
 //! Product hooks; envelope succession, transfers and authority belong to the
 //! shared lifecycle. Cached material alone never opens serving admission.
 use super::Config;
-use crate::synchronization::publication_lifecycle::{
-    Envelope, ObjectFetcher, PeerHandover, PeerReservation, PreparedCommit, PublicationAdapter,
-    PublicationLifecycle, PublicationPlan, ViewRequirement,
-};
+use pir_pipeline::consumer::{ConsumerEngine, ConsumerPass, PeerHandover, PeerReservation};
 use pir_publication::{AuthorityFloor, ObjectCache, ObjectReference, SourceBinding, ViewIdentity};
+use pir_sync_manager::publication::{
+    Envelope, EnvelopeConsumer, ObjectFetcher, PreparedCommit, PublicationAdapter, PublicationPlan,
+    ViewRequirement,
+};
 use pir_sync_manager::Error;
 use receiver_pir_server::{
     blocks::BlockWindow,
@@ -17,7 +18,7 @@ use std::{
     sync::{Arc, Mutex, Weak},
 };
 
-type Lifecycle = PublicationLifecycle<Receiver>;
+pub(super) type Lifecycle = ConsumerEngine<EnvelopeConsumer<Receiver>>;
 pub(super) fn synchronization(
     config: &Config,
     publications: Publications,
@@ -34,7 +35,7 @@ pub(super) fn synchronization(
         },
     )?;
     let cache = ObjectCache::open(config.state_dir.join("objects"))?;
-    PublicationLifecycle::new(
+    EnvelopeConsumer::open(
         Receiver {
             config: config.clone(),
             owner,
@@ -74,7 +75,6 @@ pub(super) struct Candidate {
 pub(super) struct Loaded {
     candidate: Candidate,
     epoch: u64,
-    cache: ObjectCache,
     reusable: bool,
     directory: Option<Publication>,
     filters: Option<BlockWindow>,
@@ -241,7 +241,11 @@ impl PublicationAdapter for Receiver {
             },
         })
     }
-    async fn load(&mut self, candidate: Candidate, cache: &ObjectCache) -> Result<Loaded, Error> {
+    async fn load(
+        &mut self,
+        candidate: Candidate,
+        artifacts: pir_publication::VerifiedObjects,
+    ) -> Result<Loaded, Error> {
         #[cfg(test)]
         {
             self.loads += 1;
@@ -249,17 +253,14 @@ impl PublicationAdapter for Receiver {
         // Metadata/public setup is small relative to rows; lazy row loaders
         // rebuild evaluators only under the existing shared table budget.
         let inventory = candidate.inventory.clone();
-        let cache = cache.clone();
         let owner = self.owner.clone();
-        let load_cache = cache.clone();
         let (directory, filters) = tokio::task::spawn_blocking(move || {
-            super::material::load(&inventory, &load_cache, owner)
+            super::material::load(&inventory, &artifacts, owner)
         })
         .await??;
         Ok(Loaded {
             candidate,
             epoch: self.publications.epoch(),
-            cache,
             reusable: true,
             directory,
             filters,
@@ -300,15 +301,15 @@ impl PublicationAdapter for Receiver {
             loaded.reusable = false;
             return Ok(loaded);
         }
+        let mut checked = pir_publication::VerifiedObjects::default();
         if let Some(filters) = &inventory.filters {
             for batch in &filters.batches {
-                objects.fetch(batch).await?;
+                checked.insert(objects.fetch(batch).await?);
             }
         }
-        let cache = loaded.cache.clone();
         let filter_inventory = inventory.clone();
         loaded.filters = tokio::task::spawn_blocking(move || {
-            super::material::load_filters(&filter_inventory, &cache)
+            super::material::load_filters(&filter_inventory, &checked)
         })
         .await??;
         loaded.candidate = Candidate {
@@ -420,13 +421,7 @@ impl PublicationAdapter for Receiver {
     async fn release_peer(&mut self, _: &Self::Report) -> PeerHandover {
         PeerHandover::Complete
     }
-    async fn pass_finished(
-        &mut self,
-        result: &Result<
-            crate::synchronization::publication_lifecycle::PublicationPass<Self::Report>,
-            Error,
-        >,
-    ) {
+    async fn pass_finished(&mut self, result: &Result<ConsumerPass<Self::Report>, Error>) {
         if let Err(error) = result {
             tracing::warn!(%error, "Receiver publication synchronization failed");
         }

@@ -29,7 +29,7 @@ struct Floor {
 
 /// Display-specific validation and activation using shared HTTPS synchronization.
 pub struct Manager {
-    sync: crate::synchronization::SyncManager<DisplaySync>,
+    sync: pir_pipeline::consumer::polling::SyncManager<DisplaySync>,
 }
 impl Manager {
     /// Check publisher discovery, then open the provider root. An unreachable or
@@ -40,7 +40,9 @@ impl Manager {
     ) -> Result<Self, Error> {
         crate::transparent::source::discover(&config).await?;
         Ok(Self {
-            sync: crate::synchronization::SyncManager::new(DisplaySync::new(config, service)?),
+            sync: pir_pipeline::consumer::polling::SyncManager::new(DisplaySync::new(
+                config, service,
+            )?),
         })
     }
     pub fn router(&self) -> axum::Router {
@@ -388,7 +390,7 @@ impl DisplaySync {
     }
 }
 
-impl crate::synchronization::SyncTask for DisplaySync {
+impl pir_pipeline::consumer::polling::SyncTask for DisplaySync {
     type Report = serde_json::Value;
     type Error = Error;
     async fn synchronize(&mut self) -> Result<Self::Report, Error> {

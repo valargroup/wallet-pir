@@ -1,32 +1,23 @@
 //! Reconstruct lazy evaluator sources from verified cached objects.
-use pir_publication::{ObjectCache, ObjectReference};
+use pir_publication::{VerifiedObjectFile, VerifiedObjects};
 use receiver_pir_server::{
     blocks::BlockWindow,
     distribution::Inventory,
     publication::{Publication, Segment},
     tables::{FilterSource, Source},
 };
-use std::{io::Read, path::Path, sync::Arc};
+use std::sync::Arc;
 use zakura_pir_query_server::receiver::{
     blocks::Batch, inventory, server::Server, session::Error, snapshot::Snapshot, witness,
 };
 
-fn read(path: &Path, object: &ObjectReference) -> Result<Vec<u8>, Error> {
-    let mut bytes = Vec::new();
-    std::fs::File::open(path)
-        .map_err(|_| Error::Malformed)?
-        .take(object.bytes.checked_add(1).ok_or(Error::Malformed)?)
-        .read_to_end(&mut bytes)
-        .map_err(|_| Error::Malformed)?;
-    if bytes.len() as u64 != object.bytes {
-        return Err(Error::Malformed);
-    }
-    Ok(bytes)
+fn read(file: &VerifiedObjectFile) -> Result<Vec<u8>, Error> {
+    file.read_bytes().map_err(|_| Error::Malformed)
 }
 
 pub(super) fn load(
     inventory: &Inventory,
-    cache: &ObjectCache,
+    objects: &VerifiedObjects,
     owner: Arc<std::fs::File>,
 ) -> crate::Result<(Option<Publication>, Option<BlockWindow>)> {
     let directory = inventory
@@ -36,29 +27,23 @@ pub(super) fn load(
             let mut segments = Vec::new();
             for segment in &directory.segments {
                 let rows = segment.payments.clone();
-                let path = cache.object_path(&rows)?;
+                let checked = objects.get(&rows)?;
                 let manifest = segment.publication.payments.clone();
                 let snapshot = manifest.directory.clone();
-                let public = read(
-                    &cache.object_path(&segment.payment_public)?,
-                    &segment.payment_public,
-                )?;
+                let public = objects.read(&segment.payment_public)?;
                 let payment_owner = owner.clone();
                 let payments = Arc::new(Source::payments(manifest, public, move || {
                     let _owner = &payment_owner;
                     Server::new(Snapshot {
                         manifest: snapshot.clone(),
-                        data: read(&path, &rows)?,
+                        data: read(&checked)?,
                     })
                 })?);
                 let rows = segment.witnesses.clone();
-                let path = cache.object_path(&rows)?;
+                let checked = objects.get(&rows)?;
                 let manifest = segment.publication.witnesses.clone();
                 let table = manifest.table.clone();
-                let public = read(
-                    &cache.object_path(&segment.witness_public)?,
-                    &segment.witness_public,
-                )?;
+                let public = objects.read(&segment.witness_public)?;
                 let witness_owner = owner.clone();
                 let witnesses = Arc::new(Source::witnesses(
                     manifest,
@@ -68,7 +53,7 @@ pub(super) fn load(
                         let _owner = &witness_owner;
                         Ok(witness::Table {
                             manifest: table.clone(),
-                            data: read(&path, &rows)?,
+                            data: read(&checked)?,
                         })
                     },
                 )?);
@@ -85,7 +70,7 @@ pub(super) fn load(
                 .map(|(named, object)| -> crate::Result<_> {
                     let named = named.clone();
                     let object = object.clone();
-                    let path = cache.object_path(&object)?;
+                    let checked = objects.get(&object)?;
                     let owner = owner.clone();
                     Ok(Arc::new(FilterSource::stored(
                         named.digest,
@@ -93,7 +78,7 @@ pub(super) fn load(
                         u64::from(named.receivers),
                         move || {
                             let _owner = &owner;
-                            read(&path, &object)
+                            read(&checked)
                         },
                     )))
                 })
@@ -109,12 +94,12 @@ pub(super) fn load(
             )?)
         })
         .transpose()?;
-    Ok((directory, load_filters(inventory, cache)?))
+    Ok((directory, load_filters(inventory, objects)?))
 }
 
 pub(super) fn load_filters(
     inventory: &Inventory,
-    cache: &ObjectCache,
+    objects: &VerifiedObjects,
 ) -> crate::Result<Option<BlockWindow>> {
     inventory
         .filters
@@ -123,7 +108,7 @@ pub(super) fn load_filters(
             let mut from = filters.head.first;
             let mut blocks = Vec::new();
             for object in &filters.batches {
-                let batch = Batch::decode(&read(&cache.object_path(object)?, object)?)?;
+                let batch = Batch::decode(&objects.read(object)?)?;
                 batch.check(
                     &filters.head,
                     from,

@@ -6,7 +6,6 @@ use crate::enhance::{
     },
     worker_sync::{ReadinessRequest, Release, PIN_LIFETIME},
 };
-use crate::synchronization::SyncTask;
 use axum::{
     extract::{ConnectInfo, Path as UrlPath, Request, State},
     http::StatusCode,
@@ -18,6 +17,7 @@ use enhance_shared::protocol::{
     self, digest, Manifest, QueryBinding, HEADER_BYTES, RETAINED_GENERATIONS,
 };
 use pir_control::admission::{client_key, read_body, BodyError, ClientSlots};
+use pir_pipeline::consumer::polling::SyncTask;
 use serde::Deserialize;
 use std::{
     collections::{BTreeMap, BTreeSet},

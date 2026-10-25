@@ -3,6 +3,7 @@ use super::peers::{loopback_origin, Role};
 use super::{admission, serving::serving_http_client, Controller};
 use axum::http::StatusCode;
 use pir_control::admission::ClientSlots;
+use pir_pipeline::consumer::reservations::Reservations;
 use pir_publication::ObjectReference;
 use status_shared::{protocol::Hash, publication::Failure, Generation, PreparedMaterial};
 use std::{fs::File, path::PathBuf, sync::Arc};
@@ -15,10 +16,7 @@ pub(super) struct ServiceState {
     pub(super) inventory: Option<ObjectReference>,
     pub(super) synchronization: String,
     pub(super) poisoned: bool,
-    pub(super) router_holds: Vec<Arc<Generation>>,
-    /// Last view the colocated router acknowledged. Its still-fresh hold is
-    /// protected while a new preparation supersedes an abandoned incoming one.
-    pub(super) router_committed: Option<Hash>,
+    pub(super) router_holds: Reservations<Hash, Arc<Generation>>,
 }
 /// Shared state for one router or worker. Clones retain the directory lock and
 /// refer to the same serving authority and admission limits.

@@ -17,7 +17,6 @@ pub mod status;
     feature = "transparent-detail"
 ))]
 mod supervision;
-pub mod synchronization;
 #[cfg(any(feature = "transparent-history", feature = "transparent-detail"))]
 pub mod transparent;
 pub use host::{run, verify};

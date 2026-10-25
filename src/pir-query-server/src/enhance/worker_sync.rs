@@ -3,7 +3,6 @@ use super::evaluation::{Evaluate, Intermediate};
 use crate::enhance::synchronization::{
     Client, Config as SourceConfig, Deferral, Error, Lease, Pacing, Safety,
 };
-use crate::synchronization::SyncTask;
 use axum::{
     extract::{Request, State},
     http::StatusCode,
@@ -21,6 +20,7 @@ use enhance_shared::{
     publication::Domain,
     runtime::{rlwe, DomainPlan},
 };
+use pir_pipeline::consumer::polling::SyncTask;
 use pir_runtime::evaluation::{add_intermediate_assign_mod, PreparedDatabase};
 use serde::{Deserialize, Serialize};
 use std::{

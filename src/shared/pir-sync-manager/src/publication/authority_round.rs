@@ -1,14 +1,14 @@
 //! One live authority check against the publisher.
 use super::{
-    envelope_observation::ENVELOPE_LIMIT, AuthorityAdvanced, Envelope, PublicationAdapter,
-    PublicationLifecycle, PublicationLifecycleError,
+    envelope_observation::ENVELOPE_LIMIT, AuthorityAdvanced, Envelope, EnvelopeConsumer,
+    PublicationAdapter, PublicationLifecycleError,
 };
+use crate::Error;
 use pir_publication::{
     AuthorityCheckRequest, AuthorityCheckResponse, ViewIdentity, AUTHORITY_CHECK_PATH,
 };
-use pir_sync_manager::Error;
 
-impl<A: PublicationAdapter> PublicationLifecycle<A> {
+impl<A: PublicationAdapter> EnvelopeConsumer<A> {
     /// Ask whether `subjects` are still authoritative under exactly the
     /// publication and fence of the eligible `envelope`. A conflict
     /// re-observes the envelope, so a withdrawal or new fence fences serving
@@ -16,7 +16,7 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
     /// then makes that invalidation durable. Unaffected views keep serving. A response
     /// that answers anything other than exactly `subjects`, in order, under
     /// that authority confirms and invalidates nothing.
-    pub(super) async fn check_authority(
+    pub async fn check_authority(
         &mut self,
         envelope: &Envelope<A>,
         subjects: Vec<(ViewIdentity, A::AuthoritySubject)>,

@@ -91,7 +91,7 @@ fn empty_revocation_does_not_delay_recovery() {
 
 #[tokio::test]
 async fn failed_sync_collects_old_downloads_but_preserves_restart_inputs() {
-    use crate::synchronization::SyncTask;
+    use pir_pipeline::consumer::polling::SyncTask;
     use std::os::unix::fs::symlink;
     let root = tempfile::tempdir().unwrap();
     let root = root.path().canonicalize().unwrap();

@@ -1,20 +1,24 @@
 //! Status material hooks for the shared publication lifecycle.
 //!
-//! [`crate::synchronization::publication_lifecycle`] owns envelope succession, the
+//! [`pir_sync_manager::publication`] owns envelope succession, the
 //! durable floor, object transfer, authority checks and commit ordering. This
 //! adapter chooses the Status inventory (from the envelope, or from the worker
 //! for a router), loads generations, pins the worker during router handover
 //! and installs committed views in the role's controller.
 mod worker_handover;
 
+use pir_pipeline::consumer::{
+    ConsumerEngine, ConsumerPass, DeferralReason, PeerHandover, PeerReservation,
+};
+
 use super::Role;
 use super::{config::RoleConfig, Controller, Service};
-use crate::synchronization::publication_lifecycle::{
-    DeferralReason, ObjectFetcher, PeerHandover, PeerReservation, PreparedCommit,
-    PublicationAdapter, PublicationLifecycle, PublicationPass, PublicationPlan, ViewRequirement,
-};
-use crate::synchronization::SyncTask;
+use pir_pipeline::consumer::polling::SyncTask;
 use pir_publication::{AuthorityFloor, ObjectCache, ObjectReference, SourceBinding, ViewIdentity};
+use pir_sync_manager::publication::{
+    EnvelopeConsumer, ObjectFetcher, PreparedCommit, PublicationAdapter, PublicationPlan,
+    ViewRequirement,
+};
 use pir_sync_manager::Error;
 use status_shared::{
     now_ms,
@@ -33,7 +37,7 @@ use std::{
 const FLOOR_FILE: &str = "publication-floor.json";
 const ACTIVE_RECORD: &str = "active.json";
 
-pub(super) type StatusSynchronization = PublicationLifecycle<StatusPublication>;
+pub(super) type StatusSynchronization = ConsumerEngine<EnvelopeConsumer<StatusPublication>>;
 
 const FAST_POLL: Duration = Duration::from_millis(100);
 const NORMAL_POLL: Duration = Duration::from_secs(1);
@@ -47,8 +51,8 @@ pub(super) struct StatusPolling {
 
 pub(super) fn manager(
     task: StatusSynchronization,
-) -> crate::synchronization::SyncManager<StatusPolling> {
-    crate::synchronization::SyncManager::new(StatusPolling {
+) -> pir_pipeline::consumer::polling::SyncManager<StatusPolling> {
+    pir_pipeline::consumer::polling::SyncManager::new(StatusPolling {
         inner: task,
         last_pass_succeeded: false,
     })
@@ -58,10 +62,10 @@ pub(super) fn manager(
 impl StatusPolling {
     async fn poll_deadline(&self, minimum: tokio::time::Instant) -> tokio::time::Instant {
         // The manager selects exponential backoff for failures. Preserve it.
-        if !self.last_pass_succeeded || self.inner.adapter().poll_soon {
+        if !self.last_pass_succeeded || self.inner.context().adapter().poll_soon {
             return minimum;
         }
-        let state = self.inner.adapter().service.state.lock().await;
+        let state = self.inner.context().adapter().service.state.lock().await;
         let now = now_ms();
         let young = !state.poisoned
             && state.controller.as_ref().is_some_and(|controller| {
@@ -79,7 +83,7 @@ impl StatusPolling {
 
 impl SyncTask for StatusPolling {
     type Error = Error;
-    type Report = PublicationPass<u64>;
+    type Report = ConsumerPass<u64>;
     async fn synchronize(&mut self) -> Result<Self::Report, Error> {
         let result = self.inner.synchronize().await;
         self.last_pass_succeeded = result.is_ok();
@@ -113,7 +117,7 @@ pub(super) fn synchronization(
         loaded_inventory: None,
         poll_soon: false,
     };
-    PublicationLifecycle::new(adapter, source, floor, cache)
+    EnvelopeConsumer::open(adapter, source, floor, cache)
 }
 
 pub(super) struct StatusPublication {
@@ -192,7 +196,6 @@ impl PublicationAdapter for StatusPublication {
                 controller.revoke();
             }
             state.router_holds.clear();
-            state.router_committed = None;
             fenced
         }
     }
@@ -208,11 +211,8 @@ impl PublicationAdapter for StatusPublication {
             if let Some(controller) = &state.controller {
                 controller.invalidate(views.iter().copied());
             }
-            state
-                .router_holds
-                .retain(|generation| !views.contains(&generation.manifest().id()));
-            if state.router_committed.is_some_and(|id| views.contains(&id)) {
-                state.router_committed = None;
+            for identity in views {
+                state.router_holds.revoke(&identity);
             }
         }
     }
@@ -351,18 +351,6 @@ impl PublicationAdapter for StatusPublication {
             }
             (CandidateMaterial::LoadFromCache, required)
         };
-        // Keep the selected worker view throughout bulk transfer and loading,
-        // not just during the final commit. Otherwise two ordinary refreshes
-        // can evict it while the router prepares its matching packing material.
-        // This reserves retention only; authority is still checked after load.
-        if self.service.role == Role::Router
-            && worker_handover::pin(&self.service, &inventory.manifest).await?
-                == PeerReservation::PeerAdvanced
-        {
-            self.poll_soon = true;
-            self.waiting("waiting_for_worker_pin").await;
-            return Ok(PublicationPlan::Deferred);
-        }
         Ok(PublicationPlan::Candidate {
             identity: view(&inventory.manifest),
             candidate: StatusCandidate {
@@ -380,7 +368,7 @@ impl PublicationAdapter for StatusPublication {
     async fn load(
         &mut self,
         candidate: StatusCandidate,
-        cache: &ObjectCache,
+        objects: pir_publication::VerifiedObjects,
     ) -> Result<StatusLoaded, Error> {
         let StatusCandidate {
             inventory,
@@ -397,14 +385,13 @@ impl PublicationAdapter for StatusPublication {
                 .ok_or("Status serving generation disappeared")?,
             CandidateMaterial::Reidentified(generation) => *generation,
             CandidateMaterial::LoadFromCache => {
-                let cache = cache.clone();
                 let loading = inventory.clone();
                 let material = self.service.material();
                 tokio::task::spawn_blocking(move || {
-                    Generation::load_prepared_cached(
+                    Generation::load_prepared_objects(
                         &loading,
                         material,
-                        &cache,
+                        &objects,
                         previous.as_deref(),
                     )
                 })
@@ -539,6 +526,16 @@ impl PublicationAdapter for StatusPublication {
         tracing::debug!(role = ?self.service.role, phase, elapsed_ms = elapsed.as_secs_f64() * 1000., "Status synchronization phase completed");
     }
 
+    async fn reserve_candidate(
+        &mut self,
+        candidate: &StatusCandidate,
+    ) -> Result<PeerReservation, Error> {
+        if self.service.role != Role::Router {
+            return Ok(PeerReservation::Reserved);
+        }
+        worker_handover::pin(&self.service, &candidate.inventory.manifest).await
+    }
+
     async fn reserve_peer(&mut self, loaded: &StatusLoaded) -> Result<PeerReservation, Error> {
         if self.service.role != Role::Router {
             return Ok(PeerReservation::Reserved);
@@ -634,7 +631,6 @@ impl PublicationAdapter for StatusPublication {
                 controller.revoke();
             }
             state.router_holds.clear();
-            state.router_committed = None;
             state.poisoned = true;
         });
         Ok((
@@ -671,13 +667,13 @@ impl PublicationAdapter for StatusPublication {
         self.service.state.lock().await.synchronization = "synchronizing".into();
     }
 
-    async fn pass_finished(&mut self, result: &Result<PublicationPass<u64>, Error>) {
+    async fn pass_finished(&mut self, result: &Result<ConsumerPass<u64>, Error>) {
         let synchronization = match result {
-            Ok(PublicationPass::Committed {
+            Ok(ConsumerPass::Committed {
                 handover: PeerHandover::Complete,
                 ..
             }) => "synchronized",
-            Ok(PublicationPass::Committed { .. }) => "waiting_for_worker_commit",
+            Ok(ConsumerPass::Committed { .. }) => "waiting_for_worker_commit",
             Ok(_) => {
                 let mut state = self.service.state.lock().await;
                 if state.synchronization == "synchronizing" {

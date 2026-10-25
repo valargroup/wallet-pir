@@ -1,12 +1,12 @@
 //! Observe the publication envelope and advance the durable floor.
-use super::{Envelope, PublicationAdapter, PublicationLifecycle, PublicationLifecycleError};
+use super::{Envelope, EnvelopeConsumer, PublicationAdapter, PublicationLifecycleError};
+use crate::Error;
 use pir_publication::{conditional_token, CURRENT_PATH};
-use pir_sync_manager::Error;
 
 /// Bound on an envelope body; envelopes name objects, never contain material.
 pub(super) const ENVELOPE_LIMIT: usize = 64 << 10;
 
-impl<A: PublicationAdapter> PublicationLifecycle<A> {
+impl<A: PublicationAdapter> EnvelopeConsumer<A> {
     /// Fetch the envelope, refuse malformed envelopes and replays, fence
     /// serving on negative evidence, then persist the raised floor. A 304
     /// reuses the last received body and renews nothing.
@@ -34,8 +34,8 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
         self.adapter.validate_envelope(&envelope)?;
         let checked = self.floor.classify(envelope.clone())?;
         // Negative evidence fences serving before anything fallible is persisted.
-        let fenced = if !envelope.eligible || checked.succession().fences_earlier_views() {
-            self.pending_loaded = None;
+        self.observation_fenced = !envelope.eligible || checked.succession().fences_earlier_views();
+        let fenced = if self.observation_fenced {
             self.fence_serving().await
         } else {
             Vec::new()

@@ -256,8 +256,8 @@ mod tests {
     #[test]
     fn owning_fewer_shards_than_the_publication_covers_is_refused_by_name() {
         use crate::enhance::ingress_sync::CoverageMismatch;
-        use crate::synchronization::SyncTask;
         use enhance_shared::protocol::{Geometry, Lifecycle};
+        use pir_pipeline::consumer::polling::SyncTask;
         let root = tempfile::tempdir().unwrap();
         let role = combined(root.path());
         let mut manifest = crate::enhance::synchronization::test_manifest();

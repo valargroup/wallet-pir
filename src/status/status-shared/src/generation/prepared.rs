@@ -2,7 +2,7 @@
 //! computing hints or packing matrices on query hosts.
 use super::*;
 use crate::publication::{self, Failure, Inventory};
-use pir_publication::{ObjectCache, ObjectReference, VerifiedObjectFile};
+use pir_publication::{ObjectReference, VerifiedObjectFile, VerifiedObjects};
 
 /// Which prepared material a serving process holds beside the public
 /// parameters: a worker evaluates over the serving units, a router packs
@@ -73,39 +73,26 @@ impl Generation {
         Self::load_verified(
             inventory,
             material,
-            |item| VerifiedObjectFile::open(object(item)?, item),
+            |item| VerifiedObjectFile::open(object(item)?, item).map(Arc::new),
             previous,
         )
     }
 
-    /// Load through the same cache that verified the transfer. Unchanged,
-    /// settled inodes reuse that evidence instead of hashing their bodies at
-    /// both the fetch and load boundaries. Restarted caches verify afresh.
-    pub fn load_prepared_cached(
+    /// Prepare from handles already checked by the transfer owner. Files are
+    /// checked again for mutation while reading, without another digest pass.
+    pub fn load_prepared_objects(
         inventory: &Inventory,
         material: PreparedMaterial,
-        cache: &ObjectCache,
+        objects: &VerifiedObjects,
         previous: Option<&Self>,
     ) -> Result<Self, Failure> {
-        Self::load_verified(
-            inventory,
-            material,
-            |item| {
-                cache.open_verified(item)?.ok_or_else(|| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::NotFound,
-                        "Status prepared object disappeared",
-                    )
-                })
-            },
-            previous,
-        )
+        Self::load_verified(inventory, material, |item| objects.get(item), previous)
     }
 
     fn load_verified(
         inventory: &Inventory,
         material: PreparedMaterial,
-        object: impl Fn(&ObjectReference) -> std::io::Result<VerifiedObjectFile>,
+        object: impl Fn(&ObjectReference) -> std::io::Result<Arc<VerifiedObjectFile>>,
         previous: Option<&Self>,
     ) -> Result<Self, Failure> {
         inventory.validate_material()?;
