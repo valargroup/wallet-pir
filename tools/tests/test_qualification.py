@@ -438,5 +438,25 @@ class LauncherPrerequisiteTests(unittest.TestCase):
         self.assertFalse(self.marker.exists())
 
 
+
+class UnifiedCampaignTests(unittest.TestCase):
+    def test_zero_test_success_is_rejected_and_the_normal_case_runs(self):
+        import importlib.util
+        path = ROOT / 'tools/transparent/scripts/unified-http-sync-campaign.py'
+        spec = importlib.util.spec_from_file_location('unified_campaign', path)
+        campaign = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(campaign)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            binary = root / 'fixture-tests'
+            binary.write_text('#!' + sys.executable + '\nimport sys\n'
+                              'print("test result: ok. " + ("0" if "--ignored" in sys.argv else "1") + " passed; 0 failed; 0 ignored;")\n')
+            binary.chmod(0o700)
+            _, case, ignored = campaign.CASES['unified']
+            self.assertFalse(ignored)
+            self.assertEqual(campaign.run_case(binary, case, ignored, root, os.environ.copy(), 10), 0)
+            self.assertEqual(campaign.run_case(binary, case, True, root, os.environ.copy(), 10), 1)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -755,3 +755,260 @@ async fn unified_publisher_drives_independent_full_history_and_display_consumers
     node_task.abort();
     ledger.record("completed",serde_json::json!({"scope":"synthetic real-process correctness; production snapshots and original application not executed"}));
 }
+
+#[cfg(feature = "receiver-tests")]
+#[path = "support/query_host.rs"]
+mod query_host;
+#[cfg(feature = "receiver-tests")]
+#[path = "support/receiver.rs"]
+mod receiver_publisher;
+#[cfg(feature = "receiver-tests")]
+#[path = "../../../src/pir-query-server/tests/support/status_tls.rs"]
+mod tls;
+
+/// Root-binary Receiver qualification shares the existing campaign runner,
+/// TLS fault injection, process ownership, and independent wallet transport.
+#[cfg(feature = "receiver-tests")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "explicit root-binary HTTPS campaign"]
+async fn unified_receiver_publisher_drives_two_independent_query_servers() {
+    use query_host::Host;
+    use receiver_publisher::{activation, Receiver};
+    let root = tempfile::tempdir().unwrap();
+    let mut publisher = Receiver::start().await;
+    let retained = std::env::var_os("WALLET_PIR_CAMPAIGN_OUT")
+        .map(|output| PathBuf::from(output).join("receiver-queries"));
+    let query_root = retained.as_deref().unwrap_or(root.path());
+    let first_root = query_root.join("first");
+    let second_root = query_root.join("second");
+    let (first, first_config) = publisher.query(&first_root, "first").await;
+    let (mut second, second_config) = publisher.query(&second_root, "second").await;
+    let origin = |config: &serde_json::Value| {
+        format!("http://{}", config["public_listen"].as_str().unwrap())
+    };
+    let (one, two) = (origin(&first_config), origin(&second_config));
+    async fn head(origin: &str) -> serde_json::Value {
+        tokio::time::timeout(Duration::from_secs(60), async {
+            loop {
+                if let Ok(response) = reqwest::get(format!("{origin}/receiver/v1/inventory")).await
+                {
+                    if response.status().is_success() {
+                        return response.json().await.unwrap();
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .expect("Receiver inventory remained unavailable")
+    }
+    async fn height(origin: &str, expected: u32) {
+        tokio::time::timeout(Duration::from_secs(60), async {
+            loop {
+                if let Ok(response) = reqwest::get(format!("{origin}/receiver/v1/inventory")).await
+                {
+                    if response.status().is_success()
+                        && response.json::<serde_json::Value>().await.unwrap()["end_height"]
+                            == expected
+                    {
+                        return;
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .expect("Receiver query did not adopt the completed directory");
+    }
+    eprintln!("Receiver qualification: initial wallet queries");
+    publisher.wallet(&one).await;
+    publisher.wallet(&two).await;
+    // Cancel accepted uploads from one client, then prove its admission slots
+    // recover through a real encrypted wallet query.
+    let mut uploads = Vec::new();
+    let mut senders = Vec::new();
+    for _ in 0..2 {
+        let (send, receive) = tokio::sync::mpsc::channel::<Result<Vec<u8>, std::io::Error>>(1);
+        send.send(Ok(vec![0; 32])).await.unwrap();
+        senders.push(send);
+        let url = format!("{one}/receiver/v1/query");
+        uploads.push(tokio::spawn(async move {
+            reqwest::Client::new()
+                .post(url)
+                .body(reqwest::Body::wrap_stream(
+                    tokio_stream::wrappers::ReceiverStream::new(receive),
+                ))
+                .send()
+                .await
+        }));
+    }
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let status = reqwest::Client::new()
+                .post(format!("{one}/receiver/v1/query"))
+                .body(vec![0; 8])
+                .send()
+                .await
+                .unwrap()
+                .status();
+            if status == 429 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("slow uploads did not hold per-client admission");
+    for upload in uploads {
+        upload.abort();
+    }
+    drop(senders);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    publisher.wallet(&one).await;
+    let previous = head(&one).await;
+    let id =
+        hex::encode(serde_json::from_value::<[u8; 32]>(previous["inventory"].clone()).unwrap());
+    eprintln!("Receiver qualification: rolling hints during blocked preparation");
+    publisher.block_preparation(true);
+    publisher.append();
+    // Rolling hints advance even while completing a new table is obstructed.
+    tokio::time::timeout(Duration::from_secs(60), async {
+        loop {
+            let response = reqwest::get(format!("{one}/receiver/v1/block-filters/head"))
+                .await
+                .unwrap();
+            if response.status().is_success()
+                && response.json::<serde_json::Value>().await.unwrap()["tip"]["height"]
+                    == activation() + 1
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("rolling hints waited for directory preparation");
+    assert_eq!(head(&one).await["inventory"], previous["inventory"]);
+    publisher.block_preparation(false);
+    height(&one, activation() + 1).await;
+    height(&two, activation() + 1).await;
+    assert_eq!(
+        reqwest::get(format!("{one}/receiver/v1/inventory/{id}/0"))
+            .await
+            .unwrap()
+            .status(),
+        200,
+        "captured inventory remains available after replacement"
+    );
+    publisher.wallet(&one).await;
+    publisher.wallet(&two).await;
+    // A restart cannot use saved active metadata as authorization.
+    eprintln!("Receiver qualification: publisher outage and query restart");
+    publisher.transport_outage(true);
+    second.stop().await;
+    second = Host::start(&second_root, "second", second_config.clone()).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    second.assert_running();
+    assert_eq!(
+        reqwest::get(format!("{two}/receiver/v1/inventory"))
+            .await
+            .unwrap()
+            .status(),
+        503
+    );
+    publisher.wallet(&one).await;
+    publisher.transport_outage(false);
+    second.ready().await;
+    publisher.wallet(&two).await;
+    // Miss a publisher recovery and correction while one consumer is offline.
+    second.stop().await;
+    eprintln!("Receiver qualification: missed recovery and correction");
+    publisher.restart(1).await;
+    second = Host::start(&second_root, "second", second_config.clone()).await;
+    second.ready().await;
+    for endpoint in [&one, &two] {
+        tokio::time::timeout(Duration::from_secs(60), async {
+            while head(endpoint).await["history_revision"] != 1 {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            reqwest::get(format!("{endpoint}/receiver/v1/inventory/{id}/0"))
+                .await
+                .unwrap()
+                .status(),
+            410,
+            "correction fences retained inventories"
+        );
+        publisher.wallet(endpoint).await;
+    }
+    // A query-side durable commit failure cannot expose candidate bytes.
+    second.stop().await;
+    eprintln!("Receiver qualification: failed durable query commit");
+    let active = second_root.join("receiver/active.json");
+    std::fs::remove_file(&active).unwrap();
+    std::fs::create_dir(&active).unwrap();
+    second = Host::start(&second_root, "second", second_config.clone()).await;
+    second.reported_failure("os error 21").await;
+    assert_eq!(
+        reqwest::get(format!("{two}/receiver/v1/inventory"))
+            .await
+            .unwrap()
+            .status(),
+        503
+    );
+    publisher.wallet(&one).await;
+    std::fs::remove_dir(&active).unwrap();
+    second.ready().await;
+    publisher.wallet(&two).await;
+    eprintln!("Receiver qualification: same-height canonical reorg");
+    publisher.block_authority_write(true);
+    publisher.reorg();
+    for endpoint in [&one, &two] {
+        tokio::time::timeout(Duration::from_secs(60), async {
+            while reqwest::get(format!("{endpoint}/receiver/v1/inventory"))
+                .await
+                .unwrap()
+                .status()
+                != 503
+            {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .expect("a failed durable withdrawal kept old answers eligible");
+    }
+    publisher.block_authority_write(false);
+    publisher.ready().await;
+    for endpoint in [&one, &two] {
+        height(endpoint, activation() + 1).await;
+    }
+    // A same-height reorg changes identity; wait for actual independent wallet acceptance.
+    tokio::time::timeout(Duration::from_secs(60), async {
+        let expected = publisher.anchor().1;
+        loop {
+            if head(&one).await["end_hash"] == serde_json::json!(expected)
+                && head(&two).await["end_hash"] == serde_json::json!(expected)
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .unwrap();
+    publisher.wallet(&one).await;
+    publisher.wallet(&two).await;
+    for host in [&first, &second] {
+        let resident = host.resident_bytes();
+        eprintln!("Receiver query sampled resident bytes: {resident}");
+        assert!(
+            resident < (1536 + 512) << 20,
+            "Receiver-only query exceeds the bounded fixture memory allowance"
+        );
+    }
+    assert!(first.terminate().await.success());
+    assert!(second.terminate().await.success());
+}

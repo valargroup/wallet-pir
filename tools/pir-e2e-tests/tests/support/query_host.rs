@@ -21,23 +21,57 @@ impl Host {
         std::fs::write(&config, serde_json::to_vec_pretty(&document).unwrap()).unwrap();
         let log = dir.join(format!("{name}.log"));
         let file = std::fs::File::create(&log).unwrap();
-        let child = tokio::process::Command::new(env!("CARGO_BIN_EXE_pir-query-server-test"))
-            .arg("--config")
-            .arg(&config)
-            .env(
-                "RUST_LOG",
-                std::env::var("RUST_LOG").unwrap_or("info".into()),
-            )
-            .kill_on_drop(true)
-            .stdout(file.try_clone().unwrap())
-            .stderr(file)
-            .spawn()
-            .unwrap();
+        let child = tokio::process::Command::new(
+            std::env::var_os("WALLET_PIR_QUERY_SERVER_BIN")
+                .unwrap_or_else(|| env!("CARGO_BIN_EXE_pir-query-server-test").into()),
+        )
+        .arg("--config")
+        .arg(&config)
+        .env(
+            "RUST_LOG",
+            std::env::var("RUST_LOG").unwrap_or("info".into()),
+        )
+        .kill_on_drop(true)
+        .stdout(file.try_clone().unwrap())
+        .stderr(file)
+        .spawn()
+        .unwrap();
         Self {
             child,
             log,
             management: document["management_listen"].as_str().unwrap().into(),
         }
+    }
+    /// Resident memory observed from the actual spawned process, in bytes.
+    pub fn resident_bytes(&self) -> u64 {
+        let output = std::process::Command::new("ps")
+            .args(["-o", "rss=", "-p", &self.child.id().unwrap().to_string()])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .trim()
+            .parse::<u64>()
+            .unwrap()
+            * 1024
+    }
+    /// Wait for the running process to report the specific completed failure;
+    /// a closed readiness gate alone does not prove a fault was exercised.
+    pub async fn reported_failure(&mut self, text: &str) {
+        tokio::time::timeout(std::time::Duration::from_secs(60), async {
+            loop {
+                let log = self.log();
+                if log.contains("Receiver publication synchronization failed") && log.contains(text)
+                {
+                    return;
+                }
+                self.assert_running();
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("expected synchronization failure {text}: {}", self.log()));
     }
     pub fn log(&self) -> String {
         std::fs::read_to_string(&self.log).unwrap_or_default()

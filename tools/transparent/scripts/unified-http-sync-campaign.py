@@ -15,6 +15,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import signal
 import subprocess
 import sys
@@ -23,7 +24,11 @@ import time
 ROOT = Path(__file__).resolve().parents[3]
 FROZEN = ROOT / "src/pir-query-server/tests/transparent/frozen-client"
 TEST = "unified_http_sync_campaign"
-CASE = "unified_publisher_drives_independent_full_history_and_display_consumers"
+CASES = {
+    "transparent": (TEST, "unified_publisher_drives_independent_full_history_and_display_consumers", True),
+    "receiver": (TEST, "unified_receiver_publisher_drives_two_independent_query_servers", True),
+    "unified": ("transparent_provider_installation", "install::one_public_listener_serves_all_five_products", False),
+}
 
 
 def digest(path):
@@ -45,10 +50,37 @@ def build(arguments, log):
             for item in messages if item.get("reason") == "compiler-artifact" and item.get("executable")}
 
 
+def run_case(binary, case, ignored, output, env, timeout):
+    """Run exactly one declared test, refusing a successful zero-test selection."""
+    path = output / (case + ".log")
+    with path.open("w") as log:
+        process = subprocess.Popen([str(binary), case, "--exact", *(["--ignored"] if ignored else []), "--nocapture"],
+                                   cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT,
+                                   start_new_session=True)
+        try:
+            code = process.wait(timeout=timeout)
+        finally:
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.wait()
+    if code == 0 and not re.search(r"^test result: ok\. 1 passed; 0 failed;", path.read_text(), re.MULTILINE):
+        with path.open("a") as log:
+            log.write("Campaign refused: the selected test did not report exactly one passed case.\n")
+        return 1
+    return code
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=ROOT / ".local-pir/unified-http-sync")
     parser.add_argument("--timeout", type=int, default=900)
+    parser.add_argument("--products", choices=["all", "transparent", "receiver", "unified"], default="all")
     args = parser.parse_args()
     source = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -58,49 +90,43 @@ def main():
     manifest = {"schema": "transparent-unified-http-sync-v1", "source_sha": source,
                 "source_dirty": bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT)),
                 "host": {"platform": platform.platform(), "machine": platform.machine(), "cpus": os.cpu_count()},
-                "fixture_recent_privacy_floor": 1,
+                "fixture_recent_privacy_floor": 1, "products": args.products,
                 "scope": "synthetic local correctness; production journal snapshots and original wallet application are separate gates"}
     (output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     code = 1
     try:
         with (output / "build.log").open("w") as log:
-            binaries = build(["build", "-p", "pir-publisher", "--features", "pir-publisher/transparent-history,pir-publisher/transparent-detail",
+            binaries = build(["build", "-p", "pir-publisher", "--features", "pir-publisher/transparent-history,pir-publisher/transparent-detail,pir-publisher/receiver",
                               "--bin", "pir-publisher"], log)
-            # Its own invocation, so the host's features are its Transparent products only.
+            # Compile the actual root host with every product needed by the selected case.
+            unified = args.products in ("all", "unified")
+            query_features = "transparent-history,transparent-detail,receiver" + (",enhance,status,native-reinspiring" if unified else "")
+            test_features = "transparent-tests,receiver-tests" + (",enhance-tests,native-reinspiring,qualification-tests" if unified else "")
             binaries.update(build(["build", "-p", "pir-query-server",
-                                   "--features", "transparent-history,transparent-detail",
+                                   "--features", query_features,
                                    "--bin", "pir-query-server"], log))
-            tests = build(["test", "-p", "pir-e2e-tests", "--features", "transparent-tests",
-                            "--test", TEST, "--no-run"], log)
-            client = build(["build", "--manifest-path", str(FROZEN / "Cargo.toml")], log)["frozen-provider-client"]
-        binaries[TEST] = tests[TEST]
-        binaries["frozen-provider-client"] = client
-        subprocess.run([sys.executable, str(FROZEN / "verify-sources.py"), "--output", str(output / "frozen-client-provenance")],
-                       cwd=ROOT, check=True, stdout=(output / "verify-sources.log").open("w"), stderr=subprocess.STDOUT)
+            tests = build(["test", "-p", "pir-e2e-tests", "--features", test_features,
+                            "--test", TEST, *(["--test", "transparent_provider_installation"] if unified else []), "--no-run"], log)
+            client = (build(["build", "--manifest-path", str(FROZEN / "Cargo.toml")], log)["frozen-provider-client"]
+                      if args.products in ("all", "transparent") else None)
+        binaries.update(tests)
+        if client is not None:
+            binaries["frozen-provider-client"] = client
+            subprocess.run([sys.executable, str(FROZEN / "verify-sources.py"), "--output", str(output / "frozen-client-provenance")],
+                           cwd=ROOT, check=True, stdout=(output / "verify-sources.log").open("w"), stderr=subprocess.STDOUT)
         manifest["binaries"] = {name: {"path": str(path), "sha256": digest(path)} for name, path in binaries.items()}
         (output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
         env = dict(os.environ, WALLET_PIR_PUBLISHER_BIN=str(binaries["pir-publisher"]),
                    WALLET_PIR_QUERY_SERVER_BIN=str(binaries["pir-query-server"]),
-                   WALLET_PIR_FROZEN_CLIENT=str(client), WALLET_PIR_SOURCE_SHA=source,
-                   WALLET_PIR_CAMPAIGN_OUT=str(output))
-        with (output / "campaign.log").open("w") as log:
-            process = subprocess.Popen([str(tests[TEST]), CASE, "--exact", "--ignored", "--nocapture"],
-                                       cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT,
-                                       start_new_session=True)
-            try:
-                code = process.wait(timeout=args.timeout)
-            finally:
-                # Every service/TLS child belongs to this newly created group.
-                # A killed test cannot run Rust destructors, so reap its children too.
-                try:
-                    os.killpg(process.pid, signal.SIGTERM)
-                except ProcessLookupError:
-                    pass
-                try:
-                    process.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    os.killpg(process.pid, signal.SIGKILL)
-                    process.wait()
+                   WALLET_PIR_SOURCE_SHA=source,
+                   WALLET_PIR_CAMPAIGN_OUT=str(output), WALLET_PIR_QUALIFICATION_OUTPUT=str(output))
+        if client is not None:
+            env["WALLET_PIR_FROZEN_CLIENT"] = str(client)
+        selected = CASES.values() if args.products == "all" else [CASES[args.products]]
+        for target, case, ignored in selected:
+            code = run_case(tests[target], case, ignored, output, env, args.timeout)
+            if code:
+                break
     except subprocess.TimeoutExpired:
         code = 124
     finally:

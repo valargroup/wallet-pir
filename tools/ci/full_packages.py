@@ -69,7 +69,7 @@ def commands(group, groups, lint=False, compile_only=False):
     features = {
         'enhance': NATIVE + [
             'pir-publisher/enhance', 'pir-publisher/status', 'pir-publisher/transparent-history', 'pir-publisher/transparent-detail',
-            'pir-publisher/receiver', 'pir-publisher/native-reinspiring',
+            'pir-publisher/receiver', 'pir-e2e-tests/receiver-tests', 'pir-publisher/native-reinspiring',
             'pir-publisher/status-tests', 'pir-e2e-tests/enhance-tests',
             'pir-e2e-tests/native-reinspiring',
             'pir-query-server/enhance', 'pir-query-server/status', 'pir-query-server/receiver',
