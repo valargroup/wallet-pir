@@ -6,34 +6,29 @@
     "control_listen": "127.0.0.1:8096",
     "data_dir": "/srv/wallet-pir-query/enhance",
     "synchronization": {
-      "publisher_origin": "https://publisher.example.invalid",
+      "publisher_origin": "https://enhance-pir.valargroup.dev",
       "trusted_ca": null,
-      "download_budget_bytes": 25769803776,
-      "cache_limit_bytes": 25769803776,
+      "download_budget_bytes": 8589934592,
+      "cache_limit_bytes": 8589934592,
       "shards": [
-        0,
-        1,
-        2,
-        3,
-        4,
-        5
+        0
       ]
     }
   },
   "status": {
-    "network_hex": "0101010101010101010101010101010101010101010101010101010101010101",
+    "network_hex": "08ce3d9731b000c08338455c8a4a6bd05da16e26b11daa1b917184ece80f0400",
     "state_dir": "/srv/wallet-pir-query/status",
     "listen": "127.0.0.1:8481",
     "query_listen": "127.0.0.1:8090",
-    "publisher": "https://publisher.example.invalid"
+    "publisher": "https://enhance-pir.valargroup.dev"
   },
   "transparent_history": {
     "listen": "127.0.0.1:8093",
     "state_dir": "/srv/wallet-pir-query/history",
-    "publisher": "https://publisher.example.invalid",
+    "publisher": "https://enhance-pir.valargroup.dev",
     "publisher_network": "main",
-    "publisher_genesis": "0000000000000000000000000000000000000000000000000000000000000000",
-    "cache_bytes": 68719476736,
+    "publisher_genesis": "00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08",
+    "cache_bytes": 103079215104,
     "full_holdings": true,
     "query_slots": 1,
     "build_slots": 1
@@ -41,9 +36,9 @@
   "transaction_details": {
     "listen": "127.0.0.1:8095",
     "state_dir": "/srv/wallet-pir-query/details",
-    "publisher": "https://publisher.example.invalid",
+    "publisher": "https://enhance-pir.valargroup.dev",
     "publisher_network": "main",
-    "publisher_genesis": "0000000000000000000000000000000000000000000000000000000000000000",
-    "cache_bytes": 17179869184
+    "publisher_genesis": "00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08",
+    "cache_bytes": 25769803776
   }
 }
