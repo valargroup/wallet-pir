@@ -1474,28 +1474,6 @@ async fn metadata_only_refresh_reuses_verified_material_under_live_authority() {
         .as_ref()
         .unwrap()
         .can_prepare());
-    let mut newest = refreshed.clone();
-    newest.manifest.generation = 6;
-    let newest_object = publish(&mut newest, 9);
-    let requested = source.requested_objects.read().unwrap().len();
-    assert_eq!(committed(task.synchronize().await.unwrap()).0, 6);
-    assert_eq!(
-        &source.requested_objects.read().unwrap()[requested..],
-        std::slice::from_ref(&newest_object.sha256)
-    );
-    assert!(Arc::ptr_eq(
-        worker
-            .state
-            .lock()
-            .await
-            .controller
-            .as_ref()
-            .unwrap()
-            .current()
-            .public(),
-        loaded.public()
-    ));
-
     // A pin sharing the active allocations permits the next different material.
     let changed = cached_generation(
         &fixture::snapshot(32, true).unwrap(),

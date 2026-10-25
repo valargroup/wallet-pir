@@ -15,7 +15,7 @@ pub struct DiscoveryError {
 #[derive(Debug)]
 enum Reason {
     Unreachable(String),
-    Deadline,
+    Deadline(Duration),
     Status(reqwest::StatusCode),
     TooLarge,
     Document(discovery::Error),
@@ -37,11 +37,7 @@ impl fmt::Display for DiscoveryError {
         write!(f, "publisher {} service discovery failed: ", self.origin)?;
         match &self.reason {
             Reason::Unreachable(error) => write!(f, "publisher unreachable: {error}"),
-            Reason::Deadline => write!(
-                f,
-                "no complete response within {}s",
-                DISCOVERY_DEADLINE.as_secs()
-            ),
+            Reason::Deadline(deadline) => write!(f, "no complete response within {deadline:?}"),
             Reason::Status(status) if *status == reqwest::StatusCode::NOT_FOUND => write!(
                 f,
                 "HTTP 404 at {}; the publisher does not expose service discovery \
@@ -81,6 +77,13 @@ impl HttpsSource {
     /// [`DISCOVERY_DEADLINE`] and [`discovery::MAX_DOCUMENT_BYTES`], and does not
     /// count against the product download budget. No result is cached.
     pub async fn discover(&self) -> Result<discovery::Version, DiscoveryError> {
+        self.discover_with_deadline(DISCOVERY_DEADLINE).await
+    }
+
+    pub(super) async fn discover_with_deadline(
+        &self,
+        deadline: Duration,
+    ) -> Result<discovery::Version, DiscoveryError> {
         let fail = |reason| DiscoveryError {
             origin: self.origin.as_str().trim_end_matches('/').to_string(),
             reason,
@@ -114,9 +117,9 @@ impl HttpsSource {
             }
             discovery::check_publisher(&body).map_err(Reason::Document)
         };
-        match tokio::time::timeout(DISCOVERY_DEADLINE, fetch).await {
+        match tokio::time::timeout(deadline, fetch).await {
             Ok(result) => result.map_err(fail),
-            Err(_) => Err(fail(Reason::Deadline)),
+            Err(_) => Err(fail(Reason::Deadline(deadline))),
         }
     }
 }

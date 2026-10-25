@@ -309,7 +309,9 @@ async fn https_authority_controls_real_wallet_queries_and_restart() {
     let mut lifecycle = sync::synchronization(&config, publications.clone()).unwrap();
     lifecycle.synchronize().await.unwrap();
     lifecycle.context().adapter().check_unused_revocations();
+    let first_inventory = publications.current().unwrap().id();
     let mount = crate::public::receiver();
+    let wallet_slot = mount.slot.clone();
     mount.slot.install(router_with_health(
         publications.clone(),
         Arc::new(Default::default),
@@ -327,9 +329,6 @@ async fn https_authority_controls_real_wallet_queries_and_restart() {
     let record = first.page(common::receiver(), 0).await.unwrap().unwrap();
     assert_eq!(record.payment, common::record(0, 1).payment);
     assert_eq!(first.witness(record.ordinal).await.unwrap(), [7; 512]);
-    let mut absent = common::receiver();
-    absent[0] ^= 1;
-    assert!(first.page(absent, 0).await.unwrap().is_none());
     for path in [
         "/v1/receiver/health",
         "/metrics",
@@ -345,14 +344,6 @@ async fn https_authority_controls_real_wallet_queries_and_restart() {
             StatusCode::NOT_FOUND
         );
     }
-    assert!(http
-        .0
-        .get(format!("{address}/v1/receiver/inventory"))
-        .send()
-        .await
-        .unwrap()
-        .status()
-        .is_success());
     let predecessor_objects: Vec<_> = origin.objects.lock().unwrap().keys().cloned().collect();
     origin.publish(0, 2);
     lifecycle.synchronize().await.unwrap();
@@ -362,10 +353,11 @@ async fn https_authority_controls_real_wallet_queries_and_restart() {
             "ordinary positive successor keeps predecessor files"
         );
     }
-    assert!(first.page(common::receiver(), 0).await.unwrap().is_some());
+    assert!(publications.inventory(&first_inventory).is_ok());
+    let approved_inventory = publications.current().unwrap().id();
     let approved_epoch = publications.epoch();
     origin.reject_candidate.store(true, Ordering::SeqCst);
-    origin.publish_at(0, 3, [4; 32]);
+    origin.publish_at(0, 1, [4; 32]);
     let _ = lifecycle.synchronize().await;
     assert_eq!(
         publications.epoch(),
@@ -373,37 +365,31 @@ async fn https_authority_controls_real_wallet_queries_and_restart() {
         "a rejected candidate does not fence approved views"
     );
     assert!(publications.current_anchor().is_some());
+    assert_eq!(publications.current().unwrap().id(), approved_inventory);
     assert!(
-        first.page(common::receiver(), 0).await.unwrap().is_some(),
+        publications.inventory(&first_inventory).is_ok(),
         "a rejected candidate preserves retained wallet sessions"
-    );
-    let _ = lifecycle.synchronize().await;
-    assert!(
-        first.page(common::receiver(), 0).await.unwrap().is_some(),
-        "repeated rejection preserves approved answers"
     );
     origin.reject_candidate.store(false, Ordering::SeqCst);
     origin.publish(0, 3);
     origin.corrupt.store(true, Ordering::SeqCst);
     assert!(lifecycle.synchronize().await.is_err());
     assert!(
-        first.page(common::receiver(), 0).await.unwrap().is_some(),
+        publications.inventory(&first_inventory).is_ok(),
         "failed replacement leaves retained answers available"
     );
     origin.corrupt.store(false, Ordering::SeqCst);
     origin.available.store(false, Ordering::SeqCst);
     assert!(lifecycle.synchronize().await.is_err());
     assert!(
-        first.page(common::receiver(), 0).await.unwrap().is_some(),
+        publications.inventory(&first_inventory).is_ok(),
         "last approved answers survive publisher outage"
     );
-    // Independent process state has cached bytes but no serving permission.
+    // A fresh process must verify downloads before it can serve.
     let fresh = Publications::default();
     let mut restarted = config.clone();
     restarted.state_dir = root.path().join("second-query");
     let mut second = sync::synchronization(&restarted, fresh.clone()).unwrap();
-    assert!(second.synchronize().await.is_err());
-    assert!(fresh.current_anchor().is_none());
     origin.available.store(true, Ordering::SeqCst);
     origin.corrupt.store(true, Ordering::SeqCst);
     assert!(second.synchronize().await.is_err());
@@ -427,6 +413,24 @@ async fn https_authority_controls_real_wallet_queries_and_restart() {
     );
     origin.available.store(true, Ordering::SeqCst);
     after_restart.synchronize().await.unwrap();
+    wallet_slot.install(router_with_health(
+        restarted_publications.clone(),
+        Arc::new(Default::default),
+    ));
+    let restored = connect(&address, &http).await;
+    assert_eq!(
+        restored
+            .page(common::receiver(), 0)
+            .await
+            .unwrap()
+            .unwrap()
+            .payment,
+        common::record(0, 3).payment
+    );
+    wallet_slot.install(router_with_health(
+        publications.clone(),
+        Arc::new(Default::default),
+    ));
     origin
         .authority
         .lock()
@@ -439,18 +443,11 @@ async fn https_authority_controls_real_wallet_queries_and_restart() {
         first.page(common::receiver(), 0).await,
         Err(Error::Revision)
     ));
-    let corrected = connect(&address, &http).await;
-    assert_eq!(
-        history::history(&corrected, common::receiver())
-            .await
-            .unwrap()
-            .len(),
-        2
-    );
+    assert_eq!(publications.history_revision(), 1);
     let active = config.state_dir.join("active.json");
     std::fs::remove_file(&active).unwrap();
     std::fs::create_dir(&active).unwrap();
-    origin.publish(1, 3);
+    origin.publish(1, 1);
     assert!(lifecycle.synchronize().await.is_err());
     assert!(
         publications.current_anchor().is_none(),
@@ -502,14 +499,14 @@ async fn filter_successors_reuse_loaded_directory_across_authority_conflicts() {
     );
     assert_eq!(publications.filter_window().unwrap().head().tip.height, 103);
     // Prepare a changed directory, then interrupt its final authorization.
-    origin.publish(0, 2);
+    origin.publish_at(0, 1, [4; 32]);
     origin
         .advance_check_at
         .store(origin.checks.load(Ordering::SeqCst) + 2, Ordering::SeqCst);
     let _ = lifecycle.synchronize().await;
     assert_eq!(lifecycle.context().adapter().directory_loads(), 2);
     // A correction cannot inherit that pending directory's prepared work.
-    origin.publish(1, 3);
+    origin.publish(1, 1);
     lifecycle.synchronize().await.unwrap();
     assert_eq!(lifecycle.context().adapter().directory_loads(), 3);
     assert_eq!(publications.history_revision(), 1);

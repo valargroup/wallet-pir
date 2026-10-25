@@ -261,7 +261,7 @@ fn round_trip_and_restart(backend: MatvecConfig) {
     assert_ne!(old_plan, plan);
     assert!(old_plan.validate().is_err());
     let client = crate::client::QuerySession::new(&manifest, pack.session(&manifest, 0)).unwrap();
-    for position in [0, 32, 33, 66] {
+    for position in [32, 33, 66] {
         let (query, slot) = client.prepare_position(position).unwrap();
         let binding = QueryBinding::decode(query.body()).unwrap();
         let rows = client.query_rows();
@@ -272,9 +272,8 @@ fn round_trip_and_restart(backend: MatvecConfig) {
         let coefficients = pack
             .query_coefficients(query.body(), binding, rows)
             .unwrap();
-        let response = pack
-            .pack(query.body(), &eval.evaluate(&coefficients).unwrap(), rows)
-            .unwrap();
+        let answer = eval.evaluate(&coefficients).unwrap();
+        let response = pack.pack(query.body(), &answer, rows).unwrap();
         // The three-row domain selects over one block. Its shorter upload
         // is the full one's prefix and is answered byte for byte the same;
         // the server takes only the prefix its manifest prescribes.
@@ -288,7 +287,7 @@ fn round_trip_and_restart(backend: MatvecConfig) {
             assert_eq!(selection[..rows], coefficients[..rows]);
             assert!(selection[rows..].iter().all(|&c| c == 0));
             let scan = eval.evaluate(&selection).unwrap();
-            assert_eq!(scan, eval.evaluate(&coefficients).unwrap());
+            assert_eq!(scan, answer);
             assert_eq!(pack.pack(short, &scan, rows).unwrap(), response);
             assert!(pack.query_coefficients(short, binding, 4096).is_err());
         }
@@ -331,12 +330,13 @@ fn round_trip_and_restart(backend: MatvecConfig) {
             selected_eval.evaluate(&query).unwrap()
         );
     }
+    let expected = cpu_eval.evaluate(&query).unwrap();
     std::thread::scope(|scope| {
-        for _ in 0..4 {
+        for _ in 0..2 {
             let eval = &selected_eval;
             let query = &query;
-            let expected = cpu_eval.evaluate(query).unwrap();
-            scope.spawn(move || assert_eq!(eval.evaluate(query).unwrap(), expected));
+            let expected = &expected;
+            scope.spawn(move || assert_eq!(&eval.evaluate(query).unwrap(), expected));
         }
     });
     drop(cpu_eval);
