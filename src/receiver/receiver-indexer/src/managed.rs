@@ -361,6 +361,15 @@ impl Ingestion for Writer {
         Ok(())
     }
     async fn caught_up(&mut self, _: &ChainObservation) -> Result<()> {
+        if self.config.audit_enabled {
+            // The polling task can recover after this writer's startup failed.
+            // Reopen the shared file on each pass rather than keeping an empty fallback.
+            self.providers = PayoutStore::open(self.config.data_dir.join(application::PROVIDERS))
+                .or_else(|error| {
+                tracing::warn!(%error, "payout audit unavailable; continuing chain publication");
+                PayoutStore::open(":memory:")
+            })?;
+        }
         application::publish_committed(
             &self.config,
             &self.rpc,
@@ -386,6 +395,34 @@ mod tests {
     impl CanonicalChain for Chain {
         fn hash_at(&self, height: u64) -> ChainFuture<'_, String> {
             Box::pin(async move { Ok(hash::display(&[height as u8; 32])) })
+        }
+    }
+
+    fn writer(directory: &std::path::Path, config: receiver_store::Config) -> Writer {
+        let start = config.start_height;
+        let (store, _) = receiver_store::open_in(directory, config, true).unwrap();
+        let tip = store.tip().unwrap();
+        Writer {
+            tip,
+            store,
+            rpc: NodeClient::new("http://127.0.0.1:1".into(), None).unwrap(),
+            providers: PayoutStore::open(":memory:").unwrap(),
+            publications: Publications::default(),
+            state: application::State::default(),
+            config: application::Config {
+                data_dir: directory.into(),
+                min_rows: 8192,
+                start_height: start,
+                end_height: None,
+                depth: 5,
+                batch_size: 64,
+                concurrency: 8,
+                audit_enabled: false,
+                filter_blocks: None,
+                history_revision: 0,
+                shard_rows: 65536,
+                shard_target: None,
+            },
         }
     }
 
@@ -419,30 +456,7 @@ mod tests {
                     .unwrap();
             }
         }
-        let (store, _) = receiver_store::open_in(directory.path(), config.clone(), true).unwrap();
-        let tip = store.tip().unwrap();
-        let mut writer = Writer {
-            tip,
-            store,
-            rpc: NodeClient::new("http://127.0.0.1:1".into(), None).unwrap(),
-            providers: PayoutStore::open(":memory:").unwrap(),
-            publications: Publications::default(),
-            state: application::State::default(),
-            config: application::Config {
-                data_dir: directory.path().into(),
-                min_rows: 8192,
-                start_height: start,
-                end_height: None,
-                depth: 5,
-                batch_size: 64,
-                concurrency: 8,
-                audit_enabled: false,
-                filter_blocks: None,
-                history_revision: 0,
-                shard_rows: 65536,
-                shard_target: None,
-            },
-        };
+        let mut writer = writer(directory.path(), config.clone());
         assert_eq!(
             writer.target_height(u64::from(start + 3)),
             u64::from(start - 2)
@@ -531,5 +545,51 @@ mod tests {
             revoked,
             "canonical revocation must finish before preparation yields"
         );
+    }
+    #[tokio::test]
+    async fn audit_recovers_on_the_next_pass_without_restarting_the_writer() {
+        let directory = tempfile::tempdir().unwrap();
+        let config = receiver_store::Config {
+            genesis: Network::Mainnet.genesis_hash(),
+            start_height: blocks::ironwood_activation(),
+            start_parent: [2; 32],
+            start_position: 0,
+        };
+        let mut writer = writer(directory.path(), config.clone());
+        writer.config.audit_enabled = true;
+        let observation = ChainObservation {
+            genesis: hash::display(&config.genesis),
+            tip: block(&writer.tip),
+            pass: 1,
+        };
+        let path = directory.path().join(application::PROVIDERS);
+        std::fs::create_dir(&path).unwrap();
+        writer.caught_up(&observation).await.unwrap();
+        let now = 1_000_000;
+        assert_eq!(
+            crate::near::capture(&writer.providers, now)
+                .unwrap()
+                .report(&writer.store)
+                .unwrap()["payouts_checked"],
+            0
+        );
+        std::fs::remove_dir(&path).unwrap();
+        PayoutStore::open(&path)
+            .unwrap()
+            .record(
+                "near-payout-audit",
+                &[([1; 43], [7; 32], now - 7200)],
+                now,
+                now,
+            )
+            .unwrap();
+        writer.caught_up(&observation).await.unwrap();
+        let report = crate::near::capture(&writer.providers, now)
+            .unwrap()
+            .report(&writer.store)
+            .unwrap();
+        assert_eq!(report["payouts_checked"], 1);
+        assert_eq!(report["payouts_missing"], 1);
+        assert!(writer.publications.current_anchor().is_none());
     }
 }
