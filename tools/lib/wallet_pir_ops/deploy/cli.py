@@ -314,6 +314,8 @@ def parser():
     transparent_cli().register(commands)
     from . import publisher
     publisher.register(commands)
+    from . import fleet_release
+    fleet_release.register(commands)
     from . import cache_storage
     cache_storage.register(commands)
     from . import cache_volume
@@ -490,6 +492,10 @@ def run(args, executor, out, package_layout, package_github, **options):
             return transparent_cli().dispatch(args, executor=executor, out=out, **options)
         if not args.inventory:
             raise DeployError('pass --inventory or set WALLET_PIR_DEPLOY_INVENTORY')
+        if args.command.startswith('fleet-release-'):
+            from . import fleet_release
+            out(json.dumps(fleet_release.dispatch(args, executor), sort_keys=True))
+            return 0
         if args.command.startswith(('status-routing-', 'receiver-routing-')):
             from .engine import mutation_fence
             if args.command.startswith('receiver-routing-'):

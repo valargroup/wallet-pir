@@ -274,3 +274,111 @@ def stale(reviewed_sha256, fresh):
     if fresh.get('plan_sha256') != reviewed_sha256:
         return 'plan is stale: reviewed %s, fresh %s' % (reviewed_sha256[:12], str(fresh.get('plan_sha256'))[:12])
     return None
+
+
+# ------------------------------------------------------------ observation
+
+OBSERVE_SECONDS = 60
+# Independent host operations in flight at once across the fleet.
+HOST_CONCURRENCY = 4
+
+
+def observe_process(registry, executor, process):
+    """Running executable, its staged release and that release's contract major.
+
+    Read-only. A release older than `--contract-info` reports no major.
+    """
+    state = executor.probe_unit(process['host'], process['unit'])
+    running = state.get('exe_sha256') if state.get('active_state') == 'active' else None
+    result = {'exe_sha256': running, 'contract_major': None, 'previous_staged': False}
+    if running is None:
+        return result
+    path = registry[process['service']].release_binary(running, process['executable'])
+    result['previous_staged'] = executor.sha256(process['host'], path) == running
+    if result['previous_staged']:
+        code, output = executor.run(process['host'], [path, *contract.CONTRACT_INFO_ARGV], OBSERVE_SECONDS)
+        if code == 0:
+            try:
+                result['contract_major'] = contract.parse_contract_info(
+                    output, executable=process['executable'], sha256=running).contract_major
+            except contract.ContractError:
+                pass
+    return result
+
+
+def observe_publisher(executor, host, name):
+    """The major a publisher origin advertises, observed from the host serving it."""
+    try:
+        status, body = executor.http_get(host, name + contract.DISCOVERY_PATH, OBSERVE_SECONDS)
+        return {'major': contract.publisher_document_major(status, body)}
+    except Exception as error:  # noqa: BLE001 - an unobserved origin is unknown, never compatible
+        return {'major': None, 'error': str(error)}
+
+
+def observe(registry, inventory, executor, request):
+    """Observations for `plan`, at most `HOST_CONCURRENCY` hosts at a time.
+
+    Operations on one host stay sequential so a host never sees overlapping
+    probes from this command.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    found, _ = processes(registry, inventory)
+    by_host = {}
+    for process in found.values():
+        by_host.setdefault(process['host'], []).append(process)
+
+    def host_observations(host):
+        return {process['key']: observe_process(registry, executor, process) for process in by_host[host]}
+
+    with ThreadPoolExecutor(max_workers=HOST_CONCURRENCY) as pool:
+        results = list(pool.map(host_observations, sorted(by_host)))
+    publishers = {}
+    for name, key in sorted(request.get('publishers', {}).items()):
+        if key in found:
+            publishers[name] = observe_publisher(executor, found[key]['host'], name)
+    return {'processes': {key: value for result in results for key, value in result.items()},
+            'publishers': publishers}
+
+
+# ------------------------------------------------------------ command line
+
+def register(commands):
+    """Read-only planning commands. Activation is not offered by this module yet."""
+    for operation in ('plan', 'preflight'):
+        command = commands.add_parser('fleet-release-' + operation, allow_abbrev=False)
+        command.add_argument('--request', required=True)
+        command.add_argument('--request-sha256', required=True)
+        if operation == 'preflight':
+            command.add_argument('--expect-plan-sha256', required=True)
+
+
+def load_request(path, expected_sha256):
+    from pathlib import Path
+    data = Path(path).read_bytes()
+    if hashlib.sha256(data).hexdigest() != expected_sha256:
+        raise ValueError('fleet release request checksum differs')
+    return json.loads(data)
+
+
+def dispatch(args, executor=None, registry=None):
+    """`plan` prints the reviewed plan; `preflight` refuses a stale or refused plan.
+
+    Both only read: no unit, file or process changes.
+    """
+    from pathlib import Path
+    from .engine import DeployError
+    request = load_request(args.request, args.request_sha256)
+    inventory_bytes = Path(args.inventory).read_bytes()
+    inventory = descriptors.load_inventory(args.inventory)
+    registry = registry or descriptors.load_descriptors(args.descriptors)
+    if executor is None:
+        from .remote import SSHExecutor
+        executor = SSHExecutor(inventory)
+    fresh = plan(registry, inventory, hashlib.sha256(inventory_bytes).hexdigest(), request,
+                 observe(registry, inventory, executor, request))
+    if args.command == 'fleet-release-preflight':
+        refusal = stale(args.expect_plan_sha256, fresh)
+        if refusal or fresh['problems']:
+            raise DeployError('fleet release refused before any change:\n  '
+                              + '\n  '.join(([refusal] if refusal else []) + fresh['problems']))
+    return fresh
