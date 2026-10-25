@@ -40,6 +40,8 @@ pub(super) fn synchronization(
             owner,
             publications,
             views: Arc::default(),
+            #[cfg(test)]
+            loads: 0,
         },
         source,
         floor,
@@ -56,6 +58,8 @@ pub(super) struct Receiver {
     owner: Arc<std::fs::File>,
     publications: Publications,
     views: Arc<Mutex<Views>>,
+    #[cfg(test)]
+    loads: usize,
 }
 #[derive(Default)]
 struct Views {
@@ -70,10 +74,16 @@ pub(super) struct Candidate {
 pub(super) struct Loaded {
     candidate: Candidate,
     epoch: u64,
+    cache: ObjectCache,
+    reusable: bool,
     directory: Option<Publication>,
     filters: Option<BlockWindow>,
 }
 impl Receiver {
+    #[cfg(test)]
+    pub(super) fn directory_loads(&self) -> usize {
+        self.loads
+    }
     #[cfg(test)]
     pub(super) fn check_unused_revocations(&self) {
         let mut copy = Self {
@@ -81,6 +91,7 @@ impl Receiver {
             owner: self.owner.clone(),
             publications: self.publications.clone(),
             views: self.views.clone(),
+            loads: self.loads,
         };
         let before = self.views.lock().unwrap().views.len();
         drop(copy.fence_serving());
@@ -231,28 +242,96 @@ impl PublicationAdapter for Receiver {
         })
     }
     async fn load(&mut self, candidate: Candidate, cache: &ObjectCache) -> Result<Loaded, Error> {
+        #[cfg(test)]
+        {
+            self.loads += 1;
+        }
         // Metadata/public setup is small relative to rows; lazy row loaders
         // rebuild evaluators only under the existing shared table budget.
         let inventory = candidate.inventory.clone();
         let cache = cache.clone();
         let owner = self.owner.clone();
-        let (directory, filters) =
-            tokio::task::spawn_blocking(move || super::material::load(&inventory, &cache, owner))
-                .await??;
+        let load_cache = cache.clone();
+        let (directory, filters) = tokio::task::spawn_blocking(move || {
+            super::material::load(&inventory, &load_cache, owner)
+        })
+        .await??;
         Ok(Loaded {
             candidate,
             epoch: self.publications.epoch(),
+            cache,
+            reusable: true,
             directory,
             filters,
         })
     }
     async fn rebind(
         &mut self,
-        _: &Envelope<Self>,
-        loaded: Loaded,
-        _: &mut ObjectFetcher<'_>,
+        envelope: &Envelope<Self>,
+        mut loaded: Loaded,
+        objects: &mut ObjectFetcher<'_>,
     ) -> Result<Loaded, Error> {
+        let Some(latest) = envelope.publication.as_ref().filter(|_| envelope.eligible) else {
+            return Ok(loaded);
+        };
+        if latest
+            == &loaded
+                .candidate
+                .inventory
+                .reference(loaded.candidate.object.clone())
+        {
+            return Ok(loaded);
+        }
+        let inventory: Inventory = serde_json::from_slice(
+            &objects
+                .fetch_metadata(&latest.inventory, distribution::METADATA_LIMIT)
+                .await?,
+        )?;
+        inventory.validate(self.config.activation_height)?;
+        if inventory.genesis != self.config.genesis
+            || inventory.reference(latest.inventory.clone()) != *latest
+        {
+            return Err("Receiver replacement metadata does not describe its publication".into());
+        }
+        if inventory.history_revision != loaded.candidate.inventory.history_revision
+            || serde_json::to_vec(&inventory.directory)?
+                != serde_json::to_vec(&loaded.candidate.inventory.directory)?
+        {
+            loaded.reusable = false;
+            return Ok(loaded);
+        }
+        if let Some(filters) = &inventory.filters {
+            for batch in &filters.batches {
+                objects.fetch(batch).await?;
+            }
+        }
+        let cache = loaded.cache.clone();
+        let filter_inventory = inventory.clone();
+        loaded.filters = tokio::task::spawn_blocking(move || {
+            super::material::load_filters(&filter_inventory, &cache)
+        })
+        .await??;
+        loaded.candidate = Candidate {
+            inventory,
+            object: latest.inventory.clone(),
+            id: ViewIdentity(latest.publication),
+        };
         Ok(loaded)
+    }
+    fn resumable_view(&self, loaded: &Loaded, envelope: &Envelope<Self>) -> Option<ViewIdentity> {
+        let latest = envelope.publication.as_ref()?;
+        (loaded.reusable
+            && envelope.eligible
+            && loaded.epoch == self.publications.epoch()
+            && latest.descriptor.history_revision == loaded.candidate.inventory.history_revision
+            && latest.descriptor.directory == loaded.candidate.inventory.descriptor().directory)
+            .then_some(loaded.candidate.id)
+    }
+    fn authority_batches(
+        &self,
+        subjects: Vec<(ViewIdentity, Subject)>,
+    ) -> Vec<Vec<(ViewIdentity, Subject)>> {
+        proof_batches(subjects)
     }
     fn revalidate(
         &self,
@@ -295,6 +374,7 @@ impl PublicationAdapter for Receiver {
             epoch,
             directory,
             filters,
+            ..
         } = loaded;
         let root = self.config.state_dir.clone();
         let bytes = serde_json::to_vec(&candidate.object)?;
@@ -360,4 +440,34 @@ impl PublicationAdapter for Receiver {
             self.views.lock().unwrap().current
         }
     }
+}
+
+/// At most 128 anchors and 128 subjects leave room for the echoed proof and
+/// authority within the shared 64 KiB response bound, and stay below the
+/// publisher's request limits. Several chunks may refer to the same view.
+fn proof_batches(subjects: Vec<(ViewIdentity, Subject)>) -> Vec<Vec<(ViewIdentity, Subject)>> {
+    const ANCHORS: usize = 128;
+    let mut batches = Vec::new();
+    let mut batch = Vec::new();
+    let mut count = 0;
+    for (identity, subject) in subjects {
+        let chunks: Vec<_> = if subject.is_empty() {
+            vec![Vec::new()]
+        } else {
+            subject.chunks(ANCHORS).map(<[_]>::to_vec).collect()
+        };
+        for chunk in chunks {
+            let weight = chunk.len().max(1);
+            if count + weight > ANCHORS {
+                batches.push(std::mem::take(&mut batch));
+                count = 0;
+            }
+            batch.push((identity, chunk));
+            count += weight;
+        }
+    }
+    if !batch.is_empty() {
+        batches.push(batch);
+    }
+    batches
 }

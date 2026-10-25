@@ -15,7 +15,7 @@ use receiver_pir_server::distribution::{self, Directory, Inventory, Segment, Sub
 use std::{
     collections::HashMap,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Mutex,
     },
 };
@@ -39,8 +39,47 @@ struct Origin {
     available: AtomicBool,
     corrupt: AtomicBool,
     reject_candidate: AtomicBool,
+    advance_object: AtomicBool,
+    advance_check_at: AtomicUsize,
+    checks: AtomicUsize,
 }
 impl Origin {
+    fn publish_filters(&self, height: u32) {
+        use zakura_pir_query_server::receiver::blocks::{BlockFilter, BlockId, MAX_BLOCKS};
+        let current = self.authority.lock().unwrap().current().clone();
+        let reference = &current.publication.unwrap().inventory;
+        let mut inventory: Inventory =
+            serde_json::from_slice(&self.objects.lock().unwrap()[&reference.sha256]).unwrap();
+        let filter = BlockFilter::build(
+            &[1; 32],
+            BlockId {
+                height,
+                hash: [3; 32],
+            },
+            [2; 32],
+            [&common::receiver()],
+        )
+        .unwrap();
+        let window = receiver_pir_server::blocks::BlockWindow::new(
+            [1; 32],
+            inventory.history_revision,
+            vec![filter],
+        )
+        .unwrap();
+        let batch = window
+            .batch(inventory.history_revision, height, MAX_BLOCKS)
+            .unwrap();
+        inventory.filters = Some(distribution::Filters {
+            head: window.head().clone(),
+            batches: vec![self.store(&batch)],
+        });
+        let object = self.store(&serde_json::to_vec(&inventory).unwrap());
+        self.authority
+            .lock()
+            .unwrap()
+            .apply(AuthorityTransition::Publish(inventory.reference(object)))
+            .unwrap();
+    }
     fn store(&self, bytes: &[u8]) -> ObjectReference {
         let object = ObjectReference::for_bytes(bytes);
         self.objects
@@ -120,6 +159,9 @@ async fn origin(root: &std::path::Path) -> (Arc<Origin>, tls::Tls, tokio::task::
         available: AtomicBool::new(true),
         corrupt: AtomicBool::new(false),
         reject_candidate: AtomicBool::new(false),
+        advance_object: AtomicBool::new(false),
+        advance_check_at: AtomicUsize::new(usize::MAX),
+        checks: AtomicUsize::new(0),
     });
     origin.publish(0, 1);
     let current = origin.clone();
@@ -148,6 +190,9 @@ async fn origin(root: &std::path::Path) -> (Arc<Origin>, tls::Tls, tokio::task::
                 let s = objects.clone();
                 async move {
                     let mut bytes = s.objects.lock().unwrap().get(&id).cloned().unwrap();
+                    if bytes.len() > (1 << 20) && s.advance_object.swap(false, Ordering::SeqCst) {
+                        s.publish_filters(102);
+                    }
                     if s.corrupt.load(Ordering::SeqCst) {
                         bytes[0] ^= 1;
                     }
@@ -160,6 +205,12 @@ async fn origin(root: &std::path::Path) -> (Arc<Origin>, tls::Tls, tokio::task::
             post(move |Json(request): Json<AuthorityCheckRequest<Subject>>| {
                 let s = check.clone();
                 async move {
+                    let check = s.checks.fetch_add(1, Ordering::SeqCst) + 1;
+                    if check == s.advance_check_at.load(Ordering::SeqCst) {
+                        s.publish_filters(103);
+                    }
+                    assert!(request.subjects.len() <= 256);
+                    assert!(request.subjects.iter().map(Vec::len).sum::<usize>() <= 4096);
                     let authority = s.authority.lock().unwrap();
                     if request.admit(authority.current()).is_err() {
                         return StatusCode::CONFLICT.into_response();
@@ -428,4 +479,91 @@ fn configuration_is_offline_and_refuses_node_credentials() {
     config.validate().unwrap();
     value["rpc_url"] = serde_json::json!("http://node");
     assert!(serde_json::from_value::<Config>(value).is_err());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn filter_successors_reuse_loaded_directory_across_authority_conflicts() {
+    let root = tempfile::tempdir().unwrap();
+    let (origin, tls, server) = origin(root.path()).await;
+    let config = config(root.path(), &tls);
+    let publications = Publications::default();
+    let mut lifecycle = sync::synchronization(&config, publications.clone()).unwrap();
+    origin.advance_object.store(true, Ordering::SeqCst);
+    origin.advance_check_at.store(1, Ordering::SeqCst);
+    let _ = lifecycle.synchronize().await;
+    assert!(publications.current_anchor().is_none());
+    assert_eq!(lifecycle.adapter().directory_loads(), 1);
+    lifecycle.synchronize().await.unwrap();
+    assert!(publications.current_anchor().is_some());
+    assert_eq!(
+        lifecycle.adapter().directory_loads(),
+        1,
+        "filter-only successors reuse the verified directory"
+    );
+    assert_eq!(publications.filter_window().unwrap().head().tip.height, 103);
+    // Prepare a changed directory, then interrupt its final authorization.
+    origin.publish(0, 2);
+    origin
+        .advance_check_at
+        .store(origin.checks.load(Ordering::SeqCst) + 2, Ordering::SeqCst);
+    let _ = lifecycle.synchronize().await;
+    assert_eq!(lifecycle.adapter().directory_loads(), 2);
+    // A correction cannot inherit that pending directory's prepared work.
+    origin.publish(1, 3);
+    lifecycle.synchronize().await.unwrap();
+    assert_eq!(lifecycle.adapter().directory_loads(), 3);
+    assert_eq!(publications.history_revision(), 1);
+    server.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn large_proofs_are_batched_and_negative_chunks_refute_only_their_view() {
+    use pir_publication::ViewIdentity;
+    let root = tempfile::tempdir().unwrap();
+    let (origin, tls, server) = origin(root.path()).await;
+    let config = config(root.path(), &tls);
+    let publications = Publications::default();
+    let mut lifecycle = sync::synchronization(&config, publications).unwrap();
+    lifecycle.synchronize().await.unwrap();
+    let healthy = ViewIdentity([11; 32]);
+    let rejected = ViewIdentity([12; 32]);
+    let proofs = vec![
+        (
+            healthy,
+            (0..1024).map(|height| (height, [255; 32])).collect(),
+        ),
+        (
+            rejected,
+            (0..4200)
+                .map(|height| (height, if height == 4199 { [4; 32] } else { [255; 32] }))
+                .collect(),
+        ),
+    ];
+    lifecycle
+        .check_serving_proofs(vec![proofs[0].clone()])
+        .await
+        .unwrap();
+    // An authority change after a positive batch must defer the whole proof.
+    origin
+        .advance_check_at
+        .store(origin.checks.load(Ordering::SeqCst) + 2, Ordering::SeqCst);
+    assert!(lifecycle
+        .check_serving_proofs(proofs.clone())
+        .await
+        .is_err());
+    assert!(!lifecycle.view_was_invalidated(healthy));
+    origin.reject_candidate.store(true, Ordering::SeqCst);
+    lifecycle.check_serving_proofs(proofs).await.unwrap();
+    assert!(!lifecycle.view_was_invalidated(healthy));
+    assert!(lifecycle.view_was_invalidated(rejected));
+    // More retained views than the publisher permits in a single request.
+    let retained = (0..300u32)
+        .map(|number| {
+            let mut id = [13; 32];
+            id[..4].copy_from_slice(&number.to_le_bytes());
+            (ViewIdentity(id), vec![(number, [255; 32])])
+        })
+        .collect();
+    lifecycle.check_serving_proofs(retained).await.unwrap();
+    server.abort();
 }

@@ -109,7 +109,14 @@ pub(super) fn load(
             )?)
         })
         .transpose()?;
-    let filters = inventory
+    Ok((directory, load_filters(inventory, cache)?))
+}
+
+pub(super) fn load_filters(
+    inventory: &Inventory,
+    cache: &ObjectCache,
+) -> crate::Result<Option<BlockWindow>> {
+    inventory
         .filters
         .as_ref()
         .map(|filters| -> crate::Result<BlockWindow> {
@@ -139,6 +146,5 @@ pub(super) fn load(
             }
             Ok(window)
         })
-        .transpose()?;
-    Ok((directory, filters))
+        .transpose()
 }
