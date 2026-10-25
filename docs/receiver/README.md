@@ -358,6 +358,10 @@ canonical answer invalidates those answers, including work already in flight.
 
 ### Root-binary qualification
 
+Run these filesystem-fault campaigns as an unprivileged user. They verify that
+directory writes are actually denied before starting the publisher and reject
+execution contexts that bypass that protection.
+
 The existing unified HTTPS campaign also covers Receiver:
 
 ```sh

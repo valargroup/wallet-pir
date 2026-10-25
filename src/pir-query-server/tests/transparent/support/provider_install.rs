@@ -959,6 +959,12 @@ async fn shared_listener(
         true => Some(super::display_publisher::DisplayPublisher::start().await),
         false => None,
     };
+    // Complete Receiver's independent preparation before dating Status.
+    #[cfg(feature = "receiver-tests")]
+    let receiver = match enhance.is_some() {
+        true => Some(super::receiver_publisher::Receiver::start().await),
+        false => None,
+    };
     let publisher = StatusPublisher::start().await;
     let display_listen = free_address();
     let public = free_address();
@@ -988,11 +994,6 @@ async fn shared_listener(
     if let Some(enhance) = &enhance {
         document["enhance"] = enhance.section(root);
     }
-    #[cfg(feature = "receiver-tests")]
-    let receiver = match enhance.is_some() {
-        true => Some(super::receiver_publisher::Receiver::start().await),
-        false => None,
-    };
     #[cfg(feature = "receiver-tests")]
     if let Some(receiver) = &receiver {
         document["receiver"] = receiver.section(root);
@@ -1049,6 +1050,7 @@ async fn shared_listener(
     }
     // Status: the independent wallet accepts the served anchor and decrypts
     // every fixture case from the combined role through the same listener.
+    publisher.refresh(&public_origin).await;
     status_wallet(&public_origin, &publisher.snapshot, &log).await;
     let http = reqwest::Client::new();
     for prefix in ["/v1/status", "/status/v1"] {
@@ -1108,6 +1110,7 @@ async fn shared_listener(
                 .status(),
             503
         );
+        publisher.refresh(&public_origin).await;
         status_wallet(&public_origin, &publisher.snapshot, &log).await;
         row_query(&public_origin, set, 0).await;
         if let Some(display) = &display {
@@ -1145,7 +1148,7 @@ async fn shared_listener(
         );
         // This longer campaign can outlive the fixture's Status observation.
         // Reobserve that chain, retaining the normal production freshness gate.
-        publisher.reobserve();
+        publisher.refresh(&public_origin).await;
         tokio::time::timeout(std::time::Duration::from_secs(60), async {
             loop {
                 if reqwest::get(format!("http://{management}/ready"))

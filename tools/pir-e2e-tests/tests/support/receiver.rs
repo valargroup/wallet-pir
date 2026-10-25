@@ -74,6 +74,27 @@ pub struct Receiver {
     config: PathBuf,
     pub management: String,
 }
+/// Verify the fault mechanism itself before starting any publisher process.
+/// Privileged processes can bypass mode bits; those runs must fail explicitly.
+fn require_write_denial(directory: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o500)).unwrap();
+    let probe = directory.join("qualification-write-probe");
+    let result = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe);
+    let denied =
+        matches!(&result, Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied);
+    if let Ok(file) = result {
+        drop(file);
+        std::fs::remove_file(&probe).unwrap();
+    }
+    if !denied {
+        std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    assert!(denied, "Receiver fault qualification requires an unprivileged process whose filesystem denies directory writes");
+}
 impl Receiver {
     pub async fn start() -> Self {
         let scratch = tempfile::tempdir().unwrap();
@@ -88,6 +109,13 @@ impl Receiver {
             }
             None => (scratch.path().to_owned(), Some(scratch)),
         };
+        let permission_check = root.join("permission-check");
+        std::fs::create_dir(&permission_check).unwrap();
+        require_write_denial(&permission_check);
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&permission_check, std::fs::Permissions::from_mode(0o700))
+            .unwrap();
+        std::fs::remove_dir(&permission_check).unwrap();
         let first = RefundBlock::new(activation());
         let second = first
             .clone()
@@ -228,10 +256,8 @@ impl Receiver {
     pub fn block_preparation(&self, blocked: bool) {
         let tables = self.root.as_path().join("state/tables");
         if blocked {
-            // Existing table files keep their paths. Denying directory creation
-            // for each new output uses filesystem permissions, not a service hook.
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&tables, std::fs::Permissions::from_mode(0o500)).unwrap();
+            // Existing table files keep their paths and remain readable.
+            require_write_denial(&tables);
         } else {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&tables, std::fs::Permissions::from_mode(0o700)).unwrap();

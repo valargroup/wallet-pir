@@ -33,7 +33,7 @@ pub struct StatusPublisher {
     pub snapshot: status_shared::index::Snapshot,
     _tls: tls::Tls,
     server: tokio::task::JoinHandle<()>,
-    renew: Arc<dyn Fn() + Send + Sync>,
+    renew: Arc<dyn Fn() -> u64 + Send + Sync>,
 }
 
 impl Drop for StatusPublisher {
@@ -44,8 +44,34 @@ impl Drop for StatusPublisher {
 
 impl StatusPublisher {
     /// Reobserve the unchanged fixture chain through a new bound metadata object.
-    pub fn reobserve(&self) {
-        (self.renew)();
+    pub fn reobserve(&self) -> u64 {
+        (self.renew)()
+    }
+    /// Wait for this exact renewed observation on the wallet listener. Aggregate
+    /// readiness can remain false because another product is deliberately fenced.
+    pub async fn refresh(&self, origin: &str) {
+        let observed = self.reobserve();
+        let http = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(2))
+            .build()
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(20), async {
+            loop {
+                match http.get(format!("{origin}/status/v1/init")).send().await {
+                    Ok(response) if response.status().is_success() => {
+                        let manifest: status_shared::protocol::Manifest =
+                            response.json().await.unwrap();
+                        if manifest.observed_ms == observed {
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .expect("Status host did not adopt its refreshed observation");
     }
 
     /// Publish the fixture snapshot as generation 4 at recovery epoch 2.
@@ -87,6 +113,7 @@ impl StatusPublisher {
                 sequence: current.sequence + 1,
                 ..fixture::publishing(&refreshed, &object)
             };
+            refreshed.manifest.observed_ms
         });
         let (envelope, authority) = (current.clone(), current);
         let app = Router::new()
