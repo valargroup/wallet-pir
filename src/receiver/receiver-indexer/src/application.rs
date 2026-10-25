@@ -6,7 +6,7 @@ use crate::{
     verify,
 };
 use pir_pipeline::{FailurePolicy, Input};
-#[cfg(test)]
+#[cfg(all(test, feature = "qualification-tests"))]
 use receiver_pir_server::publication::DEFAULT_RETENTION;
 use receiver_pir_server::{publication::Segment, tables::FilterSource, Publication, Publications};
 use receiver_store::{Checkpoint, Config as StoreConfig, Error, PayoutStore, SealedShard, Store};
@@ -1255,8 +1255,11 @@ mod tests {
         rpc: NodeClient,
         /// The node `rpc` serves, its block headers dated [`NOW`] at first.
         node: Node,
+        #[cfg(feature = "qualification-tests")]
         publications: Publications,
+        #[cfg(feature = "qualification-tests")]
         origin: String,
+        #[cfg(feature = "qualification-tests")]
         state: State,
     }
 
@@ -1325,23 +1328,33 @@ mod tests {
                 shard_rows: zakura_pir_publisher::receiver::session::MIN_ROWS,
                 shard_target: None,
             };
-            let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let origin = format!("http://{}", socket.local_addr().unwrap());
-            let app = crate::router::router_with_publications(publications.clone());
-            tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
+            #[cfg(feature = "qualification-tests")]
+            let origin = {
+                let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                let origin = format!("http://{}", socket.local_addr().unwrap());
+                let app = crate::router::router_with_publications(publications.clone());
+                tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
+                origin
+            };
+            #[cfg(not(feature = "qualification-tests"))]
+            drop(publications);
             Self {
                 dir,
                 args,
                 rpc,
                 node,
+                #[cfg(feature = "qualification-tests")]
                 publications,
+                #[cfg(feature = "qualification-tests")]
                 origin,
+                #[cfg(feature = "qualification-tests")]
                 state: State::default(),
             }
         }
 
         /// Restarts the service as a new process would: fresh serving state, table cache
         /// and listener, with the same budget, over the same data directory and node.
+        #[cfg(feature = "qualification-tests")]
         async fn restart(&mut self) {
             self.publications =
                 Publications::new(DEFAULT_RETENTION, self.publications.tables().budget());
@@ -1353,6 +1366,7 @@ mod tests {
         }
 
         /// Refreshes, as the serving loop does.
+        #[cfg(feature = "qualification-tests")]
         async fn refresh(&mut self) -> Result<()> {
             refresh(
                 &self.args,
@@ -1405,12 +1419,14 @@ mod tests {
     }
 
     /// A reqwest transport for the library client that counts encrypted queries.
+    #[cfg(feature = "qualification-tests")]
     #[derive(Clone, Default)]
     struct Wallet {
         http: reqwest::Client,
         queries: Arc<std::sync::atomic::AtomicUsize>,
     }
 
+    #[cfg(feature = "qualification-tests")]
     impl zakura_pir_client::receiver::transport::Transport for Wallet {
         async fn get(
             &self,
@@ -1432,6 +1448,7 @@ mod tests {
     }
 
     /// One response within `limit`, 410 as a revision change.
+    #[cfg(feature = "qualification-tests")]
     async fn wallet_read(
         request: reqwest::RequestBuilder,
         limit: usize,
@@ -1505,6 +1522,7 @@ mod tests {
 
         /// Captures the served inventory at the store's tip as a wallet does, with the
         /// count of encrypted queries the client then sends.
+        #[cfg(feature = "qualification-tests")]
         async fn capture(
             &self,
             filters: bool,
@@ -1536,6 +1554,7 @@ mod tests {
 
     /// Every record of `receiver` in the captured inventory, with the shard and segment
     /// holding it, skipping sealed shards whose filter excludes it as a wallet may.
+    #[cfg(feature = "qualification-tests")]
     async fn lookup(
         client: &zakura_pir_client::receiver::transport::InventoryClient<Wallet>,
         receiver: [u8; 43],
@@ -1569,6 +1588,7 @@ mod tests {
     struct Written {
         payments: zakura_pir_publisher::receiver::snapshot::Manifest,
         rows: Vec<u8>,
+        #[cfg(feature = "qualification-tests")]
         witnesses: zakura_pir_publisher::receiver::witness::Manifest,
         payloads: Vec<u8>,
     }
@@ -1656,6 +1676,7 @@ mod tests {
                         Written {
                             payments: serde_json::from_slice(&read(format!("{p}.json"))).unwrap(),
                             rows: read(format!("{p}.rows")),
+                            #[cfg(feature = "qualification-tests")]
                             witnesses: serde_json::from_slice(&read(format!("{w}.witness.json")))
                                 .unwrap(),
                             payloads: read(format!("{w}.witness")),
@@ -1854,6 +1875,7 @@ mod tests {
     /// the data directory when evicted, and a restart prepares none of them again. A
     /// sealed shard and the recent tier are four tables against a budget of two, the
     /// most one lookup needs at once.
+    #[cfg(feature = "qualification-tests")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn sealed_tables_beyond_the_budget_load_on_demand() {
         use super::common::receiver;
@@ -2028,6 +2050,7 @@ mod tests {
     /// prepared: every table and filter it lists reloads from the staged files. Staged
     /// serving keeps its prepared tables within the budget: a sealed shard and the recent
     /// tier are four tables against a budget of two.
+    #[cfg(feature = "qualification-tests")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_staged_check_keeps_no_prepared_segment() {
         use crate::serve_publication::{load, PublicationRecord};
@@ -2345,6 +2368,7 @@ mod tests {
 
     /// The first sealed shard's payment table revision and companion manifest in
     /// `shards`, as a one-shot pass wrote them.
+    #[cfg(feature = "qualification-tests")]
     fn first_written(
         shards: &[Vec<Written>],
     ) -> ([u8; 32], zakura_pir_publisher::receiver::witness::Manifest) {
@@ -2359,6 +2383,7 @@ mod tests {
     /// companion follows the tip, a completed one freezes, and replacing either
     /// block rebuilds its witness without changing the payment table. Each payload
     /// is checked against an independent rebuild from the stored commitments.
+    #[cfg(feature = "qualification-tests")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn written_companions_follow_reorgs_before_and_after_finality() {
         let one = super::common::receiver();
