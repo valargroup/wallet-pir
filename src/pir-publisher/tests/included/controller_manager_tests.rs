@@ -2000,7 +2000,7 @@ async fn http_consumers_answer_from_successive_stored_publications() {
         recent_geometry: "decoupled-2k-8k".into(),
         archive_geometry: "decoupled-32k-32k".into(),
         rpc_url: rpc_origin,
-        rpc_cookie: Some(cookie),
+        rpc_cookie: cookie,
         listen: "127.0.0.1:0".parse().unwrap(),
         source_sha: "fixture".into(),
         directory_choice: publication::DirectoryChoice::Off,

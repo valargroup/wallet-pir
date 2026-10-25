@@ -2219,7 +2219,7 @@ impl Startup {
             recent_geometry: "decoupled-2k-8k".into(),
             archive_geometry: "decoupled-32k-32k".into(),
             rpc_url: rpc.url.clone(),
-            rpc_cookie: Some(root.path().join("node-cookie")),
+            rpc_cookie: root.path().join("node-cookie"),
             listen: "127.0.0.1:0".parse().unwrap(),
             source_sha: "fixture".into(),
             directory_choice: publication::DirectoryChoice::Off,
