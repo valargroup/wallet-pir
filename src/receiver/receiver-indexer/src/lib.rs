@@ -6,6 +6,7 @@
 pub mod application;
 pub mod blocks;
 pub mod canonical;
+pub mod distribution;
 pub mod durable;
 pub mod managed;
 pub mod near;

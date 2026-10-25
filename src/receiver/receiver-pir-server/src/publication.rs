@@ -283,6 +283,7 @@ pub const DEFAULT_TABLE_BUDGET: usize = 4 << 30;
 pub const MAX_RETAINED: usize = 16;
 
 struct State {
+    withdrawal: Option<Arc<dyn Fn() + Send + Sync>>,
     tables: Arc<Tables>,
     epoch: u64,
     history_revision: u64,
@@ -341,6 +342,9 @@ impl State {
 
     /// See [`Publications::revoke`].
     fn revoke(&mut self) {
+        if let Some(withdrawal) = &self.withdrawal {
+            withdrawal();
+        }
         self.epoch = self.epoch.checked_add(1).expect("recovery epoch exhausted");
         let current = self.current.take();
         let retained = std::mem::take(&mut self.retained);
@@ -384,6 +388,7 @@ impl Publications {
     /// `budget` bytes of prepared tables resident; see [`Tables`].
     pub fn new(retention: Duration, budget: usize) -> Self {
         Self(Arc::new(RwLock::new(State {
+            withdrawal: None,
             tables: Arc::new(Tables::new(budget)),
             epoch: 0,
             history_revision: 0,
@@ -398,6 +403,19 @@ impl Publications {
     /// The prepared table cache every inventory's sessions are served from.
     pub fn tables(&self) -> Arc<Tables> {
         self.0.read().unwrap().tables.clone()
+    }
+
+    /// Publisher-owned durable withdrawal, executed under the same guard that
+    /// fences local answers. The callback must never reenter this owner.
+    pub fn on_withdrawal(&self, callback: Arc<dyn Fn() + Send + Sync>) {
+        self.0.write().unwrap().withdrawal = Some(callback);
+    }
+
+    /// Commit external authority only while the captured preparation epoch is
+    /// still current. Revocation cannot interleave with the guarded operation.
+    pub fn in_epoch<T>(&self, expected: u64, commit: impl FnOnce() -> T) -> Option<T> {
+        let state = self.0.read().unwrap();
+        (state.epoch == expected).then(commit)
     }
 
     /// Every table session ID and shard filter digest that a live inventory names, or

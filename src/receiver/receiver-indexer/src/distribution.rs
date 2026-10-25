@@ -1,0 +1,619 @@
+//! Publisher-only HTTPS distribution, with durable shared authority.
+use axum::{
+    body::Body,
+    extract::{Path, State},
+    http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
+    routing::{get, post},
+    Json, Router,
+};
+use pir_publication::{
+    AuthorityCheckRequest, AuthorityCheckResponse, AuthorityTransition, PublicationAuthority,
+    PublishedObjectStore, SubjectAnswer,
+};
+use receiver_pir_server::{distribution::*, Publications};
+use std::{
+    collections::HashMap,
+    path::{Path as FilePath, PathBuf},
+    sync::{Arc, Mutex},
+};
+use zakura_server_chain::{Network, NodeClient};
+
+#[cfg(test)]
+#[path = "../../receiver-store/tests/common/mod.rs"]
+mod common;
+#[cfg(test)]
+#[path = "../../../pir-query-server/tests/support/status_tls.rs"]
+mod tls;
+
+#[derive(Clone)]
+pub struct Distribution {
+    authority: Arc<Mutex<PublicationAuthority<Descriptor>>>,
+    objects: Arc<PublishedObjectStore>,
+    rpc: NodeClient,
+    data_dir: PathBuf,
+    retention_ms: u64,
+    exported: Arc<Mutex<HashMap<PathBuf, Exported>>>,
+}
+struct Exported {
+    source: pir_publication::FileIdentity,
+    object: pir_publication::FileIdentity,
+    reference: pir_publication::ObjectReference,
+    reusable: bool,
+}
+impl Distribution {
+    /// Start in a new, withdrawn recovery epoch before exporting any material.
+    pub fn open(data_dir: PathBuf, rpc: NodeClient, retention_seconds: u64) -> Result<Self, Error> {
+        let root = data_dir.join("distribution");
+        std::fs::create_dir_all(&root)?;
+        Ok(Self {
+            authority: Arc::new(Mutex::new(PublicationAuthority::open(
+                root.join("authority.json"),
+                scope(
+                    Network::Mainnet.genesis_hash(),
+                    crate::blocks::ironwood_activation(),
+                ),
+            )?)),
+            objects: Arc::new(PublishedObjectStore::open(root.join("objects"))?),
+            rpc,
+            data_dir,
+            retention_ms: retention_seconds
+                .checked_mul(1000)
+                .ok_or("Receiver retention overflow")?,
+            exported: Arc::default(),
+        })
+    }
+    pub fn router(&self) -> Router {
+        Router::new()
+            .route("/current", get(current))
+            .route("/objects/:id", get(object))
+            .route("/authority/check", post(authority_check))
+            .with_state(self.clone())
+    }
+    /// Publish a negative envelope even if subsequent replacement work fails.
+    pub fn withdraw(&self) -> Result<(), Error> {
+        let mut authority = self.authority.lock().unwrap();
+        // A failed write leaves current ineligible; another withdrawal retries
+        // recovery, rather than silently considering that negative durable.
+        authority.apply(AuthorityTransition::Withdraw)?;
+        Ok(())
+    }
+    pub fn attach(&self, publications: &Publications) {
+        let distribution = self.clone();
+        publications.on_withdrawal(Arc::new(move || {
+            if let Err(error) = distribution.withdraw() {
+                tracing::error!(%error, "Receiver authority withdrawal is not durable");
+            }
+        }));
+    }
+    /// Export a pinned directory and independently advancing rolling hints.
+    /// Objects never authorize themselves; the epoch guard protects final commit.
+    pub async fn export<E: pir_pipeline::publisher::PublisherExecutor>(
+        &self,
+        publications: &Publications,
+        executor: &E,
+    ) -> Result<(), Error> {
+        let epoch = publications.epoch();
+        let directory = publications.live().first().cloned();
+        let filters = publications.filter_window();
+        if directory.is_none() && filters.is_none() {
+            return Ok(());
+        }
+        let revision = publications.history_revision();
+        let descriptor = Descriptor {
+            history_revision: revision,
+            directory: directory.as_ref().map(|d| d.id()),
+            filters: filters.as_ref().map(|f| f.head().clone()),
+        };
+        {
+            let authority = self.authority.lock().unwrap();
+            if authority.current().eligible
+                && authority
+                    .current()
+                    .publication
+                    .as_ref()
+                    .is_some_and(|p| p.descriptor == descriptor)
+            {
+                return Ok(());
+            }
+        }
+        executor
+            .publish(Export {
+                distribution: self.clone(),
+                publications: publications.clone(),
+                epoch,
+                directory,
+                filters,
+                revision,
+            })
+            .await
+    }
+    fn file(&self, path: &FilePath) -> Result<pir_publication::ObjectReference, Error> {
+        let file = pir_publication::open_object_file(path, None)?;
+        let started = std::time::SystemTime::now();
+        let source = pir_publication::FileIdentity::capture(path, &file)?;
+        let mut cache = self.exported.lock().unwrap();
+        if let Some(prior) = cache
+            .get(path)
+            .filter(|prior| prior.reusable && prior.source == source)
+        {
+            let object_path = self
+                .data_dir
+                .join("distribution/objects")
+                .join(&prior.reference.sha256);
+            if let Ok(object) = pir_publication::open_object_file(&object_path, None) {
+                if prior.object.check(&object_path, &object).is_ok() {
+                    source.check(path, &file)?;
+                    return Ok(prior.reference.clone());
+                }
+            }
+        }
+        let reference = self.objects.store_stream(&file)?;
+        source.check(path, &file)?;
+        let object_path = self
+            .data_dir
+            .join("distribution/objects")
+            .join(&reference.sha256);
+        let object_file = pir_publication::open_object_file(&object_path, None)?;
+        let object = pir_publication::FileIdentity::capture(&object_path, &object_file)?;
+        cache.insert(
+            path.into(),
+            Exported {
+                source,
+                object,
+                reference: reference.clone(),
+                reusable: source.settled_before(started) && object.settled_before(started),
+            },
+        );
+        Ok(reference)
+    }
+    fn material(
+        &self,
+        directory: Option<Arc<receiver_pir_server::Publication>>,
+        filters: Option<Arc<receiver_pir_server::blocks::BlockWindow>>,
+        revision: u64,
+    ) -> Result<Inventory, Error> {
+        let root = self.data_dir.join(crate::durable::TABLES_DIR);
+        let directory = directory
+            .map(|publication| -> Result<Directory, Error> {
+                let mut segments = Vec::new();
+                for segment in publication.segments() {
+                    let named = segment.publication();
+                    let p = format!("p-{}", hex::encode(named.payments.directory.revision()?));
+                    let w = format!("w-{}", hex::encode(named.witnesses.table.revision()?));
+                    segments.push(Segment {
+                        publication: named,
+                        payments: self.file(&root.join(format!("{p}.rows")))?,
+                        payment_public: self.file(&root.join(format!("{p}.public")))?,
+                        witnesses: self.file(&root.join(format!("{w}.rows")))?,
+                        witness_public: self.file(&root.join(format!("{w}.public")))?,
+                    });
+                }
+                let filters = publication
+                    .inventory()
+                    .shards()
+                    .iter()
+                    .filter_map(|s| s.filter.as_ref())
+                    .map(|filter| {
+                        self.file(&root.join(format!("f-{}.filter", hex::encode(filter.digest))))
+                    })
+                    .collect::<Result<_, _>>()?;
+                Ok(Directory {
+                    head: publication.head().clone(),
+                    shards: publication.inventory().shards().to_vec(),
+                    segments,
+                    filters,
+                })
+            })
+            .transpose()?;
+        let filters = filters
+            .map(|window| -> Result<Filters, Error> {
+                let head = window.head().clone();
+                let mut from = head.first;
+                let mut batches = Vec::new();
+                while from <= head.tip.height {
+                    let bytes = window
+                        .batch(
+                            head.revision,
+                            from,
+                            zakura_pir_query_server::receiver::blocks::MAX_BLOCKS,
+                        )
+                        .map_err(|_| "Receiver filter batch failed")?;
+                    let decoded = zakura_pir_query_server::receiver::blocks::Batch::decode(&bytes)?;
+                    from = from
+                        .checked_add(u32::try_from(decoded.filters().len())?)
+                        .ok_or("Receiver filter range overflow")?;
+                    batches.push(self.objects.store(&bytes)?);
+                }
+                Ok(Filters { head, batches })
+            })
+            .transpose()?;
+        Ok(Inventory {
+            genesis: Network::Mainnet.genesis_hash(),
+            history_revision: revision,
+            directory,
+            filters,
+        })
+    }
+}
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .try_into()
+        .unwrap_or(u64::MAX)
+}
+async fn current(State(s): State<Distribution>, headers: HeaderMap) -> Response {
+    let envelope = s.authority.lock().unwrap().current().clone();
+    let token = pir_publication::conditional_token(&envelope);
+    let mut response = if headers.get("if-none-match").and_then(|v| v.to_str().ok()) == Some(&token)
+    {
+        StatusCode::NOT_MODIFIED.into_response()
+    } else {
+        Json(envelope).into_response()
+    };
+    response
+        .headers_mut()
+        .insert("etag", token.parse().unwrap());
+    response
+        .headers_mut()
+        .insert("cache-control", "no-store".parse().unwrap());
+    response
+}
+async fn object(
+    State(s): State<Distribution>,
+    Path(id): Path<String>,
+) -> Result<Response, StatusCode> {
+    let file = s
+        .objects
+        .open_retained(&id)
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    Ok(Body::from_stream(tokio_util::io::ReaderStream::new(
+        tokio::fs::File::from_std(file),
+    ))
+    .into_response())
+}
+async fn authority_check(
+    State(s): State<Distribution>,
+    Json(request): Json<AuthorityCheckRequest<Subject>>,
+) -> Result<Json<AuthorityCheckResponse<Subject>>, StatusCode> {
+    let admit = || {
+        request
+            .admit(s.authority.lock().unwrap().current())
+            .map_err(|refusal| match refusal {
+                pir_publication::AuthorityCheckRefusal::MalformedRequest => StatusCode::BAD_REQUEST,
+                pir_publication::AuthorityCheckRefusal::AuthorityAdvanced => StatusCode::CONFLICT,
+            })
+    };
+    admit()?;
+    s.rpc
+        .check_network(Network::Mainnet.genesis_hash())
+        .await
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    let mut answers = Vec::new();
+    for subject in &request.subjects {
+        if subject.is_empty() || subject.len() > METADATA_LIMIT as usize / 36 {
+            return Err(StatusCode::BAD_REQUEST);
+        }
+        let mut canonical = true;
+        for &(height, expected) in subject {
+            canonical &= s
+                .rpc
+                .block_hash(u64::from(height))
+                .await
+                .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
+                == expected;
+        }
+        answers.push(SubjectAnswer {
+            subject: subject.clone(),
+            still_authoritative: canonical,
+        });
+    }
+    admit()?;
+    Ok(Json(AuthorityCheckResponse {
+        authority: request.authority,
+        answers,
+    }))
+}
+
+struct Export {
+    distribution: Distribution,
+    publications: Publications,
+    epoch: u64,
+    directory: Option<Arc<receiver_pir_server::Publication>>,
+    filters: Option<Arc<receiver_pir_server::blocks::BlockWindow>>,
+    revision: u64,
+}
+struct Candidate {
+    inventory: Inventory,
+    reference: pir_publication::PublicationReference<Descriptor>,
+    objects: Vec<pir_publication::ObjectReference>,
+}
+impl pir_pipeline::publisher::Publication for Export {
+    type Error = Error;
+    type Material = Inventory;
+    type Stored = Inventory;
+    type Verified = Inventory;
+    type Candidate = Candidate;
+    type Report = ();
+    fn check(&self) -> Result<(), Error> {
+        if self.publications.epoch() != self.epoch {
+            return Err("Receiver export invalidated during preparation".into());
+        }
+        Ok(())
+    }
+    async fn build(&mut self) -> Result<Inventory, Error> {
+        let this = self.distribution.clone();
+        let directory = self.directory.clone();
+        let filters = self.filters.clone();
+        let revision = self.revision;
+        tokio::task::spawn_blocking(move || this.material(directory, filters, revision)).await?
+    }
+    async fn store(&mut self, inventory: Inventory) -> Result<Inventory, Error> {
+        Ok(inventory)
+    }
+    async fn verify(&mut self, inventory: Inventory) -> Result<Inventory, Error> {
+        inventory.validate(crate::blocks::ironwood_activation())?;
+        Ok(inventory)
+    }
+    async fn assemble(&mut self, inventory: Inventory) -> Result<Candidate, Error> {
+        let bytes = serde_json::to_vec(&inventory)?;
+        if bytes.len() as u64 > METADATA_LIMIT {
+            return Err("Receiver distribution metadata exceeds its bound".into());
+        }
+        let object = self.distribution.objects.store(&bytes)?;
+        let reference = inventory.reference(object.clone());
+        let mut objects = inventory.objects();
+        objects.push(object);
+        Ok(Candidate {
+            inventory,
+            reference,
+            objects,
+        })
+    }
+    async fn recheck(&mut self, candidate: &mut Candidate) -> Result<(), Error> {
+        self.distribution
+            .rpc
+            .check_network(candidate.inventory.genesis)
+            .await?;
+        for (height, expected) in candidate.inventory.anchors() {
+            if self.distribution.rpc.block_hash(u64::from(height)).await? != expected {
+                self.publications.revoke();
+                return Err("Receiver export anchor changed".into());
+            }
+        }
+        Ok(())
+    }
+    async fn commit(self, candidate: Candidate) -> Result<(), Error> {
+        self.publications
+            .in_epoch(self.epoch, || -> Result<(), Error> {
+                let mut authority = self.distribution.authority.lock().unwrap();
+                let now = now_ms();
+                self.distribution.objects.retain_publication(
+                    candidate.objects,
+                    now.saturating_add(self.distribution.retention_ms),
+                    now,
+                )?;
+                authority.apply(AuthorityTransition::Publish(candidate.reference))?;
+                self.distribution
+                    .exported
+                    .lock()
+                    .unwrap()
+                    .retain(|_, exported| {
+                        self.distribution
+                            .objects
+                            .open_retained(&exported.reference.sha256)
+                            .is_ok()
+                    });
+                Ok(())
+            })
+            .ok_or("Receiver export invalidated during commit")?
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::routing::post;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use zakura_pir_query_server::receiver::blocks::{BlockFilter, BlockId};
+
+    #[test]
+    fn directory_objects_are_bound_to_the_prepared_session() {
+        use std::io::Write;
+        use zakura_pir_publisher::receiver::snapshot::SnapshotPublisherExt as _;
+        use zakura_pir_query_server::receiver::{session::MIN_ROWS, snapshot::Snapshot};
+        let root = tempfile::tempdir().unwrap();
+        let genesis = Network::Mainnet.genesis_hash();
+        let mut manifest = common::manifest(MIN_ROWS);
+        manifest.genesis = genesis;
+        manifest.start_height = crate::blocks::ironwood_activation();
+        manifest.end_height = manifest.start_height + 1;
+        let snapshot = Snapshot::build(manifest, &[]).unwrap();
+        let witnesses = crate::prepared::placeholder(&snapshot);
+        let mut durable = crate::durable::Durable::open(
+            root.path(),
+            Arc::new(receiver_pir_server::tables::Tables::new(4 << 30)),
+        )
+        .unwrap();
+        let segment = durable.segment(snapshot, witnesses).unwrap();
+        let rows = root.path().join(crate::durable::TABLES_DIR).join(format!(
+            "p-{}.rows",
+            hex::encode(
+                segment
+                    .payments
+                    .payment_manifest()
+                    .unwrap()
+                    .directory
+                    .revision()
+                    .unwrap()
+            )
+        ));
+        let publication = Arc::new(
+            receiver_pir_server::Publication::assemble(
+                genesis,
+                0,
+                vec![(false, vec![segment], None)],
+            )
+            .unwrap(),
+        );
+        let distribution = Distribution::open(
+            root.path().into(),
+            NodeClient::new("http://127.0.0.1:1".into(), None).unwrap(),
+            600,
+        )
+        .unwrap();
+        let inventory = distribution
+            .material(Some(publication.clone()), None, 0)
+            .unwrap();
+        inventory
+            .validate(crate::blocks::ironwood_activation())
+            .unwrap();
+        let mut invalid_setup = inventory.clone();
+        invalid_setup.directory.as_mut().unwrap().segments[0]
+            .payment_public
+            .sha256 = "00".repeat(32);
+        assert!(invalid_setup
+            .validate(crate::blocks::ironwood_activation())
+            .is_err());
+        // Damage an existing source in place: a new whole-file object digest
+        // must not be accepted under the old session's rows commitment.
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(rows)
+            .unwrap()
+            .write_all(&[1])
+            .unwrap();
+        let damaged = distribution.material(Some(publication), None, 0).unwrap();
+        assert!(damaged
+            .validate(crate::blocks::ironwood_activation())
+            .is_err());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn https_hints_reuse_objects_and_durable_withdrawals_fence_restarts() {
+        let genesis = Network::Mainnet.genesis_hash();
+        let activation = crate::blocks::ironwood_activation();
+        let fork = Arc::new(AtomicBool::new(false));
+        let node = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let rpc = NodeClient::new(format!("http://{}", node.local_addr().unwrap()), None).unwrap();
+        let changed = fork.clone();
+        let task = tokio::spawn(async move {
+            axum::serve(node, Router::new().route("/", post(move |Json(request): Json<serde_json::Value>| {
+            let changed = changed.clone(); async move {
+                assert_eq!(request["method"], "getblockhash");
+                let hash = if request["params"][0] == 0 { genesis } else if changed.load(Ordering::SeqCst) { [4;32] } else { [3;32] };
+                Json(serde_json::json!({"result":zakura_server_chain::hash::display(&hash),"error":null}))
+            }
+        }))).await.unwrap();
+        });
+        let root = tempfile::tempdir().unwrap();
+        let distribution = Distribution::open(root.path().into(), rpc.clone(), 600).unwrap();
+        let publications = Publications::default();
+        distribution.attach(&publications);
+        let filter = BlockFilter::build(
+            &genesis,
+            BlockId {
+                height: activation,
+                hash: [3; 32],
+            },
+            [0; 32],
+            &[],
+        )
+        .unwrap();
+        assert!(publications.publish_filters(
+            receiver_pir_server::blocks::BlockWindow::new(genesis, 0, vec![filter]).unwrap(),
+            0
+        ));
+        distribution
+            .export(&publications, &pir_pipeline::engine::PublisherEngine)
+            .await
+            .unwrap();
+        let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("http://{}", socket.local_addr().unwrap());
+        let router = Router::new().nest(PREFIX.trim_end_matches('/'), distribution.router());
+        let server = tokio::spawn(async move {
+            axum::serve(socket, router).await.unwrap();
+        });
+        let tls = tls::Tls::start(&origin).await;
+        let client = reqwest::Client::builder()
+            .add_root_certificate(
+                reqwest::Certificate::from_pem(&std::fs::read(&tls.certificate).unwrap()).unwrap(),
+            )
+            .build()
+            .unwrap();
+        let url = format!("{}{PREFIX}current", tls.origin);
+        let current: Current = client.get(&url).send().await.unwrap().json().await.unwrap();
+        assert!(current.eligible);
+        assert!(current
+            .publication
+            .as_ref()
+            .unwrap()
+            .descriptor
+            .directory
+            .is_none());
+        let reference = current.inventory().unwrap();
+        let bytes = client
+            .get(format!(
+                "{}{PREFIX}objects/{}",
+                tls.origin, reference.sha256
+            ))
+            .send()
+            .await
+            .unwrap()
+            .bytes()
+            .await
+            .unwrap();
+        reference.verify(&bytes).unwrap();
+        let inventory: Inventory = serde_json::from_slice(&bytes).unwrap();
+        inventory.validate(activation).unwrap();
+        assert_eq!(
+            inventory.filters.as_ref().unwrap().head.tip.height,
+            activation
+        );
+        // Unchanged observations do not rebuild objects or advance authority.
+        distribution
+            .export(&publications, &pir_pipeline::engine::PublisherEngine)
+            .await
+            .unwrap();
+        let unchanged: Current = client.get(&url).send().await.unwrap().json().await.unwrap();
+        assert_eq!(unchanged, current);
+        let request = AuthorityCheckRequest {
+            authority: current.authority().unwrap(),
+            subjects: vec![inventory.anchors()],
+        };
+        let response: AuthorityCheckResponse<Subject> = client
+            .post(format!("{}{PREFIX}authority/check", tls.origin))
+            .json(&request)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(request.verdicts(response).unwrap(), [true]);
+        fork.store(true, Ordering::SeqCst);
+        let response: AuthorityCheckResponse<Subject> = client
+            .post(format!("{}{PREFIX}authority/check", tls.origin))
+            .json(&request)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(request.verdicts(response).unwrap(), [false]);
+        publications.revoke();
+        let withdrawn: Current = client.get(&url).send().await.unwrap().json().await.unwrap();
+        assert!(!withdrawn.eligible);
+        assert!(withdrawn.fence.latest_withdrawal > current.sequence);
+        let restarted = Distribution::open(root.path().into(), rpc, 600).unwrap();
+        let reopened = restarted.authority.lock().unwrap().current().clone();
+        assert!(!reopened.eligible);
+        assert!(reopened.sequence > withdrawn.sequence);
+        assert!(reopened.fence.recovery_epoch > withdrawn.fence.recovery_epoch);
+        server.abort();
+        task.abort();
+    }
+}

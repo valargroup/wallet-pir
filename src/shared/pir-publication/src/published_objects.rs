@@ -46,8 +46,12 @@ impl PublishedObjectStore {
     /// under that name are verified rather than rewritten. Storing does not
     /// authorize serving.
     pub fn store(&self, bytes: &[u8]) -> io::Result<ObjectReference> {
+        self.store_stream(bytes)
+    }
+    /// Install a large object without buffering its entire contents.
+    pub fn store_stream(&self, input: impl io::Read) -> io::Result<ObjectReference> {
         self.installer
-            .install_stream(bytes, &|| false)
+            .install_stream(input, &|| false)
             .map(|installed| installed.reference)
             .map_err(io::Error::other)
     }

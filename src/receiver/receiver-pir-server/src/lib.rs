@@ -5,6 +5,7 @@ mod common;
 #[cfg(test)]
 extern crate self as receiver_pir_server;
 pub mod blocks;
+pub mod distribution;
 #[cfg(test)]
 #[path = "../tests/common/prepared.rs"]
 mod prepared;
