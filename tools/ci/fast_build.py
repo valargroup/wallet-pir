@@ -630,7 +630,9 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
                              or runtime_runs_alone(name, target['kind'])
                              or identity == ('pir-e2e-tests', 'ci_hint')
                              or (name == 'enhance-publisher' and 'lib' in target['kind']),
-                             heavy=not integration and memory_heavy(name, target['kind']),
+                             # A later command's new cases are a few seconds of the
+                             # same harness; only the full run holds every fixture.
+                             heavy=not integration and not repeated and memory_heavy(name, target['kind']),
                              case_count=len(names),
                              args=[arg for case in exclusions for arg in ('--skip', case)])
         if repeated:
