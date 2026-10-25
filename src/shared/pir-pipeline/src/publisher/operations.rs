@@ -107,6 +107,19 @@ pub trait PublisherExecutor: Clone + Send + Sync + 'static {
         &self,
         publication: P,
     ) -> impl Future<Output = Result<P::Report, P::Error>> + Send;
+    /// Execute one product-selected input with the same order used by service polling.
+    async fn publish_input<P: Publication>(
+        &self,
+        input: PublicationInput<P>,
+    ) -> Result<Option<P::Report>, P::Error> {
+        match input {
+            PublicationInput::NewMaterial(publication)
+            | PublicationInput::MetadataRefresh(publication) => {
+                self.publish(publication).await.map(Some)
+            }
+            PublicationInput::Unchanged | PublicationInput::Deferred => Ok(None),
+        }
+    }
     fn run<'a, P: Publisher + 'a>(
         &'a self,
         publisher: P,

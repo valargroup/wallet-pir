@@ -5,7 +5,9 @@ use crate::{
     seal::{Policy, Sealer},
     verify,
 };
-use pir_pipeline::{FailurePolicy, Input};
+mod publication;
+use publication::ReceiverPublication;
+use pir_pipeline::publisher::{PublicationInput, PublisherExecutor};
 #[cfg(all(test, feature = "qualification-tests"))]
 use receiver_pir_server::publication::DEFAULT_RETENTION;
 use receiver_pir_server::{publication::Segment, tables::FilterSource, Publication, Publications};
@@ -67,81 +69,6 @@ pub struct State {
     sealer: Option<Sealer>,
     kept: Vec<Kept>,
     durable: Option<crate::durable::Durable>,
-}
-
-/// Poll the product refresh operation, retaining its state across source or
-/// preparation failures. The caller wires the independent canonical guard and HTTP
-/// tasks, and drops this future on shutdown just as it drops either serving task.
-pub async fn run(
-    config: &Config,
-    nodes: &[NodeClient],
-    genesis: [u8; 32],
-    publications: &Publications,
-    state: &mut State,
-    poll: std::time::Duration,
-) {
-    let _ = run_until(
-        config,
-        nodes,
-        genesis,
-        publications,
-        state,
-        poll,
-        pir_pipeline::service::Shutdown::default(),
-    )
-    .await;
-}
-
-pub async fn run_until(
-    config: &Config,
-    nodes: &[NodeClient],
-    genesis: [u8; 32],
-    publications: &Publications,
-    state: &mut State,
-    poll: std::time::Duration,
-    shutdown: pir_pipeline::service::Shutdown,
-) -> Result<()> {
-    // Outer shutdown still belongs to the caller; no phase is newly cancellable.
-    pir_pipeline::supervise(
-        &mut Ingestion {
-            config,
-            nodes,
-            genesis,
-            publications,
-            state,
-        },
-        poll,
-        shutdown.cancelled(),
-    )
-    .await
-}
-
-struct Ingestion<'a> {
-    config: &'a Config,
-    nodes: &'a [NodeClient],
-    genesis: [u8; 32],
-    publications: &'a Publications,
-    state: &'a mut State,
-}
-impl pir_pipeline::Task for Ingestion<'_> {
-    type Error = Box<dyn std::error::Error + Send + Sync>;
-    async fn run(&mut self) -> Result<()> {
-        refresh(
-            self.config,
-            self.nodes,
-            self.genesis,
-            Some(self.publications),
-            self.state,
-        )
-        .await
-    }
-    fn failed(&mut self, error: &Self::Error) -> FailurePolicy {
-        warn!(%error, "ingestion or publication deferred");
-        FailurePolicy::NextPoll
-    }
-    fn finished(&mut self, elapsed: std::time::Duration) {
-        info!(elapsed_ms = elapsed.as_millis() as u64, "receiver refresh");
-    }
 }
 
 /// Brings the index to the requested end on the canonical chain of the freshest of
@@ -241,7 +168,7 @@ pub(crate) async fn publish_committed<E: pir_pipeline::publisher::PublisherExecu
         return Ok(());
     }
     let history_revision = store.history_revision()?;
-    Collected {
+    let work = Collected {
         args,
         rpc,
         store,
@@ -251,9 +178,12 @@ pub(crate) async fn publish_committed<E: pir_pipeline::publisher::PublisherExecu
         epoch: Some(epoch),
         refresh_started: std::time::Instant::now(),
         history_revision,
+    };
+    let selected = work.select(providers, state).await?;
+    match distribution {
+        Some((_, executor)) => { executor.publish_input(selected).await?; },
+        None => { pir_pipeline::engine::PublisherEngine.publish_input(selected).await?; },
     }
-    .publish(providers, state)
-    .await?;
     if let Some((distribution, executor)) = distribution {
         distribution.export(serving, executor).await?;
     }
@@ -272,32 +202,7 @@ pub async fn collect<'a>(
     genesis: [u8; 32],
     refresh_started: std::time::Instant,
 ) -> Result<Option<Collected<'a>>> {
-    let input = pir_pipeline::acquire(
-        async {
-            Ok::<_, Box<dyn std::error::Error + Send + Sync>>(
-                match collect_inner(
-                    args,
-                    rpc,
-                    node_tip,
-                    store,
-                    serving,
-                    genesis,
-                    refresh_started,
-                )
-                .await?
-                {
-                    Some(work) => Input::Work(work),
-                    None => Input::Deferred,
-                },
-            )
-        },
-        &mut (),
-    )
-    .await?;
-    Ok(match input {
-        Input::Work(work) => Some(work),
-        Input::Unchanged | Input::Deferred => None,
-    })
+    collect_inner(args, rpc, node_tip, store, serving, genesis, refresh_started).await
 }
 
 async fn collect_inner<'a>(
@@ -459,26 +364,73 @@ impl<'a> Collected<'a> {
     /// Build from committed records and an optional audit report, then write
     /// files or prepare and activate in memory. Preparation failures keep commits;
     /// anchor revalidation and the captured publication fence govern activation.
-    pub async fn publish(
+    pub async fn publish(self, provider_store: &mut PayoutStore, state: &'a mut State) -> Result<()> {
+        pir_pipeline::engine::PublisherEngine
+            .publish_input(self.select(provider_store, state).await?)
+            .await?;
+        Ok(())
+    }
+
+    async fn select(
+        mut self,
+        provider_store: &mut PayoutStore,
+        state: &'a mut State,
+    ) -> Result<PublicationInput<ReceiverPublication<'a>>> {
+        let anchor_time = self.audit_time().await;
+        self.select_with_report(provider_store, state, anchor_time)
+    }
+    async fn audit_time(&mut self) -> Result<i64> {
+        match self.args.audit_enabled {
+            true => self
+                .rpc
+                .block_time(self.tip.hash)
+                .await
+                .map(|time| time.min(unix_now()))
+                .map_err(Into::into),
+            false => Ok(unix_now()),
+        }
+    }
+    fn select_with_report(
         self,
         provider_store: &mut PayoutStore,
         state: &'a mut State,
-    ) -> Result<()> {
-        pir_pipeline::advance(
-            Input::Work(self),
-            |work| work.prepare(provider_store, state),
-            |candidate| candidate.activate(),
-            &mut (),
-        )
-        .await?;
-        Ok(())
+        anchor_time: Result<i64>,
+    ) -> Result<PublicationInput<ReceiverPublication<'a>>> {
+        let report = anchor_time
+            .and_then(|time| crate::near::capture(provider_store, time))
+            .and_then(|capture| capture.report(self.store))
+            .unwrap_or_else(|error| {
+                warn!(%error, "payout audit unavailable");
+                serde_json::Value::Null
+            });
+        let refresh = self
+            .serving
+            .zip(state.active.as_ref())
+            .is_some_and(|(serving, active)| {
+                active.anchor == (self.tip.height, self.tip.hash)
+                    && serving.current_anchor() == Some(active.anchor)
+                    && active.history_revision == self.history_revision
+            });
+        let fence = self.serving.zip(self.epoch);
+        let publication = ReceiverPublication {
+            fence,
+            work: Some(self),
+            state: Some(state),
+            report: Some(report),
+            refresh,
+        };
+        Ok(if refresh {
+            PublicationInput::MetadataRefresh(publication)
+        } else {
+            PublicationInput::NewMaterial(publication)
+        })
     }
 
     async fn prepare(
         self,
-        provider_store: &mut PayoutStore,
         state: &'a mut State,
-    ) -> Result<Input<Prepared<'a>>> {
+        report: serde_json::Value,
+    ) -> Result<Prepared<'a>> {
         let Self {
             args,
             rpc,
@@ -497,36 +449,6 @@ impl<'a> Collected<'a> {
             kept,
             durable,
         } = state;
-        // The optional audit never prevents chain publication. Off, its empty store needs
-        // no terminal block time; on, a time or store that is unavailable degrades its
-        // report instead.
-        let anchor_time = match args.audit_enabled {
-            true => rpc
-                .block_time(tip.hash)
-                .await
-                .map(|time| time.min(unix_now()))
-                .map_err(Into::into),
-            false => Ok(unix_now()),
-        };
-        let report = anchor_time
-            .and_then(|time| crate::near::capture(provider_store, time))
-            .and_then(|capture| capture.report(store))
-            .unwrap_or_else(|error| {
-                warn!(%error, "payout audit unavailable");
-                serde_json::Value::Null
-            });
-        if let (Some(serving), Some(active)) = (serving, active.as_ref()) {
-            if active.anchor == (tip.height, tip.hash)
-                && serving.current_anchor() == Some(active.anchor)
-                && active.history_revision == history_revision
-            {
-                // The audit never rebuilds a publication; its report refreshes in place.
-                if !serving.update_report(active.anchor, report, epoch.unwrap()) {
-                    return Err("publication invalidated during the audit refresh; retrying".into());
-                }
-                return Ok(Input::Unchanged);
-            }
-        }
         let started = std::time::Instant::now();
         let policy = Policy::new(args.shard_rows, args.shard_target)?;
         // A sealed shard keeps the rows it was sealed under, and serving refuses tables
@@ -728,9 +650,11 @@ impl<'a> Collected<'a> {
         "shards":shards,"sealed_shards":sealed_shards.len(),
         "segments":segments,"history_revision":revision});
         let candidate = match serving {
-            Some(_) => Candidate::Serving(Box::new(Publication::assemble(
-                genesis, revision, prepared,
-            )?)),
+            Some(_) => Candidate::Unassembled {
+                genesis,
+                revision,
+                shards: prepared,
+            },
             None => Candidate::Files(Layout {
                 genesis,
                 history_revision: revision,
@@ -739,9 +663,9 @@ impl<'a> Collected<'a> {
         };
         let revision = match &candidate {
             Candidate::Serving(publication) => hex::encode(publication.id()),
-            Candidate::Files(_) => String::new(),
+            Candidate::Files(_) | Candidate::Unassembled { .. } => String::new(),
         };
-        Ok(Input::Work(Prepared {
+        Ok(Prepared {
             candidate,
             args,
             rpc,
@@ -753,7 +677,7 @@ impl<'a> Collected<'a> {
             refresh_started,
             revision,
             summary,
-        }))
+        })
     }
 }
 
@@ -872,6 +796,11 @@ fn prepare_plan(
 }
 
 enum Candidate {
+    Unassembled {
+        genesis: [u8; 32],
+        revision: u64,
+        shards: Vec<(bool, Vec<Segment>, Option<Arc<FilterSource>>)>,
+    },
     Serving(Box<Publication>),
     /// A one-shot run's layout, whose tables are already written.
     Files(Layout),
@@ -890,62 +819,6 @@ struct Prepared<'a> {
     revision: String,
     summary: serde_json::Value,
 }
-impl Prepared<'_> {
-    async fn activate(self) -> Result<()> {
-        let Self {
-            candidate,
-            args,
-            rpc,
-            serving,
-            epoch,
-            active,
-            history_revision,
-            report,
-            refresh_started,
-            revision,
-            summary,
-        } = self;
-        let publication = match candidate {
-            Candidate::Files(layout) => {
-                let started = std::time::Instant::now();
-                let root = args.data_dir.join("publications");
-                let layout = write_layout(&root, &layout)?;
-                log_stage("directory_write", started);
-                let mut summary = summary;
-                summary["revision"] = hex::encode(layout).into();
-                println!("{summary}");
-                return Ok(());
-            }
-            Candidate::Serving(publication) => *publication,
-        };
-        let serving = serving.expect("serving candidate has publication owner");
-        let end_height = publication.head().end_height;
-        let started = std::time::Instant::now();
-        let anchor = publication.head();
-        if !is_canonical(rpc, anchor.end_height, anchor.end_hash).await? {
-            serving.revoke();
-            return Err("chain changed during PIR preparation; retrying".into());
-        }
-        let anchor = (anchor.end_height, anchor.end_hash);
-        if !serving.publish(publication.with_report(report), epoch.unwrap()) {
-            return Err("publication invalidated during preparation; retrying".into());
-        }
-        *active = Some(Active {
-            anchor,
-            history_revision,
-        });
-        log_stage("activate", started);
-        info!(
-            height = end_height,
-            %revision,
-            processing_ms = refresh_started.elapsed().as_millis() as u64,
-            publication = %summary,
-            "receiver publication"
-        );
-        Ok(())
-    }
-}
-
 /// Applies an indexing correction to the store in `data_dir` offline: replaces the
 /// payments of `blocks`, which must match the stored chain, under `history_revision`
 /// (see [`Store::correct`]). It holds the data directory's lock, so it refuses while a
@@ -2972,17 +2845,16 @@ mod tests {
         .await
         .unwrap()
         .unwrap();
-        let result = pir_pipeline::advance(
-            Input::Work(work),
-            |work| async {
-                let candidate = work.prepare(&mut provider, &mut paused.state).await?;
-                paused.publications.revoke();
-                Ok(candidate)
-            },
-            |candidate| candidate.activate(),
-            &mut (),
-        )
-        .await;
+        let input = work.select(&mut provider, &mut paused.state).await.unwrap();
+        let PublicationInput::NewMaterial(publication) = input else {
+            panic!("new material expected")
+        };
+        let prepared = pir_pipeline::engine::PublisherEngine
+            .prepare(publication)
+            .await
+            .unwrap();
+        paused.publications.revoke();
+        let result = prepared.commit().await;
         assert!(result.is_err());
         assert!(paused.publications.anchors().is_empty());
         assert!(paused.state.active.is_none());

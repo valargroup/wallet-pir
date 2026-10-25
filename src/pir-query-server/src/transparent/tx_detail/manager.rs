@@ -369,7 +369,7 @@ impl Consumer for DisplaySync {
         })
     }
     async fn reserve(&mut self, _: &mut Current) -> Result<PeerReservation, Error> {
-        Ok(PeerReservation::Reserved)
+        Ok(pir_pipeline::consumer::reservations::NoPeers.reserve())
     }
     async fn obtain(&mut self, current: &Current) -> Result<DownloadedDisplay, Error> {
         match self.download(current).await {
@@ -454,7 +454,7 @@ impl Consumer for DisplaySync {
         Ok(())
     }
     async fn confirm(&mut self, _: &mut PreparedDisplay) -> Result<PeerReservation, Error> {
-        Ok(PeerReservation::Reserved)
+        Ok(pir_pipeline::consumer::reservations::NoPeers.reserve())
     }
     async fn commit(
         &mut self,
@@ -476,7 +476,7 @@ impl Consumer for DisplaySync {
         self.current = Some(loaded.current.clone());
         Ok((
             serde_json::json!({"unchanged":false,"revision":loaded.current.revision,"downloaded_bytes":self.source.downloaded()}),
-            PeerHandover::Complete,
+            pir_pipeline::consumer::reservations::NoPeers.complete(),
         ))
     }
     async fn serving_report(&mut self) -> serde_json::Value {

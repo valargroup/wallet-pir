@@ -116,3 +116,15 @@ mod tests {
         assert_eq!(holds.acknowledged(), None);
     }
 }
+
+/// Explicit reservation service for consumers without downstream peers.
+#[derive(Clone, Copy, Default)]
+pub struct NoPeers;
+impl NoPeers {
+    pub fn reserve(&self) -> super::PeerReservation {
+        super::PeerReservation::Reserved
+    }
+    pub fn complete(&self) -> super::PeerHandover {
+        super::PeerHandover::Complete
+    }
+}

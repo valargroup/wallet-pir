@@ -518,6 +518,8 @@ impl PublicationAdapter for StatusPublication {
         self.waiting(match reason {
             DeferralReason::AuthorityAdvanced => "waiting_for_authority",
             DeferralReason::PeerAdvanced => "waiting_for_worker_pin",
+            DeferralReason::SourceUnavailable => "waiting_for_source",
+            DeferralReason::Retention => "waiting_for_retention",
         })
         .await;
     }

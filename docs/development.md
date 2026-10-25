@@ -311,5 +311,17 @@ consumer engine. Product code retains schemas, directory locks, validation,
 preparation and activation. Transparent History and Detail use the same consumer engine and guarded owner
 activation. Their bulk artifacts carry length-only receipts until the existing
 background validator hashes them after serving starts; disk reload checks size.
-Receiver adoption follows separately. Status uses the same polling and backoff; its
-wallet still rejects observations older than twenty seconds.
+Receiver reads bounded local publication records through `pir-publication` and
+uses the same consumer phases, while retaining its payment, witness, filter and
+canonical-chain checks. Its independent canonicality guard continues throughout
+loading and outages. Local reads do not add a SHA-256 pass. Status retains its
+own polling deadlines and the wallet still rejects observations older than twenty
+seconds.
+
+Every product publishes through `PublisherEngine`, including Receiver's live
+collection and metadata-only audit refreshes. Product preparation can store one
+shard at a time to preserve its memory budget. The shared engine orders typed
+preparation, source rechecks and guarded commits; there is no legacy publication
+pass or alternate publisher polling loop. Shared consumer reservations distinguish
+incoming candidates from the acknowledged serving view. Roles without peers use
+an explicit no-peer reservation service.

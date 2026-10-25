@@ -507,7 +507,7 @@ impl Consumer for HistorySync {
         Ok(Input::Work(HistoryCandidate::Update(current.clone())))
     }
     async fn reserve(&mut self, _: &mut HistoryCandidate) -> Result<PeerReservation, Error> {
-        Ok(PeerReservation::Reserved)
+        Ok(pir_pipeline::consumer::reservations::NoPeers.reserve())
     }
     async fn obtain(&mut self, candidate: &HistoryCandidate) -> Result<HistoryArtifacts, Error> {
         match candidate {
@@ -730,7 +730,7 @@ impl Consumer for HistorySync {
         Ok(())
     }
     async fn confirm(&mut self, _: &mut PreparedHistory) -> Result<PeerReservation, Error> {
-        Ok(PeerReservation::Reserved)
+        Ok(pir_pipeline::consumer::reservations::NoPeers.reserve())
     }
     async fn commit(
         &mut self,
@@ -766,7 +766,10 @@ impl Consumer for HistorySync {
                 if exact {
                     self.current = Some(current);
                 }
-                Ok((self.serving_report().await, PeerHandover::Complete))
+                Ok((
+                    self.serving_report().await,
+                    pir_pipeline::consumer::reservations::NoPeers.complete(),
+                ))
             }
             PreparedHistory::Update(next) => {
                 let PreparedUpdate {
@@ -799,7 +802,7 @@ impl Consumer for HistorySync {
                         downloaded_files: staged.downloaded_files,
                         stages: Some(stages),
                     },
-                    PeerHandover::Complete,
+                    pir_pipeline::consumer::reservations::NoPeers.complete(),
                 ))
             }
         }

@@ -1,5 +1,5 @@
 //! Autonomous workers load published rows; they never prepare public hints.
-use super::consumer::{EnhanceConsumer, NoPeers, Role as ConsumerRole};
+use super::consumer::{EnhanceConsumer, Role as ConsumerRole};
 use super::evaluation::{Evaluate, Intermediate};
 use crate::enhance::synchronization::{
     Client, Config as SourceConfig, Deferral, Error, Lease, Pacing, Safety,
@@ -21,6 +21,7 @@ use enhance_shared::{
     publication::Domain,
     runtime::{rlwe, DomainPlan},
 };
+use pir_pipeline::consumer::reservations::NoPeers;
 use pir_pipeline::{
     consumer::{polling::SyncTask, ConsumerEngine},
     Input,

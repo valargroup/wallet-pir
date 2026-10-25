@@ -15,7 +15,7 @@ use receiver_pir_server::{
 };
 use std::{
     collections::{HashMap, HashSet},
-    io::{Read, Write},
+    io::Write,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -122,7 +122,7 @@ impl Durable {
             } else if let Some(name) = file.strip_suffix(".json").and_then(Name::parse) {
                 // A manifest that is oversized or does not parse is dropped with its
                 // table below as a leftover, and its revision is prepared afresh.
-                let Ok(bytes) = read_bounded(
+                let Ok(bytes) = pir_publication::records::read_bounded(
                     &path,
                     zakura_pir_publisher::receiver::session::MAX_MANIFEST_BYTES as u64,
                 ) else {
@@ -454,7 +454,7 @@ impl Durable {
     /// A table's session manifest file, within the manifest size bound.
     fn manifest(&self, name: Name) -> Result<Vec<u8>, Error> {
         let path = self.path(name, "json");
-        read_bounded(
+        pir_publication::records::read_bounded(
             &path,
             zakura_pir_publisher::receiver::session::MAX_MANIFEST_BYTES as u64,
         )
@@ -465,7 +465,7 @@ impl Durable {
 /// A file that must hold exactly `len` bytes, refused without reading more, a failure as
 /// a transport error the cache reports.
 fn read(path: &Path, len: usize) -> Result<Vec<u8>, Error> {
-    read_exact_len(path, len as u64)
+    pir_publication::records::read_exact_len(path, len as u64)
         .map_err(|e| Error::Transport(format!("table file {}: {e}", path.display())))
 }
 
@@ -498,29 +498,3 @@ fn prepare_witnesses(table: witness::Table, payments: &Server) -> Result<Witness
     }
 }
 
-pub(crate) fn read_bounded(path: &Path, limit: u64) -> std::io::Result<Vec<u8>> {
-    let mut bytes = Vec::new();
-    std::fs::File::open(path)?
-        .take(limit + 1)
-        .read_to_end(&mut bytes)?;
-    if bytes.len() as u64 > limit {
-        return Err(std::io::Error::other(format!(
-            "{} is larger than {limit} bytes",
-            path.display()
-        )));
-    }
-    Ok(bytes)
-}
-
-/// Reads `path`, which must be exactly `len` bytes.
-pub(crate) fn read_exact_len(path: &Path, len: u64) -> std::io::Result<Vec<u8>> {
-    let bytes = read_bounded(path, len)?;
-    if bytes.len() as u64 != len {
-        return Err(std::io::Error::other(format!(
-            "{} is {} bytes, the manifest says {len}",
-            path.display(),
-            bytes.len()
-        )));
-    }
-    Ok(bytes)
-}

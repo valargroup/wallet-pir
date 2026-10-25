@@ -83,3 +83,33 @@ pub mod test_support {
         Some(writer(path, bytes))
     }
 }
+
+/// Read one local record or artifact with the product's explicit byte budget.
+/// Opening follows the caller's existing path policy; this creates no digest
+/// evidence and never grants permission to serve.
+pub fn read_bounded(path: &Path, limit: u64) -> std::io::Result<Vec<u8>> {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)?
+        .take(limit.saturating_add(1))
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > limit {
+        return Err(std::io::Error::other(format!(
+            "{} is larger than {limit} bytes",
+            path.display()
+        )));
+    }
+    Ok(bytes)
+}
+/// Read a fixed-length product artifact without adding a second digest pass.
+pub fn read_exact_len(path: &Path, len: u64) -> std::io::Result<Vec<u8>> {
+    let bytes = read_bounded(path, len)?;
+    if bytes.len() as u64 != len {
+        return Err(std::io::Error::other(format!(
+            "{} is {} bytes, the manifest says {len}",
+            path.display(),
+            bytes.len()
+        )));
+    }
+    Ok(bytes)
+}

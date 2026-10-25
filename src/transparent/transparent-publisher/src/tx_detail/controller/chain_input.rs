@@ -10,25 +10,18 @@ impl Controller {
         let floor = self.sealed_floor();
         let mut before_rollback =
             |ancestor: u64, hash: BlockHash| fence.before_rollback(ancestor, hash);
-        let polled = pir_pipeline::acquire(
-            async {
-                self.source
-                    .poll(
-                        &mut self.store,
-                        &self.cache,
-                        floor,
-                        &fence,
-                        &mut before_rollback,
-                    )
-                    .await
-                    .map(Input::Work)
-            },
-            &mut (),
-        )
-        .await;
+        let polled = self
+            .source
+            .poll(
+                &mut self.store,
+                &self.cache,
+                floor,
+                &fence,
+                &mut before_rollback,
+            )
+            .await;
         match polled {
-            Ok(Input::Work(update)) => self.apply(update).await?,
-            Ok(Input::Unchanged | Input::Deferred) => {}
+            Ok(update) => self.apply(update).await?,
             Err(SourceError::SealedReorg { ancestor, floor }) => {
                 self.timeline.record(
                     "reorg",

@@ -45,7 +45,6 @@ use super::source::{Source, SourceError, SourceUpdate};
 use super::timeline::{HeightIndex, Timeline};
 use crate::storage::records::write_atomic;
 use crate::BoxError;
-use pir_pipeline::Input;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, VecDeque};
