@@ -1,6 +1,39 @@
 //! Offline maintenance stays available; production runs on pir-publisher.
 use std::process::Command;
 
+#[test]
+fn contract_info_reports_compiled_products_without_configuration() {
+    let temp = tempfile::tempdir().unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_pir-publisher"))
+        .current_dir(temp.path())
+        .arg("--contract-info")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let info: pir_service_discovery::ContractInfo = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        info,
+        pir_service_discovery::ContractInfo::new(
+            "pir-publisher",
+            &info.products.iter().map(String::as_str).collect::<Vec<_>>(),
+            &[]
+        )
+    );
+    assert_eq!(
+        info.products.iter().any(|name| name == "status"),
+        cfg!(feature = "status")
+    );
+    assert_eq!(
+        info.products.iter().any(|name| name == "enhance"),
+        cfg!(feature = "enhance")
+    );
+    assert_eq!(std::fs::read_dir(temp.path()).unwrap().count(), 0);
+}
+
 #[cfg(feature = "enhance")]
 fn server() -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_pir-publisher"));

@@ -19,8 +19,8 @@ from pathlib import Path
 import shlex
 import time
 
-from .. import durable
-from . import descriptors, units
+from .. import contract, durable
+from . import descriptors, timing, units
 from .remote import production_lock
 from .. import schema_fence
 from .transaction import FINAL, Journal
@@ -491,8 +491,11 @@ class Deployer:
         partial = '%s/releases/.partial-%s' % (self.service.root, journal.id if journal else sha)
         with ThreadPoolExecutor(max_workers=min(4, len(hosts))) as pool:
             futures = [pool.submit(self.stage_host, host, sha, binary, partial) for host in hosts]
-            for future in futures:
-                future.result()
+            identities = [future.result() for future in futures]
+        if journal:
+            for host, info in zip(hosts, identities):
+                journal.event('staged', host=host,
+                              contract=info.to_json() if info is not None else 'unknown')
 
     def stage_host(self, host, sha, binary, partial):
         """Verify or upload one immutable release under the caller's lock."""
@@ -515,6 +518,7 @@ class Deployer:
         code, output = self.ex.run(host, [path, *self.service.self_check], SELF_CHECK_SECONDS)
         if code:
             raise DeployError('%s: staged binary failed its self-check (exit %d): %s' % (host, code, output[-500:]))
+        info = self.contract_info(host, path, name, sha)
         if self.service.name == 'enhance':
             for target in self.targets:
                 if target.host != host or target.artifact_kind != 'enhance-pir-native-cuda':
@@ -534,6 +538,24 @@ class Deployer:
                     raise DeployError('%s: staged CUDA evaluator check failed (exit %d): %s'
                                       % (host, code, output[-500:]))
         self.out('%s: staged %s and it runs' % (host, path))
+        return info
+
+    def contract_info(self, host, path, name, sha):
+        """The staged executable's compiled contract identity, or None for an older release.
+
+        Releases built before `--contract-info` existed refuse the flag; they
+        stay deployable and recorded as unknown. A report that is present but
+        malformed or names another executable refuses staging.
+        """
+        if name not in contract.EXECUTABLES:
+            return None
+        code, output = self.ex.run(host, [path, *contract.CONTRACT_INFO_ARGV], SELF_CHECK_SECONDS)
+        if code:
+            return None
+        try:
+            return contract.parse_contract_info(output, executable=name, sha256=sha)
+        except contract.ContractError as error:
+            raise DeployError('%s: %s' % (host, error))
 
     def activate(self, journal, index, sha, *, verify=True):
         record = journal.hosts[index]
@@ -892,6 +914,9 @@ class Deployer:
             self.out('latest transaction %s: %s (target %s)' % (journal.id, journal.status, journal.data['binary_sha256']))
             for record in journal.hosts:
                 self.out('  %s: %s %s' % (record['key'], record['action'], record['phase']))
+            elapsed = timing.journal_timing(journal.data)
+            for line in timing.describe(elapsed):
+                self.out(line)
         else:
             self.out('no %s transaction recorded' % self.service.name)
         observed = []
@@ -908,4 +933,5 @@ class Deployer:
             observed.append({'role': target.role.name, 'host': target.host, 'unit': target.unit,
                              'active_state': state['active_state'], 'binary_sha256': state['exe_sha256']})
         return {'targets': observed, 'transaction': journal.id if journal else None,
-                'phase': journal.status if journal else None}
+                'phase': journal.status if journal else None,
+                'timing': timing.journal_timing(journal.data) if journal else None}

@@ -544,6 +544,48 @@ class DeployTests(Fleet):
         self.assertFalse(any(detail[0].startswith('/etc/') for _, op, detail in self.fake.log if op == 'write'))
         self.assertEqual(Journal.load(self.state, 'enhance').status, 'failed')
 
+    def report(self, **overrides):
+        document = {'schema': 'wallet-pir-contract-info/1', 'executable': 'pir-query-server',
+                    'contract_version': '1.4.2', 'contract_major': 1,
+                    'products': ['enhance'], 'backends': ['cuda'], **overrides}
+        return json.dumps(document)
+
+    def test_staging_records_the_executables_contract_identity_and_elapsed_time(self):
+        deployer = self.enhance_fleet()
+        self.fake.contract_reports[NEW_SHA] = self.report()
+        deployer.deploy(NEW_SHA, self.binary, retire_historical=True)
+        journal = Journal.load(self.state, 'enhance')
+        staged = [event for event in journal.data['events'] if event['message'] == 'staged']
+        self.assertTrue(staged)
+        for event in staged:
+            self.assertEqual(event['contract'], {'executable': 'pir-query-server', 'sha256': NEW_SHA,
+                                                 'contract_version': '1.4.2', 'contract_major': 1,
+                                                 'products': ['enhance'], 'backends': ['cuda']})
+        elapsed = deployer.status()['timing']
+        self.assertIsNotNone(elapsed['clocks']['total'])
+        self.assertIsNotNone(elapsed['clocks']['interruption'])
+        self.assertIsNone(elapsed['clocks']['source_to_accepted'])
+        self.assertTrue(elapsed['targets'])
+
+    def test_a_release_without_contract_info_stays_deployable_as_unknown(self):
+        deployer = self.enhance_fleet()
+        deployer.deploy(NEW_SHA, self.binary, retire_historical=True)
+        staged = [event for event in Journal.load(self.state, 'enhance').data['events']
+                  if event['message'] == 'staged']
+        self.assertTrue(staged)
+        self.assertTrue(all(event['contract'] == 'unknown' for event in staged))
+
+    def test_malformed_or_foreign_contract_info_refuses_before_any_restart(self):
+        for report in (self.report(executable='pir-publisher'), self.report(contract_major=2), 'not json'):
+            with self.subTest(report=report):
+                self.setUp()
+                deployer = self.enhance_fleet()
+                self.fake.contract_reports[NEW_SHA] = report
+                with self.assertRaisesRegex(DeployError, 'contract'):
+                    deployer.deploy(NEW_SHA, self.binary, retire_historical=True)
+                self.assertEqual(self.restarts(), [])
+                self.assertEqual(Journal.load(self.state, 'enhance').status, 'failed')
+
     def test_journal_phase_is_written_before_each_side_effect(self):
         deployer = self.enhance_fleet()
         seen = []

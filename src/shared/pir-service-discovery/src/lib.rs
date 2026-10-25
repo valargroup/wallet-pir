@@ -63,6 +63,47 @@ impl Document {
     }
 }
 
+/// Schema of the `--contract-info` report both executables print.
+pub const CONTRACT_INFO_SCHEMA: &str = "wallet-pir-contract-info/1";
+
+/// What an executable reports with `--contract-info`: the contract version it
+/// was compiled with and the products compiled into it. It is printed without
+/// reading configuration, opening state, contacting services or initializing a
+/// GPU, so deployment can compare a staged executable before any restart.
+/// Compiled products are not enabled products: a configuration may enable
+/// fewer.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContractInfo {
+    pub schema: String,
+    /// `pir-publisher` or `pir-query-server`.
+    pub executable: String,
+    /// The discovery contract version, as in [`VERSION`].
+    pub contract_version: String,
+    pub contract_major: u64,
+    /// Compiled products, by their configuration section names.
+    pub products: Vec<String>,
+    /// Compiled evaluator backends beyond the CPU default, such as `cuda`.
+    pub backends: Vec<String>,
+}
+
+impl ContractInfo {
+    /// The report for this build of `executable`.
+    pub fn new(executable: &str, products: &[&str], backends: &[&str]) -> Self {
+        Self {
+            schema: CONTRACT_INFO_SCHEMA.into(),
+            executable: executable.into(),
+            contract_version: VERSION.into(),
+            contract_major: version().major,
+            products: products.iter().map(|name| name.to_string()).collect(),
+            backends: backends.iter().map(|name| name.to_string()).collect(),
+        }
+    }
+
+    pub fn to_json(&self) -> String {
+        serde_json::to_string(self).expect("contract info serializes")
+    }
+}
+
 /// This build's contract version.
 pub fn version() -> Version {
     parse_version(VERSION).expect("package version is a stable contract version")
@@ -214,6 +255,16 @@ mod tests {
 
     fn body(service: &str, version: &str) -> Vec<u8> {
         serde_json::to_vec(&serde_json::json!({"service": service, "version": version})).unwrap()
+    }
+
+    #[test]
+    fn contract_info_reports_the_package_major() {
+        let info = ContractInfo::new("pir-query-server", &["status"], &[]);
+        assert_eq!(info.contract_version, VERSION);
+        assert_eq!(info.contract_major, version().major);
+        let parsed: ContractInfo = serde_json::from_str(&info.to_json()).unwrap();
+        assert_eq!(parsed, info);
+        assert_eq!(parsed.schema, CONTRACT_INFO_SCHEMA);
     }
 
     #[test]

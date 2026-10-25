@@ -55,6 +55,8 @@ class FakeFleet(Executor):
         self.identity_override = {}   # (host, unit) -> binary_sha256 the health reports
         self.health_shapes = {}       # (host, unit) -> f(ready, exe sha256) giving its own health body
         self.self_check_fails = set()
+        # Executable digest to its `--contract-info` report; absent digests refuse the flag.
+        self.contract_reports = {}
         self.exact_result = (0, 'exact answers ok')  # or an exception the transport raises
         self.endpoints = {}
         self.held = set()
@@ -285,6 +287,10 @@ class FakeFleet(Executor):
         # A staged binary's self-check; any other command is an exact check.
         if data is not None and argv[1:] == ['--help']:
             return (1, 'illegal instruction') if sha256(data) in self.self_check_fails else (0, 'Usage: ...')
+        if data is not None and argv[1:] == ['--contract-info']:
+            # Releases built before the flag existed refuse it, as clap does.
+            report = self.contract_reports.get(sha256(data))
+            return (2, "error: unexpected argument '--contract-info' found") if report is None else (0, report)
         if data is not None and self.product_check is not None:
             return self.product_check(host, list(argv))
         if isinstance(self.exact_result, BaseException):
