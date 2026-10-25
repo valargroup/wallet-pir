@@ -132,6 +132,14 @@ class FastBuildTests(unittest.TestCase):
         self.assertTrue(all(case.startswith('status::') for case in small[1]['args'][1:]))
         other = dict(status, package='receiver-indexer')
         self.assertEqual(fast_build.bounded_programs(other, names), [other])
+        wide = {f'application::tests::case_{index:02d}' for index in range(90)}
+        with patch.object(fast_build, 'available_cpus', return_value=8):
+            shards = fast_build.bounded_programs(dict(other, case_count=len(wide)), wide)
+        self.assertEqual(len(shards), 3)
+        self.assertCountEqual([case for shard in shards for case in shard['args'][1:]], wide)
+        with patch.object(fast_build, 'available_cpus', return_value=4):
+            shards = fast_build.bounded_programs(dict(other, case_count=len(wide)), wide)
+        self.assertEqual(len(shards), 2)
 
     def test_status_lanes_split_the_long_prepares(self):
         heavy = {

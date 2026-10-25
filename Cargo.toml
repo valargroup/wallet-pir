@@ -96,12 +96,12 @@ codegen-units = 16
 incremental = true
 
 # The fast runner caps the job at 6 GiB and deletes incremental sessions before
-# this compile. One codegen unit of this host runs out of memory sooner than
-# several smaller ones. Match the fast profile's unit count, skip the
-# incremental session, and leave optimization at 1. Deploy binaries stay on
-# the fat-LTO release profile above. Fast tests link dependencies that are
-# still fully optimized.
+# this compile. A from-scratch rustc of this host runs out of memory when a
+# few large codegen units are optimized together. Many small units keep that
+# rustc inside the cap; the fast compile also caps this crate's codegen
+# threads. Dependencies stay fully optimized, and deploy binaries stay on the
+# fat-LTO release profile above. There is no incremental session to poison.
 [profile.release-fast.package.pir-query-server]
 opt-level = 1
-codegen-units = 16
+codegen-units = 256
 incremental = false

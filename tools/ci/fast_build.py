@@ -371,6 +371,12 @@ def bounded_programs(program, names):
     if program['integration'] or program['exclusive'] or len(names) <= group:
         return [program]
     lanes = min(3, (len(names) + group - 1) // group)
+    # Two receiver-indexer lanes are about a minute of wall and finish the
+    # pool. A list that is already split can use the third process on the
+    # 8-core runner; smaller hosts keep the wider groups.
+    if (program.get('package') == 'receiver-indexer' and lanes > 1
+            and available_cpus() >= 8):
+        lanes = 3
     ordered = sorted(names)
     distribution = [name for name in ordered
                     if name.startswith('history::controller::distribution_tests::')]

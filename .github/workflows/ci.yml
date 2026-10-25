@@ -99,6 +99,10 @@ jobs:
           # runner.environment, which left four rustc processes on the cgroup.
           # Hosted runners (16 GB) keep all four.
           CARGO_BUILD_JOBS: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && !inputs.hosted && '1' || '4' }}
+          # Cargo fingerprints omit this wrapper. It only adds `-C threads` for
+          # the query-host crate, after the warm target is already selected.
+          RUSTC_WRAPPER: ${{ github.workspace }}/tools/ci/rustc_threads.py
+          WALLET_PIR_QUERY_RUSTC_THREADS: "4"
         run: umask 022 && TMPDIR="$RUNNER_TEMP" python3 tools/ci/fast.py --committed-only --base "$BASE" --unit-jobs 3
       - name: Check main feedback timing after validation
         # The clock is job start through validation. Cache and stage reports
