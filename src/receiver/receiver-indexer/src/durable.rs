@@ -497,4 +497,3 @@ fn prepare_witnesses(table: witness::Table, payments: &Server) -> Result<Witness
         WitnessServer::new(table, payments)
     }
 }
-

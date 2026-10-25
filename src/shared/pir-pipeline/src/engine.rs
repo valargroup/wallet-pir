@@ -1,9 +1,7 @@
 //! One execution order for every prepared publisher, independent of its data.
 use crate::service::Shutdown;
 use crate::{
-    publisher::{
-        Control, Publication, PublicationInput, Publisher, PublisherExecutor, PublisherRun,
-    },
+    publisher::{Control, Publication, Publisher, PublisherExecutor, PublisherRun},
     FailurePolicy,
 };
 

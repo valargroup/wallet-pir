@@ -6,8 +6,8 @@ use crate::{
     verify,
 };
 mod publication;
-use publication::ReceiverPublication;
 use pir_pipeline::publisher::{PublicationInput, PublisherExecutor};
+use publication::ReceiverPublication;
 #[cfg(all(test, feature = "qualification-tests"))]
 use receiver_pir_server::publication::DEFAULT_RETENTION;
 use receiver_pir_server::{publication::Segment, tables::FilterSource, Publication, Publications};
@@ -181,8 +181,14 @@ pub(crate) async fn publish_committed<E: pir_pipeline::publisher::PublisherExecu
     };
     let selected = work.select(providers, state).await?;
     match distribution {
-        Some((_, executor)) => { executor.publish_input(selected).await?; },
-        None => { pir_pipeline::engine::PublisherEngine.publish_input(selected).await?; },
+        Some((_, executor)) => {
+            executor.publish_input(selected).await?;
+        }
+        None => {
+            pir_pipeline::engine::PublisherEngine
+                .publish_input(selected)
+                .await?;
+        }
     }
     if let Some((distribution, executor)) = distribution {
         distribution.export(serving, executor).await?;
@@ -202,7 +208,16 @@ pub async fn collect<'a>(
     genesis: [u8; 32],
     refresh_started: std::time::Instant,
 ) -> Result<Option<Collected<'a>>> {
-    collect_inner(args, rpc, node_tip, store, serving, genesis, refresh_started).await
+    collect_inner(
+        args,
+        rpc,
+        node_tip,
+        store,
+        serving,
+        genesis,
+        refresh_started,
+    )
+    .await
 }
 
 async fn collect_inner<'a>(
@@ -364,7 +379,11 @@ impl<'a> Collected<'a> {
     /// Build from committed records and an optional audit report, then write
     /// files or prepare and activate in memory. Preparation failures keep commits;
     /// anchor revalidation and the captured publication fence govern activation.
-    pub async fn publish(self, provider_store: &mut PayoutStore, state: &'a mut State) -> Result<()> {
+    pub async fn publish(
+        self,
+        provider_store: &mut PayoutStore,
+        state: &'a mut State,
+    ) -> Result<()> {
         pir_pipeline::engine::PublisherEngine
             .publish_input(self.select(provider_store, state).await?)
             .await?;

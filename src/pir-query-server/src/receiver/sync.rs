@@ -347,8 +347,11 @@ impl PublicationAdapter for Receiver {
         }
         Ok((candidate.id, candidate.inventory.anchors()))
     }
+    async fn reserve_candidate(&mut self, _: &Candidate) -> Result<PeerReservation, Error> {
+        Ok(pir_pipeline::consumer::reservations::NoPeers.reserve())
+    }
     async fn reserve_peer(&mut self, _: &Loaded) -> Result<PeerReservation, Error> {
-        Ok(PeerReservation::Reserved)
+        Ok(pir_pipeline::consumer::reservations::NoPeers.reserve())
     }
     fn view_objects(&self, loaded: &Loaded) -> BTreeSet<String> {
         std::iter::once(&loaded.candidate.object)
@@ -419,7 +422,7 @@ impl PublicationAdapter for Receiver {
         self.expire();
     }
     async fn release_peer(&mut self, _: &Self::Report) -> PeerHandover {
-        PeerHandover::Complete
+        pir_pipeline::consumer::reservations::NoPeers.complete()
     }
     async fn pass_finished(&mut self, result: &Result<ConsumerPass<Self::Report>, Error>) {
         if let Err(error) = result {
