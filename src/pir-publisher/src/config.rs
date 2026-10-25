@@ -1,8 +1,6 @@
 //! Static checks open no stores, sockets or credentials. Existing path prefixes
 //! are inspected to detect aliases between writable directories.
 mod layout;
-#[cfg(feature = "receiver")]
-mod receiver;
 #[cfg(test)]
 mod tests;
 mod validation;
@@ -25,8 +23,7 @@ pub struct Product<T> {
 #[serde(deny_unknown_fields)]
 pub struct Config {
     pub management_listen: SocketAddr,
-    /// The one node source followed for every in-scope product. Receiver keeps
-    /// its own multi-node settings.
+    /// The one node source followed for every configured product.
     pub chain: Option<Chain>,
     #[cfg(feature = "enhance")]
     pub enhance: Option<Product<enhance_publisher::service::EnhancePublisherConfig>>,
@@ -37,7 +34,7 @@ pub struct Config {
     #[cfg(feature = "transparent-detail")]
     pub transaction_details: Option<Product<transparent_publisher::service::DetailConfig>>,
     #[cfg(feature = "receiver")]
-    pub receiver: Option<Product<receiver_indexer::service::Config>>,
+    pub receiver: Option<Product<receiver_indexer::managed::Config>>,
 }
 
 /// Root chain source settings; required when any in-scope product is enabled.
@@ -142,7 +139,12 @@ impl Config {
             crate::publisher::PublisherEngine
         );
         #[cfg(feature = "receiver")]
-        register!(receiver, receiver::configure);
+        register!(
+            receiver,
+            receiver_indexer::managed::configure,
+            chain,
+            crate::publisher::PublisherEngine
+        );
         Ok(publishers)
     }
 }

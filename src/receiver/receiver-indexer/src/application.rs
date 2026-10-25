@@ -177,7 +177,7 @@ pub async fn refresh(
         info!("converted the version 2 receiver store; the original is kept for rollback");
     }
     // An empty in-memory store without a key; see `Config::audit_enabled`.
-    let provider_store = match args.audit_enabled {
+    let mut provider_store = match args.audit_enabled {
         true => PayoutStore::open(args.data_dir.join(PROVIDERS)).or_else(|error| {
             warn!(%error, "payout audit unavailable; continuing chain publication");
             PayoutStore::open(":memory:")
@@ -195,7 +195,7 @@ pub async fn refresh(
     )
     .await?
     {
-        collected.publish(&provider_store, state).await?;
+        collected.publish(&mut provider_store, state).await?;
     }
     Ok(())
 }
@@ -213,6 +213,43 @@ pub struct Collected<'a> {
     refresh_started: std::time::Instant,
     /// The correction revision this pass publishes; see [`collect`].
     history_revision: u64,
+}
+
+/// Prepare from the root scheduler's committed checkpoint, without polling a
+/// tip or reconciling a second time. The independent canonical guard remains
+/// active while this operation prepares and atomically installs its candidate.
+pub(crate) async fn publish_committed(
+    args: &Config,
+    rpc: &NodeClient,
+    store: &mut Store,
+    providers: &mut PayoutStore,
+    serving: &Publications,
+    state: &mut State,
+) -> Result<()> {
+    let genesis = store.config().genesis;
+    let tip = store.tip()?;
+    if tip.height < args.start_height {
+        return Ok(());
+    }
+    let epoch = serving.epoch();
+    publish_filters(args, rpc, store, serving, genesis, &tip, epoch).await?;
+    if serving.ready_at().is_some() {
+        return Ok(());
+    }
+    let history_revision = store.history_revision()?;
+    Collected {
+        args,
+        rpc,
+        store,
+        serving: Some(serving),
+        genesis,
+        tip,
+        epoch: Some(epoch),
+        refresh_started: std::time::Instant::now(),
+        history_revision,
+    }
+    .publish(providers, state)
+    .await
 }
 
 /// Reconcile and commit validated blocks, revoking served sessions before rewind.
@@ -414,7 +451,11 @@ impl<'a> Collected<'a> {
     /// Build from committed records and an optional audit report, then write
     /// files or prepare and activate in memory. Preparation failures keep commits;
     /// anchor revalidation and the captured publication fence govern activation.
-    pub async fn publish(self, provider_store: &PayoutStore, state: &'a mut State) -> Result<()> {
+    pub async fn publish(
+        self,
+        provider_store: &mut PayoutStore,
+        state: &'a mut State,
+    ) -> Result<()> {
         pir_pipeline::advance(
             Input::Work(self),
             |work| work.prepare(provider_store, state),
@@ -427,7 +468,7 @@ impl<'a> Collected<'a> {
 
     async fn prepare(
         self,
-        provider_store: &PayoutStore,
+        provider_store: &mut PayoutStore,
         state: &'a mut State,
     ) -> Result<Input<Prepared<'a>>> {
         let Self {
@@ -2971,7 +3012,7 @@ mod tests {
     async fn shared_pipeline_invalidation_between_preparation_and_activation() {
         let mut paused = Paused::new(|_| {}).await;
         let mut store = paused.store();
-        let provider = paused.provider();
+        let mut provider = paused.provider();
         let height = crate::blocks::ironwood_activation();
         let work = collect(
             &paused.args,
@@ -2988,7 +3029,7 @@ mod tests {
         let result = pir_pipeline::advance(
             Input::Work(work),
             |work| async {
-                let candidate = work.prepare(&provider, &mut paused.state).await?;
+                let candidate = work.prepare(&mut provider, &mut paused.state).await?;
                 paused.publications.revoke();
                 Ok(candidate)
             },

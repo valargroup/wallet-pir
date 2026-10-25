@@ -62,6 +62,12 @@ pub struct ChainFeed {
 /// fails without advancing coverage; the root never cancels one in progress.
 pub trait Ingestion: Send {
     type Error: std::fmt::Display + Send;
+    /// Highest block to ingest from this observation. A product may wait for
+    /// confirmations; reconciliation still checks the full observed chain so
+    /// increasing the depth cannot hide an orphaned committed block.
+    fn target_height(&self, tip: u64) -> u64 {
+        tip
+    }
     /// The first height an empty journal covers when the observed tip is
     /// `tip`; a rolling window starts below the tip, a journal at a fixed height.
     fn start_height(&self, tip: u64) -> u64;

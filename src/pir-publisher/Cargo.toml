@@ -16,7 +16,7 @@ transparent-detail = ["dep:transparent-publisher", "chain"]
 # only, never chain decoding.
 chain = ["dep:pir-node-rpc"]
 rocksdb-reader = ["transparent-history", "transparent-publisher/rocksdb-reader"]
-receiver = ["dep:receiver-indexer"]
+receiver = ["dep:receiver-indexer", "chain"]
 native-reinspiring = ["enhance-publisher?/native-reinspiring", "status-publisher?/native-reinspiring"]
 status-tests = ["status", "status-publisher/fixtures"]
 

@@ -67,7 +67,8 @@ root contains no product implementation modules. The common file verifier in
 
 The engine finishes started operations before observing a service stop and
 always runs the product drain. Filters retain the ingestion-only pipeline;
-Receiver retains its existing implementation through a composition-layer bridge.
+Receiver uses the root ingestion scheduler while retaining its existing table
+preparation and serving mechanisms.
 
 ## Configuration and local use
 
@@ -84,14 +85,14 @@ The [all-product example](../tools/deploy/publisher/publisher.example.json)
 is a typed configuration example, not a production inventory. Replace its
 addresses, state paths, bootstrap inputs, inventories, public Status salt and
 release identity with the operator's existing values. Preserve each product's
-node-selection and authentication policy; Receiver may read several nodes.
+extraction and confirmation policy; all products use the root node credentials.
 
 The five product sections are `enhance`, `status`, `transparent_history`,
 `transaction_details` and `receiver`. Each has `enabled` and `settings`.
 Omitted sections are disabled. A disabled section may omit settings and starts
 no task, opens no store and reads no credential. Product settings retain their
 existing names and semantics; non-optional settings must be explicit. Receiver
-must use continuous serving, and Enhance's embedded Status setting is replaced
+is continuous, and Enhance's embedded Status setting is replaced
 by the separate Status section. No configuration reload is performed.
 
 The root `chain` section (`rpc_url`, `rpc_cookie`, and `poll_ms`, default
@@ -100,8 +101,11 @@ Transparent History and Transparent Filters require it and no longer accept
 their own node endpoint, cookie or polling settings (`zakura_rpc_url`,
 `zakura_cookie`, `poll_seconds`, `rpc_url`, `rpc_cookie`, `cookie`). Transaction
 details also use the root follower and require the root chain settings.
-Receiver keeps its own multi-node settings
-and never uses the root section.
+Receiver also requires it. Its service settings no longer accept `rpc_url`,
+`cookie`, `no_auth`, `poll_seconds`, `serve`, `start_height`, or `end_height`.
+Receiver always starts at Ironwood activation and targets two confirmations
+by default (`depth`); canonical committed progress above that target is kept.
+Its independent canonical guard consumes root observations while tables prepare.
 
 ### Root chain following
 

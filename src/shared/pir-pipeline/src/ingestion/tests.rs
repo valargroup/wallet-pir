@@ -82,6 +82,7 @@ enum Event {
 
 /// A journal that records every writer operation in order.
 struct Journal {
+    depth: u64,
     start: u64,
     blocks: Vec<BlockId>,
     chain: Arc<Chain>,
@@ -111,6 +112,9 @@ impl Hold {
 
 impl Ingestion for Journal {
     type Error = String;
+    fn target_height(&self, tip: u64) -> u64 {
+        tip.saturating_sub(self.depth)
+    }
     fn start_height(&self, _tip: u64) -> u64 {
         self.start
     }
@@ -214,6 +218,7 @@ impl Harness {
         let (observations, receiver) = watch::channel(None);
         let shutdown = Shutdown::default();
         let journal = Journal {
+            depth: 0,
             start,
             blocks,
             chain: chain.clone(),
@@ -581,6 +586,7 @@ async fn one_shot_catch_up_refuses_an_observation_the_chain_moved_past() {
     let events = Arc::new(Mutex::new(vec![]));
     let hold = Hold::at(tip);
     let mut journal = Journal {
+        depth: 0,
         start: 0,
         blocks: (0..=10)
             .map(|height| BlockId {
@@ -723,6 +729,7 @@ async fn a_blocked_backfill_never_delays_another_products_observations_or_withdr
     ));
     let events = Arc::new(Mutex::new(vec![]));
     let current = Journal {
+        depth: 0,
         start: 0,
         blocks: (0..=tip)
             .map(|height| BlockId {
@@ -783,3 +790,49 @@ async fn a_blocked_backfill_never_delays_another_products_observations_or_withdr
 }
 
 const _: () = assert!(LIVE_BLOCKS < BACKFILL_BLOCKS);
+
+#[tokio::test]
+async fn confirmation_depth_bounds_ingestion_but_still_reconciles_newer_commits() {
+    let chain = Chain::new(20, "a");
+    let events = Arc::new(Mutex::new(vec![]));
+    let mut journal = Journal {
+        depth: 2,
+        start: 15,
+        blocks: vec![],
+        chain: chain.clone(),
+        events: events.clone(),
+        fail_ingest: Arc::default(),
+        networks: Arc::default(),
+        hold: Arc::default(),
+    };
+    schedule::catch_up(&mut journal, &*chain, &chain.tip(1))
+        .await
+        .unwrap();
+    assert_eq!(journal.committed().unwrap().height, 18);
+    assert_eq!(
+        *events.lock().unwrap(),
+        [Event::Ingest(15, 18), Event::CaughtUp(20)]
+    );
+    // A larger depth keeps canonical progress instead of rebuilding the index.
+    journal.depth = 5;
+    events.lock().unwrap().clear();
+    schedule::catch_up(&mut journal, &*chain, &chain.tip(2))
+        .await
+        .unwrap();
+    assert_eq!(*events.lock().unwrap(), [Event::CaughtUp(20)]);
+    // Blocks above the confirmed target still need withdrawal on a real reorg.
+    chain.reorg(17, 20, "b");
+    schedule::catch_up(&mut journal, &*chain, &chain.tip(3))
+        .await
+        .unwrap();
+    assert_eq!(journal.committed().unwrap().height, 16);
+    let events = events.lock().unwrap();
+    assert_eq!(
+        &events[1..],
+        [
+            Event::Withdraw(Some(16)),
+            Event::Rewind(Some(16)),
+            Event::CaughtUp(20)
+        ]
+    );
+}
