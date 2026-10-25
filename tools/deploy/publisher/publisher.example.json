@@ -53,17 +53,8 @@
     "settings": {
       "data_dir": "/srv/pir-publisher/receiver",
       "min_rows": 8192,
-      "rpc_url": [
-        "http://127.0.0.1:8232"
-      ],
-      "cookie": "/run/credentials/pir-publisher.service/chain-cookie",
-      "no_auth": false,
-      "start_height": 3428143,
-      "end_height": null,
       "depth": 2,
-      "serve": true,
       "bind": "127.0.0.1:18380",
-      "poll_seconds": 10,
       "batch_size": 64,
       "concurrency": 8,
       "near_since": null,

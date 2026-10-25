@@ -7,6 +7,7 @@ pub mod application;
 pub mod blocks;
 pub mod canonical;
 pub mod durable;
+pub mod managed;
 pub mod near;
 pub mod probe;
 pub mod revision;

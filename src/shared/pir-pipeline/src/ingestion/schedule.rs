@@ -73,11 +73,17 @@ pub(crate) async fn reconcile<I: Ingestion>(
     }
     Ok(match writer.committed() {
         Some(block) if block.height > tip.height => Coverage::Ahead,
-        Some(block) if block.height == tip.height => Coverage::Current,
+        Some(block) if block.height >= writer.target_height(tip.height).min(tip.height) => {
+            Coverage::Current
+        }
         Some(block) => Coverage::Missing {
             from: block.height + 1,
         },
-        None if writer.start_height(tip.height) > tip.height => Coverage::Ahead,
+        None if writer.start_height(tip.height)
+            > writer.target_height(tip.height).min(tip.height) =>
+        {
+            Coverage::Ahead
+        }
         None => Coverage::Missing {
             from: writer.start_height(tip.height),
         },
@@ -127,7 +133,10 @@ pub async fn catch_up<I: Ingestion>(
             Coverage::Ahead => return Ok(()),
             Coverage::Stale => return Err(Outcome::Source(STALE.into())),
             Coverage::Missing { from } => {
-                let through = observation.tip.height.min(from + BACKFILL_BLOCKS - 1);
+                let through = writer
+                    .target_height(observation.tip.height)
+                    .min(observation.tip.height)
+                    .min(from + BACKFILL_BLOCKS - 1);
                 if !anchored(writer, chain, from, through).await? {
                     // A fresh observation reconciles the noncanonical batch.
                     return Err(Outcome::Source(STALE.into()));
@@ -250,10 +259,10 @@ async fn live<I: Ingestion>(
                     .await
                     .map_err(Outcome::Writer),
                 Coverage::Ahead | Coverage::Stale => Ok(()),
-                Coverage::Missing { from } if observation.tip.height - from < LIVE_BLOCKS => {
-                    let through = observation.tip.height;
+                Coverage::Missing { from } if writer.target_height(observation.tip.height).min(observation.tip.height) - from < LIVE_BLOCKS => {
+                    let through = writer.target_height(observation.tip.height).min(observation.tip.height);
                     if anchored(&mut *writer, &*feed.chain, from, through).await?
-                        && writer.committed().as_ref() == Some(&observation.tip)
+                        && matches!(reconcile(&mut *writer, &*feed.chain, &observation).await?, Coverage::Current)
                     {
                         writer
                             .caught_up(&observation)
@@ -309,7 +318,10 @@ async fn backfill<I: Ingestion>(
                 let batch = async {
                     match reconcile(&mut *writer, &*feed.chain, &fixed).await? {
                         Coverage::Missing { from } => {
-                            let through = target.height.min(from + BACKFILL_BLOCKS - 1);
+                            let through = writer
+                                .target_height(target.height)
+                                .min(target.height)
+                                .min(from + BACKFILL_BLOCKS - 1);
                             Ok(!anchored(&mut *writer, &*feed.chain, from, through).await?)
                         }
                         Coverage::Current | Coverage::Ahead | Coverage::Stale => Ok(true),

@@ -295,3 +295,41 @@ fn enabled_products_require_settings_and_identify_the_product() {
         }
     }
 }
+
+#[cfg(feature = "receiver")]
+#[test]
+fn receiver_uses_only_the_root_node_configuration() {
+    let example: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../tools/deploy/publisher/publisher.example.json"
+    ))
+    .unwrap();
+    let settings = example["receiver"]["settings"].clone();
+    for field in [
+        "rpc_url",
+        "cookie",
+        "no_auth",
+        "serve",
+        "start_height",
+        "end_height",
+        "poll_seconds",
+    ] {
+        let mut invalid = settings.clone();
+        invalid[field] = serde_json::json!(true);
+        assert!(
+            serde_json::from_value::<receiver_indexer::managed::Config>(invalid).is_err(),
+            "{field}"
+        );
+    }
+    let mut raw = serde_json::json!({
+        "management_listen": "127.0.0.1:18080", "receiver": example["receiver"].clone(),
+    });
+    assert!(serde_json::from_value::<Config>(raw.clone())
+        .unwrap()
+        .validate()
+        .is_err());
+    raw["chain"] = example["chain"].clone();
+    serde_json::from_value::<Config>(raw)
+        .unwrap()
+        .validate()
+        .unwrap();
+}
