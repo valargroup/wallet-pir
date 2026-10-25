@@ -34,10 +34,11 @@ output "query_serving_node" {
   value = try(module.query_serving[0].node, null)
 }
 
-# The smaller replacement for wallet-pir-query-01. It runs beside the first
-# node until routing moves to it, so retiring the first node is a separate step.
+# The smaller replacement for wallet-pir-query-01 (ams3 offers no 16 vCPU,
+# 96 GB size). It runs beside the first node until routing moves to it, so
+# retiring the first node is a separate step.
 variable "query_serving_02_enabled" {
-  description = "Opt in to the 96 GB replacement query node; preserves the existing fleet."
+  description = "Opt in to the 128 GB replacement query node; preserves the existing fleet."
   type        = bool
   default     = false
 }
@@ -51,7 +52,7 @@ module "query_serving_02" {
   vpc_id             = digitalocean_vpc.wallet.id
   ssh_key_ids        = var.ssh_key_ids
   cloudflare_zone_id = var.cloudflare_zone_id
-  size               = "g5-16vcpu-96gb-80gb"
+  size               = "m-16vcpu-128gb"
   data_volume_gib    = 512
   hostname           = "wallet-pir-query-02.valargroup.dev"
 }

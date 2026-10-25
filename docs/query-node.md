@@ -19,11 +19,11 @@ volume. The service has `MemoryHigh=144G`, `MemoryMax=160G` and no swap allowanc
 leaving 32 GiB outside its hard limit for the OS, TLS proxy and operating tools.
 These are limits, not evidence that the current full datasets fit.
 
-The replacement node `wallet-pir-query-02` has 16 vCPUs, 96 GiB RAM and a
-512 GiB volume. Its inventory sets `limits` of `MemoryHigh=72G` and
-`MemoryMax=80G`, and cache budgets of 48 GiB for history, 20 GiB for detail
-and 8 GiB for Enhance, so the three caches together stay below the memory
-limit. On 2026-10-25 the complete active sets were 39.1 GiB of history and
+The replacement node `wallet-pir-query-02` has 16 dedicated vCPUs, 128 GiB RAM and a
+512 GiB volume; Amsterdam offers no 16 vCPU size with 96 GiB. Its inventory
+sets `limits` of `MemoryHigh=104G` and `MemoryMax=112G`, and cache budgets of
+48 GiB for history, 20 GiB for detail and 8 GiB each for Enhance and
+Receiver, so the caches together stay below the memory limit. On 2026-10-25 the complete active sets were 39.1 GiB of history and
 15.0 GiB of detail tables, growing by about 3.9 and 2.3 GiB a year. The
 first node measured 57.7 GiB resident at steady state, about half of it
 memory-mapped preprocessing that the kernel can reclaim under pressure.

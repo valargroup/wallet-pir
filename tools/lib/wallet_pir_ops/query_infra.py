@@ -12,7 +12,7 @@ RESOURCES = {
 # Each node's module address and its approved capacity and destination.
 NODES = {
     '01': {'module': 'query_serving', 'size': 'm-24vcpu-192gb', 'volume_gib': 1024},
-    '02': {'module': 'query_serving_02', 'size': 'g5-16vcpu-96gb-80gb', 'volume_gib': 512},
+    '02': {'module': 'query_serving_02', 'size': 'm-16vcpu-128gb', 'volume_gib': 512},
 }
 
 

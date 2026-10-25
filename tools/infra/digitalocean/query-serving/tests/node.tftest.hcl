@@ -69,13 +69,13 @@ run "replacement_node_uses_its_own_name_volume_and_capacity" {
   # A fresh state: the module ignores later bootstrap changes on an existing node.
   state_key = "replacement"
   variables {
-    size            = "g5-16vcpu-96gb-80gb"
+    size            = "m-16vcpu-128gb"
     data_volume_gib = 512
     hostname        = "wallet-pir-query-02.valargroup.dev"
   }
   assert {
-    condition     = digitalocean_droplet.query.name == "wallet-pir-query-02" && digitalocean_droplet.query.size == "g5-16vcpu-96gb-80gb" && digitalocean_volume.data.size == 512
-    error_message = "The replacement node must use its own name and the 96 GB size with a 512 GiB volume."
+    condition     = digitalocean_droplet.query.name == "wallet-pir-query-02" && digitalocean_droplet.query.size == "m-16vcpu-128gb" && digitalocean_volume.data.size == 512
+    error_message = "The replacement node must use its own name and the 128 GB size with a 512 GiB volume."
   }
   assert {
     condition     = digitalocean_volume.data.name == "wallet-pir-query-02-data" && strcontains(digitalocean_droplet.query.user_data, "scsi-0DO_Volume_wallet-pir-query-02-data")
