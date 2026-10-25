@@ -18,7 +18,8 @@ cuda = ["enhance-shared?/cuda"]
 qualification-tests = []
 # The copied query-host entrypoint the process tests start.
 query-host = ["dep:pir-query-server"]
-receiver = ["dep:receiver-indexer", "pir-publisher/receiver", "pir-query-server/receiver"]
+receiver = ["dep:receiver-indexer", "pir-publisher/receiver", "pir-query-server/receiver", "zakura-server-chain/receiver", "zakura-server-chain/testing-node", "zakura-pir-client/receiver", "zakura-pir-publisher/receiver-crypto"]
+receiver-tests = ["reqwest/stream", "receiver", "publisher-host", "query-host", "dep:zakura-server-chain", "dep:zakura-pir-client", "dep:zakura-pir-publisher"]
 publisher-host = ["dep:pir-publisher"]
 transparent-history = []
 transparent-detail = []
@@ -160,7 +161,7 @@ test = false
 # Address fixtures belong to the wallet consumer tests, never serving libraries.
 transparent = { package = "zakura-transparent", version = "=4.0.0", default-features = false }
 pir-sync-manager = { path = "../../src/shared/pir-sync-manager" }
-zakura-pir-query-server = { version = "=0.0.1-rc2", default-features = false, features = ["transparent"] }
+zakura-pir-query-server = { version = "=0.0.1-rc2", default-features = false, features = ["transparent", "receiver"] }
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
 sha2 = "0.10"

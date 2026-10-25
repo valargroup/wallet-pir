@@ -314,17 +314,18 @@ async fn one_public_listener_serves_history_detail_and_status_wallets() {
     })
     .await;
 }
-/// All four products on one spawned host's `public_listen`: a combined
+/// All five products on one spawned host's `public_listen`: a combined
 /// Enhance role joins history, transaction details and combined Status, and
 /// each unchanged wallet decodes real encrypted answers through that listener.
 /// Native Enhance and display preparation exceed the ordinary per-case budget.
 #[cfg(all(
     feature = "qualification-tests",
+    feature = "receiver-tests",
     feature = "enhance-tests",
     feature = "native-reinspiring"
 ))]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn one_public_listener_serves_all_four_products() {
+async fn one_public_listener_serves_all_five_products() {
     installation_case(Case::SharedListener {
         detail: true,
         enhance: true,
@@ -958,6 +959,12 @@ async fn shared_listener(
         true => Some(super::display_publisher::DisplayPublisher::start().await),
         false => None,
     };
+    // Complete Receiver's independent preparation before dating Status.
+    #[cfg(feature = "receiver-tests")]
+    let receiver = match enhance.is_some() {
+        true => Some(super::receiver_publisher::Receiver::start().await),
+        false => None,
+    };
     let publisher = StatusPublisher::start().await;
     let display_listen = free_address();
     let public = free_address();
@@ -986,6 +993,10 @@ async fn shared_listener(
     #[cfg(all(feature = "enhance-tests", feature = "native-reinspiring"))]
     if let Some(enhance) = &enhance {
         document["enhance"] = enhance.section(root);
+    }
+    #[cfg(feature = "receiver-tests")]
+    if let Some(receiver) = &receiver {
+        document["receiver"] = receiver.section(root);
     }
     let config = write_config(root, "shared", &document);
     let mut child = start(binary, &config_args(&config, false), root, origin).await;
@@ -1039,6 +1050,7 @@ async fn shared_listener(
     }
     // Status: the independent wallet accepts the served anchor and decrypts
     // every fixture case from the combined role through the same listener.
+    publisher.refresh(&public_origin).await;
     status_wallet(&public_origin, &publisher.snapshot, &log).await;
     let http = reqwest::Client::new();
     for prefix in ["/v1/status", "/status/v1"] {
@@ -1072,6 +1084,92 @@ async fn shared_listener(
             .unwrap();
         assert!(control.status().is_success());
     }
+    #[cfg(feature = "receiver-tests")]
+    if let Some(receiver) = &receiver {
+        receiver.wallet(&public_origin).await;
+        // A valid Receiver withdrawal closes aggregate readiness while the
+        // other four products continue answering through the same listener.
+        receiver.block_preparation(true);
+        receiver.reorg();
+        tokio::time::timeout(std::time::Duration::from_secs(60), async {
+            while reqwest::get(format!("{public_origin}/receiver/v1/inventory"))
+                .await
+                .unwrap()
+                .status()
+                != 503
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .expect("Receiver withdrawal did not close its admission");
+        assert_eq!(
+            reqwest::get(format!("http://{management}/ready"))
+                .await
+                .unwrap()
+                .status(),
+            503
+        );
+        publisher.refresh(&public_origin).await;
+        status_wallet(&public_origin, &publisher.snapshot, &log).await;
+        row_query(&public_origin, set, 0).await;
+        if let Some(display) = &display {
+            detail_wallet(&public_origin, display, &log);
+        }
+        #[cfg(all(feature = "enhance-tests", feature = "native-reinspiring"))]
+        if let Some(enhance) = &enhance {
+            enhance.wallet(&public_origin).await;
+        }
+        receiver.block_preparation(false);
+        let expected = receiver.anchor().1;
+        tokio::time::timeout(std::time::Duration::from_secs(60), async {
+            loop {
+                let response = reqwest::get(format!("{public_origin}/receiver/v1/inventory"))
+                    .await
+                    .unwrap();
+                if response.status().is_success()
+                    && response.json::<serde_json::Value>().await.unwrap()["end_hash"]
+                        == serde_json::json!(expected)
+                {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .expect("Receiver did not recover beside the other products");
+        receiver.wallet(&public_origin).await;
+        let before = reqwest::get(format!("http://{management}/ready"))
+            .await
+            .unwrap();
+        eprintln!(
+            "Aggregate readiness after Receiver recovery: {}",
+            before.text().await.unwrap()
+        );
+        // This longer campaign can outlive the fixture's Status observation.
+        // Reobserve that chain, retaining the normal production freshness gate.
+        publisher.refresh(&public_origin).await;
+        tokio::time::timeout(std::time::Duration::from_secs(60), async {
+            loop {
+                if reqwest::get(format!("http://{management}/ready"))
+                    .await
+                    .unwrap()
+                    .status()
+                    == 200
+                {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| {
+            panic!(
+                "aggregate readiness did not recover: {}",
+                std::fs::read_to_string(&log).unwrap_or_default()
+            )
+        });
+    }
     // Private product, management and disabled-product routes are absent.
     let mut private = vec![
         "/v1/provider-status",
@@ -1084,6 +1182,9 @@ async fn shared_listener(
         "/internal/health",
         "/internal/metrics",
         "/internal/evaluate",
+        "/v1/receiver/health",
+        "/operator/receiver/health",
+        "/provider/receiver/v1/current",
     ];
     if enhance.is_none() {
         private.extend(["/enhance/v1/init", "/v1/enhance/init"]);
@@ -1112,8 +1213,19 @@ async fn shared_listener(
             .unwrap();
         assert!(provider.status().is_success());
     }
-    child.kill().await.unwrap();
-    child.wait().await.unwrap();
+    let pid = child.id().unwrap() as libc::pid_t;
+    assert_eq!(unsafe { libc::kill(pid, libc::SIGTERM) }, 0);
+    let exit = tokio::time::timeout(std::time::Duration::from_secs(90), child.wait())
+        .await
+        .unwrap_or_else(|_| {
+            panic!(
+                "all-products host failed to drain: {}",
+                std::fs::read_to_string(&log).unwrap_or_default()
+            )
+        })
+        .unwrap();
+    assert!(exit.success());
+    retain_fixture("all-products-provider", root);
 }
 
 /// The unchanged transaction-detail wallet finds one archive and one recent

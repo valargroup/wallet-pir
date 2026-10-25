@@ -35,3 +35,10 @@ mod all_products;
 #[cfg(all(feature = "enhance-tests", feature = "native-reinspiring"))]
 #[path = "support/enhance_wallet.rs"]
 mod enhance_wallet;
+
+#[cfg(feature = "receiver-tests")]
+#[path = "support/query_host.rs"]
+mod query_host;
+#[cfg(feature = "receiver-tests")]
+#[path = "support/receiver.rs"]
+mod receiver_publisher;

@@ -354,3 +354,32 @@ objects and saved active metadata never authorize serving after a restart: the
 host must obtain fresh publisher authority first. A transient publisher outage
 preserves already approved answers; a withdrawal, recovery fence or negative
 canonical answer invalidates those answers, including work already in flight.
+
+
+### Root-binary qualification
+
+Run these filesystem-fault campaigns as an unprivileged user. They verify that
+directory writes are actually denied before starting the publisher and reject
+execution contexts that bypass that protection.
+
+The existing unified HTTPS campaign also covers Receiver:
+
+```sh
+python3 tools/transparent/scripts/unified-http-sync-campaign.py --products receiver
+python3 tools/transparent/scripts/unified-http-sync-campaign.py --products unified
+```
+
+The Receiver case runs a root publisher and two independent root query servers.
+It checks encrypted payments and witnesses against the synthetic chain, rolling
+hints while table writes cannot finish, retained inventories, publisher outages,
+missed recovery and correction, failed durable writes on both sides,
+cancellation, reorgs and graceful shutdown. The unified case adds Receiver to
+history, transaction details, Status and Enhance on one public listener, and
+checks that a Receiver withdrawal closes aggregate readiness while the other
+products keep answering. Private routes stay off the wallet listener.
+
+The runner requires exactly one passing test for each selected case and retains
+source and binary identities, logs and synthetic inputs under `.local-pir/`.
+Reported resident memory values are samples on the qualification host; table
+budget tests and production capacity qualification remain separate evidence.
+These local synthetic campaigns do not perform production acceptance or a soak.

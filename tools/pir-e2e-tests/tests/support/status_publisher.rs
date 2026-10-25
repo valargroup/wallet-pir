@@ -18,7 +18,10 @@ use status_shared::{
     publication::{scope, AnchorCheckRequest, AnchorCheckResponse, Current, PREFIX},
     Generation,
 };
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 use super::tls;
 
@@ -30,6 +33,7 @@ pub struct StatusPublisher {
     pub snapshot: status_shared::index::Snapshot,
     _tls: tls::Tls,
     server: tokio::task::JoinHandle<()>,
+    renew: Arc<dyn Fn() -> u64 + Send + Sync>,
 }
 
 impl Drop for StatusPublisher {
@@ -39,6 +43,37 @@ impl Drop for StatusPublisher {
 }
 
 impl StatusPublisher {
+    /// Reobserve the unchanged fixture chain through a new bound metadata object.
+    pub fn reobserve(&self) -> u64 {
+        (self.renew)()
+    }
+    /// Wait for this exact renewed observation on the wallet listener. Aggregate
+    /// readiness can remain false because another product is deliberately fenced.
+    pub async fn refresh(&self, origin: &str) {
+        let observed = self.reobserve();
+        let http = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(2))
+            .build()
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(20), async {
+            loop {
+                match http.get(format!("{origin}/status/v1/init")).send().await {
+                    Ok(response) if response.status().is_success() => {
+                        let manifest: status_shared::protocol::Manifest =
+                            response.json().await.unwrap();
+                        if manifest.observed_ms == observed {
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .expect("Status host did not adopt its refreshed observation");
+    }
+
     /// Publish the fixture snapshot as generation 4 at recovery epoch 2.
     pub async fn start() -> Self {
         let snapshot = fixture::snapshot(ENTRIES, false).unwrap();
@@ -60,7 +95,28 @@ impl StatusPublisher {
             sequence: 7,
             ..fixture::publishing(&inventory, &object)
         };
-        let (current, objects) = (Arc::new(current), Arc::new(objects));
+        let (current, objects) = (Arc::new(Mutex::new(current)), Arc::new(Mutex::new(objects)));
+        let renew_current = current.clone();
+        let renew_objects = objects.clone();
+        let renew = Arc::new(move || {
+            let mut current = renew_current.lock().unwrap();
+            let mut refreshed = inventory.clone();
+            refreshed.manifest.generation =
+                current.publication.as_ref().unwrap().descriptor.generation + 1;
+            refreshed.manifest.observed_ms = now_ms();
+            let bytes = serde_json::to_vec(&refreshed).unwrap();
+            let object = ObjectReference::for_bytes(&bytes);
+            renew_objects
+                .lock()
+                .unwrap()
+                .insert(object.sha256.clone(), bytes);
+            *current = Current {
+                scope: scope(NETWORK, SALT),
+                sequence: current.sequence + 1,
+                ..fixture::publishing(&refreshed, &object)
+            };
+            refreshed.manifest.observed_ms
+        });
         let (envelope, authority) = (current.clone(), current);
         let app = Router::new()
             .route(
@@ -72,13 +128,14 @@ impl StatusPublisher {
                 get(move |headers: HeaderMap| {
                     let current = envelope.clone();
                     async move {
+                        let current = current.lock().unwrap().clone();
                         let token = conditional_token(&current);
                         if headers.get("if-none-match").and_then(|v| v.to_str().ok())
                             == Some(&token)
                         {
                             StatusCode::NOT_MODIFIED.into_response()
                         } else {
-                            Json((*current).clone()).into_response()
+                            Json(current).into_response()
                         }
                     }
                 }),
@@ -89,7 +146,7 @@ impl StatusPublisher {
                     let current = authority.clone();
                     async move {
                         Json(AnchorCheckResponse {
-                            authority: current.authority().unwrap(),
+                            authority: current.lock().unwrap().authority().unwrap(),
                             answers: request
                                 .subjects
                                 .into_iter()
@@ -108,6 +165,8 @@ impl StatusPublisher {
                     let objects = objects.clone();
                     async move {
                         objects
+                            .lock()
+                            .unwrap()
                             .get(&id)
                             .cloned()
                             .map_or(StatusCode::NOT_FOUND.into_response(), |bytes| {
@@ -126,6 +185,7 @@ impl StatusPublisher {
             snapshot,
             _tls: tls,
             server,
+            renew,
         }
     }
 }

@@ -9,8 +9,13 @@ pub struct Tls {
     _root: tempfile::TempDir,
     _child: tokio::process::Child,
 }
+#[allow(dead_code)] // Consumers use either the product or root-host discovery helper.
 impl Tls {
     pub async fn start(upstream: &str) -> Self {
+        Self::with_discovery(upstream, upstream).await
+    }
+    /// A root publisher serves discovery on its management listener.
+    pub async fn with_discovery(upstream: &str, management: &str) -> Self {
         let root = tempfile::tempdir().unwrap();
         let certificate = root.path().join("certificate.pem");
         let key = root.path().join("key.pem");
@@ -49,6 +54,10 @@ impl Tls {
             .find(|p| p.join("tools/ci/fast.py").is_file())
             .unwrap();
         let mut child = tokio::process::Command::new("python3")
+            .env(
+                "DISCOVERY_UPSTREAM",
+                management.strip_prefix("http://").unwrap(),
+            )
             .arg(workspace.join("src/pir-publisher/tests/support/distribution_tls.py"))
             .arg(upstream.strip_prefix("http://").unwrap())
             .arg(&certificate)

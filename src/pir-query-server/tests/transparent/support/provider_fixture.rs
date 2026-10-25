@@ -25,13 +25,32 @@ pub(crate) fn retain_fixture(name: &str, source: &std::path::Path) {
         return;
     };
     let target = std::path::PathBuf::from(output).join(name);
-    fn copy(source: &std::path::Path, target: &std::path::Path) {
+    copy_fixture(source, &target);
+}
+/// Preserve finalized fixture bytes and relative aliases within that fixture.
+fn copy_fixture(source: &std::path::Path, target: &std::path::Path) {
+    fn copy(source: &std::path::Path, target: &std::path::Path, root: &std::path::Path) {
         std::fs::create_dir(target).unwrap();
         for entry in std::fs::read_dir(source).unwrap() {
             let entry = entry.unwrap();
             let path = target.join(entry.file_name());
             if entry.file_type().unwrap().is_dir() {
-                copy(&entry.path(), &path);
+                copy(&entry.path(), &path, root);
+            } else if entry.file_type().unwrap().is_symlink() {
+                let link = std::fs::read_link(entry.path()).unwrap();
+                assert!(!link.is_absolute(), "fixture aliases must be relative");
+                let resolved = entry.path().canonicalize().unwrap();
+                let relative = resolved
+                    .strip_prefix(root)
+                    .expect("fixture aliases must remain within the retained tree");
+                // Map the resolved source into the retained tree. An alias
+                // that leaves and reenters the source must not keep its old name.
+                let mut retained = std::path::PathBuf::from(".");
+                for _ in source.strip_prefix(root).unwrap().components() {
+                    retained.push("..");
+                }
+                retained.push(relative);
+                std::os::unix::fs::symlink(retained, path).unwrap();
             } else {
                 assert!(entry.file_type().unwrap().is_file());
                 // Inputs are finalized here and never mutated. Preserve the
@@ -43,7 +62,53 @@ pub(crate) fn retain_fixture(name: &str, source: &std::path::Path) {
             }
         }
     }
-    copy(source, &target);
+    let source = source.canonicalize().unwrap();
+    copy(&source, target, &source);
+}
+
+#[test]
+fn retained_fixture_aliases_survive_source_removal_and_refuse_outside_targets() {
+    let source = tempfile::tempdir().unwrap();
+    let retained = tempfile::tempdir().unwrap();
+    std::fs::create_dir(source.path().join("objects")).unwrap();
+    std::fs::write(source.path().join("objects/table"), b"verified rows").unwrap();
+    std::os::unix::fs::symlink("objects", source.path().join("active")).unwrap();
+    std::os::unix::fs::symlink(".", source.path().join("root_alias")).unwrap();
+    std::os::unix::fs::symlink(
+        std::path::Path::new("..")
+            .join(source.path().file_name().unwrap())
+            .join("objects"),
+        source.path().join("reentered"),
+    )
+    .unwrap();
+    let target = retained.path().join("retained");
+    copy_fixture(source.path(), &target);
+    drop(source);
+    assert_eq!(
+        std::fs::read(target.join("active/table")).unwrap(),
+        b"verified rows"
+    );
+
+    assert_eq!(
+        std::fs::read(target.join("root_alias/objects/table")).unwrap(),
+        b"verified rows"
+    );
+    assert_eq!(
+        std::fs::read(target.join("reentered/table")).unwrap(),
+        b"verified rows"
+    );
+
+    let source = tempfile::tempdir().unwrap();
+    let outside = tempfile::NamedTempFile::new_in(source.path().parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(
+        std::path::Path::new("..").join(outside.path().file_name().unwrap()),
+        source.path().join("outside"),
+    )
+    .unwrap();
+    assert!(std::panic::catch_unwind(|| {
+        copy_fixture(source.path(), &retained.path().join("refused"));
+    })
+    .is_err());
 }
 pub(crate) fn retain_file(name: &str, source: &std::path::Path) {
     let Some(output) = std::env::var_os("WALLET_PIR_QUALIFICATION_OUTPUT") else {

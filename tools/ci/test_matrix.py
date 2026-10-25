@@ -37,7 +37,7 @@ MANUAL_CAMPAIGNS = {('pir-e2e-tests', 'unified_http_sync_campaign'),
 def variants(groups):
     return {
         'transparent': dict(family='transparent', packages=[*groups['transparent'], *TRANSPARENT_HOSTS], features=TRANSPARENT + qualification_features([*groups['transparent'], *TRANSPARENT_HOSTS])),
-        'native': dict(family='enhance', packages=groups['enhance'], features=NATIVE + ['pir-publisher/receiver', 'pir-query-server/receiver', 'pir-e2e-tests/enhance-tests', 'pir-e2e-tests/native-reinspiring', 'pir-publisher/status-tests', 'pir-publisher/native-reinspiring'] + qualification_features(groups['enhance'])),
+        'native': dict(family='enhance', packages=groups['enhance'], features=NATIVE + ['pir-publisher/receiver', 'pir-query-server/receiver', 'pir-e2e-tests/receiver-tests', 'pir-e2e-tests/enhance-tests', 'pir-e2e-tests/native-reinspiring', 'pir-publisher/status-tests', 'pir-publisher/native-reinspiring'] + qualification_features(groups['enhance'])),
         'reference': dict(family='enhance', packages=['enhance-shared', 'status-shared', 'pir-query-server', 'pir-e2e-tests'],
                           features=['pir-e2e-tests/enhance-tests', 'pir-query-server/status'] + qualification_features(['enhance-shared', 'status-shared', 'pir-query-server', 'pir-e2e-tests'])),
         'cuda': dict(family='enhance', packages=['pir-cuda', 'enhance-shared',
