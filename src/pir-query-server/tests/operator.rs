@@ -35,6 +35,61 @@ fn config_check_validates_a_role_without_opening_state() {
     assert!(String::from_utf8_lossy(&missing.stderr).contains("--config"));
 }
 
+#[test]
+fn contract_info_reports_compiled_products_without_configuration() {
+    let temp = tempfile::tempdir().unwrap();
+    // A GPU backend request in the environment must not be initialized.
+    let output = binary()
+        .current_dir(temp.path())
+        .env("ENHANCE_MATVEC_BACKEND", "cuda")
+        .arg("--contract-info")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let info: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(info["schema"], "wallet-pir-contract-info/1");
+    assert_eq!(info["executable"], "pir-query-server");
+    let version = info["contract_version"].as_str().unwrap();
+    assert_eq!(
+        info["contract_major"].as_u64().unwrap().to_string(),
+        version.split('.').next().unwrap()
+    );
+    let products: Vec<&str> = info["products"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|name| name.as_str().unwrap())
+        .collect();
+    for (product, compiled) in [
+        ("enhance", cfg!(feature = "enhance")),
+        ("status", cfg!(feature = "status")),
+        ("transparent_history", cfg!(feature = "transparent-history")),
+        ("transaction_details", cfg!(feature = "transparent-detail")),
+        ("receiver", cfg!(feature = "receiver")),
+    ] {
+        assert_eq!(
+            products.contains(&product),
+            compiled,
+            "{product}: {products:?}"
+        );
+    }
+    assert_eq!(
+        info["backends"].as_array().unwrap().is_empty(),
+        !cfg!(feature = "cuda")
+    );
+    assert_eq!(std::fs::read_dir(temp.path()).unwrap().count(), 0);
+
+    let mixed = binary()
+        .args(["--contract-info", "--config", "missing.json"])
+        .output()
+        .unwrap();
+    assert!(!mixed.status.success());
+}
+
 #[cfg(feature = "enhance")]
 #[test]
 fn check_backend_validates_matvec_before_any_worker_state() {

@@ -28,7 +28,7 @@ import os
 import re
 from urllib.parse import urlsplit, urlunsplit
 
-from wallet_pir_ops import durable
+from wallet_pir_ops import contract, durable
 from wallet_pir_ops.deploy import descriptors, units
 from wallet_pir_ops.deploy.engine import Deployer, DeployError
 from wallet_pir_ops.deploy.transaction import Journal
@@ -99,9 +99,6 @@ PUBLISHER_CONFIG = '/etc/wallet-pir/publisher.json'
 # `transparent_history.settings` of the `--config FILE`, whose whole bytes are
 # pinned.
 PROVIDER_PIN_KEYS = {'ready_identity', 'limits', 'args', 'config_sha256', 'unit_sha256'}
-# The publisher discovery contract (src/shared/pir-service-discovery) a current
-# query server requires before it synchronizes; same major is compatible.
-DISCOVERY_PATH, DISCOVERY_MAJOR = '/.well-known/pir-service-discovery', '1'
 PROVIDER_IDENTITY = {True: {'role': None, 'worker_id': None},
                      False: {'role': 'recent-replica', 'worker_id': 'provider'}}
 
@@ -599,14 +596,14 @@ class Upgrade:
             except (TypeError, KeyError, ValueError, AttributeError) as error:
                 problems.append('%s provider configuration: %s' % (target.key, error))
                 continue
-            status, body = ex.http_get(target.host, publisher + DISCOVERY_PATH)
+            status, body = ex.http_get(target.host, publisher + contract.DISCOVERY_PATH)
+            expected = contract.source_major()
             try:
-                document = json.loads(body) if status == 200 else None
-                major = document['version'].split('.')[0] if document['service'] == 'pir-publisher' else None
-            except (ValueError, TypeError, KeyError, AttributeError):
+                major = contract.publisher_document_major(status, body)
+            except contract.ContractError:
                 major = None
-            problem_if(major != DISCOVERY_MAJOR, '%s publisher %s answered discovery %s, not a pir-publisher %s.x '
-                       'document; upgrade the publisher first' % (target.key, publisher, status, DISCOVERY_MAJOR), problems)
+            problem_if(major != expected, '%s publisher %s answered discovery %s, not a pir-publisher %s.x '
+                       'document; upgrade the publisher first' % (target.key, publisher, status, expected), problems)
         return problems
 
     def provider_problems(self, ex, key, document):

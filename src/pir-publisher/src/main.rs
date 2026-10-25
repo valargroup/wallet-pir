@@ -8,6 +8,10 @@ struct Args {
     /// Check static configuration without opening state, listeners, or credentials.
     #[arg(long, requires = "config")]
     check: bool,
+    /// Print the compiled contract version and products as JSON and exit
+    /// without reading configuration or opening state.
+    #[arg(long, exclusive = true)]
+    contract_info: bool,
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -93,6 +97,19 @@ fn arguments(name: &str, args: Maintenance) -> Vec<std::ffi::OsString> {
         .chain(args.args)
         .collect()
 }
+/// Products compiled into this executable, by configuration section name.
+const PRODUCTS: &[&str] = &[
+    #[cfg(feature = "enhance")]
+    "enhance",
+    #[cfg(feature = "status")]
+    "status",
+    #[cfg(feature = "transparent-history")]
+    "transparent_history",
+    #[cfg(feature = "transparent-detail")]
+    "transaction_details",
+    #[cfg(feature = "receiver")]
+    "receiver",
+];
 #[tokio::main]
 async fn main() -> pir_publisher::Result<()> {
     tracing_subscriber::fmt()
@@ -100,6 +117,11 @@ async fn main() -> pir_publisher::Result<()> {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
     let args = Args::parse();
+    if args.contract_info {
+        let info = pir_service_discovery::ContractInfo::new("pir-publisher", PRODUCTS, &[]);
+        println!("{}", info.to_json());
+        return Ok(());
+    }
     if let Some(command) = args.command {
         return command.run().await;
     }

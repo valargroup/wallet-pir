@@ -17,6 +17,10 @@ struct Args {
     /// binding management or wallet listeners.
     #[arg(long, requires = "config", conflicts_with = "check")]
     verify_only: bool,
+    /// Print the compiled contract version and products as JSON and exit
+    /// without reading configuration, opening state or initializing a GPU.
+    #[arg(long, exclusive = true)]
+    contract_info: bool,
     #[cfg(feature = "enhance")]
     #[command(subcommand)]
     command: Option<EnhanceCommand>,
@@ -42,9 +46,36 @@ fn enhance_command(command: EnhanceCommand) -> pir_query_server::Result<()> {
     }
 }
 
+/// Products compiled into this executable, by configuration section name.
+const PRODUCTS: &[&str] = &[
+    #[cfg(feature = "enhance")]
+    "enhance",
+    #[cfg(feature = "status")]
+    "status",
+    #[cfg(feature = "transparent-history")]
+    "transparent_history",
+    #[cfg(feature = "transparent-detail")]
+    "transaction_details",
+    #[cfg(feature = "receiver")]
+    "receiver",
+];
+const BACKENDS: &[&str] = &[
+    #[cfg(feature = "cuda")]
+    "cuda",
+];
+
 #[tokio::main]
 async fn main() -> pir_query_server::Result<()> {
     let args = Args::parse();
+    if args.contract_info {
+        let info = pir_sync_manager::service_discovery::ContractInfo::new(
+            "pir-query-server",
+            PRODUCTS,
+            BACKENDS,
+        );
+        println!("{}", info.to_json());
+        return Ok(());
+    }
     if args.verify_only {
         // Stdout carries only the verification report; diagnostics go to
         // stderr at the level the Transparent verifiers have always logged.

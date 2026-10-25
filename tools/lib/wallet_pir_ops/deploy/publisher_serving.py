@@ -10,6 +10,7 @@ import copy
 from pathlib import Path
 import re
 
+from .. import contract
 from ..paths import ROOT
 from . import descriptors
 from .coordinator_edge import replace_in_site, site_containing
@@ -21,7 +22,7 @@ CADDY = '/etc/caddy/Caddyfile'
 ROLES = ('packing-router', 'query-ingress')
 FALLBACK = '\thandle {\n\t\treverse_proxy 127.0.0.1:8080\n\t}'
 WALLET = '\thandle /v1/enhance/* {\n\t\treverse_proxy 127.0.0.1:8082\n\t}\n'
-DISCOVERY_PATH = '/.well-known/pir-service-discovery'
+DISCOVERY_PATH = contract.DISCOVERY_PATH
 DISCOVERY = '\thandle ' + DISCOVERY_PATH + ' {\n\t\treverse_proxy 127.0.0.1:18080\n\t}\n'
 
 
