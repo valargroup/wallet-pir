@@ -39,6 +39,9 @@ impl<C: Consumer> ConsumerEngine<C> {
         }
     }
     async fn run_pass(&mut self) -> Result<ConsumerPass<C::Report>, Error> {
+        // A non-resumable candidate can own the very operation guard that
+        // settlement needs. Drop it before waiting for owner work to finish.
+        self.retain_resumable();
         self.context.settle().await?;
         let observation = self.context.observe().await?;
         self.retain_resumable();
@@ -111,19 +114,25 @@ impl<C: Consumer> SyncTask for ConsumerEngine<C> {
     type Report = ConsumerPass<C::Report>;
     async fn synchronize(&mut self) -> Result<Self::Report, Error> {
         self.context.pass_started().await;
-        let result = match self.run_pass().await {
-            Err(error) => match self.context.deferral(&error) {
-                Some(reason) => {
-                    self.retain_resumable();
-                    self.context.deferred(reason).await;
-                    Ok(self.deferred().await)
-                }
-                None => {
-                    self.pending_loaded = None;
-                    Err(error)
-                }
-            },
-            result => result,
+        let result = loop {
+            let result = match self.run_pass().await {
+                Err(error) => match self.context.deferral(&error) {
+                    Some(reason) => {
+                        self.retain_resumable();
+                        self.context.deferred(reason).await;
+                        Ok(self.deferred().await)
+                    }
+                    None => {
+                        self.pending_loaded = None;
+                        Err(error)
+                    }
+                },
+                result => result,
+            };
+            if self.context.continue_after(&result) {
+                continue;
+            }
+            break result;
         };
         self.context.pass_finished(&result).await;
         result

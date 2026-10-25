@@ -212,3 +212,92 @@ async fn dedicated_runtime_constructs_thread_affine_state_on_its_owner_thread() 
     .await
     .unwrap();
 }
+
+struct RecordedPublication(Arc<std::sync::Mutex<Vec<&'static str>>>);
+impl Publication for RecordedPublication {
+    type Error = &'static str;
+    type Material = ();
+    type Stored = ();
+    type Verified = ();
+    type Candidate = ();
+    type Report = ();
+    fn check(&self) -> std::result::Result<(), Self::Error> {
+        Ok(())
+    }
+    async fn build(&mut self) -> std::result::Result<(), Self::Error> {
+        self.0.lock().unwrap().push("build");
+        Ok(())
+    }
+    async fn store(&mut self, _: ()) -> std::result::Result<(), Self::Error> {
+        self.0.lock().unwrap().push("store");
+        Ok(())
+    }
+    async fn verify(&mut self, _: ()) -> std::result::Result<(), Self::Error> {
+        self.0.lock().unwrap().push("verify");
+        Ok(())
+    }
+    async fn assemble(&mut self, _: ()) -> std::result::Result<(), Self::Error> {
+        self.0.lock().unwrap().push("assemble");
+        Ok(())
+    }
+    async fn recheck(&mut self, _: &mut ()) -> std::result::Result<(), Self::Error> {
+        self.0.lock().unwrap().push("recheck");
+        Ok(())
+    }
+    async fn commit(self, _: ()) -> std::result::Result<(), Self::Error> {
+        self.0.lock().unwrap().push("commit");
+        Ok(())
+    }
+}
+struct SelectedInputs {
+    next: usize,
+    events: Arc<std::sync::Mutex<Vec<&'static str>>>,
+}
+impl Publisher for SelectedInputs {
+    type Error = &'static str;
+    type Report = ();
+    type Publication<'a> = RecordedPublication;
+    async fn acquire(
+        &mut self,
+    ) -> std::result::Result<PublicationInput<Self::Publication<'_>>, Self::Error> {
+        self.next += 1;
+        Ok(match self.next {
+            1 => PublicationInput::Unchanged,
+            2 => PublicationInput::Deferred,
+            3 => PublicationInput::MetadataRefresh(RecordedPublication(self.events.clone())),
+            4 => PublicationInput::NewMaterial(RecordedPublication(self.events.clone())),
+            _ => panic!("the bounded source is complete"),
+        })
+    }
+    fn settled(&mut self) -> std::result::Result<Control, Self::Error> {
+        Ok(if self.next == 4 {
+            Control::Complete
+        } else {
+            Control::Continue
+        })
+    }
+    async fn wait(&mut self) -> std::result::Result<(), Self::Error> {
+        Ok(())
+    }
+}
+#[tokio::test]
+async fn selected_refresh_and_material_follow_the_same_checked_phases() {
+    let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+    crate::engine::PublisherEngine
+        .run(
+            SelectedInputs {
+                next: 0,
+                events: events.clone(),
+            },
+            Default::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        *events.lock().unwrap(),
+        [
+            "build", "store", "verify", "assemble", "recheck", "commit", "build", "store",
+            "verify", "assemble", "recheck", "commit"
+        ]
+    );
+}

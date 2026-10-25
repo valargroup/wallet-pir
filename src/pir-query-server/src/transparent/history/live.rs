@@ -1,5 +1,4 @@
 //! Private publication control and request-scoped, atomic serving snapshots.
-use crate::transparent::durable::persist;
 use crate::transparent::history::service::{self, ServiceConfig, ServiceState};
 use crate::transparent::preparation::{PreparationOutcome, PreparingGuard, Refusal};
 use crate::transparent::source_collection::collect_publications;
@@ -9,6 +8,7 @@ use axum::{
     response::{IntoResponse, Response},
     Router,
 };
+use pir_publication::records::persist;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeSet,
@@ -114,7 +114,7 @@ pub struct LiveService(Arc<Inner>);
 
 struct HistoryActivation(Arc<Inner>);
 
-impl crate::transparent::activation::Adapter for HistoryActivation {
+impl pir_pipeline::consumer::activation::Adapter for HistoryActivation {
     type Candidate = Candidate;
     type Validated = ();
 
@@ -771,22 +771,23 @@ impl LiveService {
     /// fresh authority decision, immediately before the durable predecessor CAS.
     /// The manager's check also applies newly observed revocations; persisted
     /// files or a saved proof cannot call this boundary on restart.
-    pub(crate) async fn activate_checked<F, Fut>(
+    pub(crate) async fn reserve_activation(
         &self,
-        expected: String,
-        map_sha256: String,
         initial: bool,
-        check: F,
-    ) -> Result<(), String>
-    where
-        F: FnOnce() -> Fut,
-        Fut: std::future::Future<Output = Result<(), String>>,
-    {
+    ) -> Result<tokio::sync::OwnedMutexGuard<()>, String> {
         let operation = self.0.operations.clone().lock_owned().await;
         if !initial {
             self.qualify_candidate_retirement().await?;
         }
-        check().await?;
+        Ok(operation)
+    }
+    pub(crate) async fn commit_checked(
+        &self,
+        expected: String,
+        map_sha256: String,
+        initial: bool,
+        operation: tokio::sync::OwnedMutexGuard<()>,
+    ) -> Result<(), String> {
         if initial {
             let _gate = self.0.publication_gate.lock().unwrap();
             let active = self.0.active.read().unwrap();
@@ -843,7 +844,7 @@ impl LiveService {
         map_sha256: String,
         _operation: tokio::sync::OwnedMutexGuard<()>,
     ) -> Result<serde_json::Value, String> {
-        crate::transparent::activation::activate(
+        pir_pipeline::consumer::activation::activate(
             expected,
             map_sha256.clone(),
             HistoryActivation(self.0.clone()),

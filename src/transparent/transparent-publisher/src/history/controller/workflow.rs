@@ -1,5 +1,6 @@
 //! Product policy and state supplied to the shared publisher lifecycle.
 use super::*;
+use pir_pipeline::publisher::PublicationInput;
 
 pub(super) struct HistoryPublication {
     pub(super) config: Config,
@@ -20,28 +21,30 @@ impl pir_pipeline::publisher::Publisher for HistoryPublication {
         = preparation::HistoryPreparation<'a>
     where
         Self: 'a;
-    async fn acquire(&mut self) -> Result<pir_pipeline::Input<Self::Publication<'_>>, BoxError> {
+    async fn acquire(&mut self) -> Result<PublicationInput<Self::Publication<'_>>, BoxError> {
         if self.server.is_finished() || self.ingest.is_finished() {
             return Err("history publisher background service stopped".into());
         }
         // No new publication while the journal catches up; the active one
         // keeps serving until reconciliation withdraws it.
         if !self.current.load(Ordering::Acquire) {
-            return Ok(Input::Unchanged);
+            return Ok(PublicationInput::Deferred);
         }
         Ok(
             match acquire_history(&self.config, &self.rpc, &self.store, &self.authority).await? {
-                Input::Work(work) => Input::Work(preparation::HistoryPreparation::new(
-                    &self.config,
-                    &self.rpc,
-                    &self.authority,
-                    work,
-                    DecoupledPolicy::for_geometry,
-                    Some(self.config.archive_geometry.clone()),
-                    Some(self.config.recent_from),
-                )),
-                Input::Unchanged => Input::Unchanged,
-                Input::Deferred => Input::Deferred,
+                Input::Work(work) => {
+                    PublicationInput::NewMaterial(preparation::HistoryPreparation::new(
+                        &self.config,
+                        &self.rpc,
+                        &self.authority,
+                        work,
+                        DecoupledPolicy::for_geometry,
+                        Some(self.config.archive_geometry.clone()),
+                        Some(self.config.recent_from),
+                    ))
+                }
+                Input::Unchanged => PublicationInput::Unchanged,
+                Input::Deferred => PublicationInput::Deferred,
             },
         )
     }

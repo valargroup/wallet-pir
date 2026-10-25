@@ -515,12 +515,12 @@ async fn artifact_replacement_and_capacity_are_explicit_transfer_policies() {
         "refusal does not repair silently"
     );
     let checked = ObjectFetcher::new(&mut source, &cache)
-        .replace_corrupt()
+        .with_corruption(crate::objects::CorruptionPolicy::ReplaceFile)
         .with_cache_limit(6)
         .fetch(&object)
         .await
         .unwrap();
-    assert_eq!(checked.read_bytes().unwrap(), b"abcdef");
+    assert_eq!(checked.file.read_bytes().unwrap(), b"abcdef");
     assert_eq!(tls.requests.lock().unwrap().len(), 1);
     std::fs::remove_file(path).unwrap();
     let count = tls.requests.lock().unwrap().len();

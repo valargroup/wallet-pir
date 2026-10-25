@@ -3,10 +3,12 @@ use super::{
     live::{DisplayCommand, DisplayLive, DisplayPublication},
     service::DisplayRuntime,
 };
-use crate::transparent::{
-    durable::persist,
-    source::{Config, Source},
+use crate::transparent::source::{Config, Source};
+use pir_pipeline::{
+    consumer::{Consumer, ConsumerEngine, ConsumerPass, PeerHandover, PeerReservation},
+    Input,
 };
+use pir_publication::records::persist;
 use std::{
     collections::BTreeSet,
     path::Path,
@@ -29,7 +31,7 @@ struct Floor {
 
 /// Display-specific validation and activation using shared HTTPS synchronization.
 pub struct Manager {
-    sync: pir_pipeline::consumer::polling::SyncManager<DisplaySync>,
+    sync: pir_pipeline::consumer::polling::SyncManager<ConsumerEngine<DisplaySync>>,
 }
 impl Manager {
     /// Check publisher discovery, then open the provider root. An unreachable or
@@ -40,23 +42,23 @@ impl Manager {
     ) -> Result<Self, Error> {
         crate::transparent::source::discover(&config).await?;
         Ok(Self {
-            sync: pir_pipeline::consumer::polling::SyncManager::new(DisplaySync::new(
-                config, service,
-            )?),
+            sync: pir_pipeline::consumer::polling::SyncManager::new(ConsumerEngine::new(
+                DisplaySync::new(config, service)?,
+            )),
         })
     }
     pub fn router(&self) -> axum::Router {
-        self.sync.task().router()
+        self.sync.task().context().router()
     }
     pub async fn ready(&self) -> bool {
-        self.sync.task().ready().await
+        self.sync.task().context().ready().await
     }
     /// The live provider whose router this manager serves.
     pub fn live(&self) -> DisplayLive {
-        self.sync.task().live.clone()
+        self.sync.task().context().live.clone()
     }
     pub async fn poll_once(&mut self) -> Result<serde_json::Value, Error> {
-        self.sync.poll_once().await
+        self.sync.poll_once().await.map(ConsumerPass::into_report)
     }
     /// Synchronize until a publisher contract version mismatch, which is
     /// returned unchanged. Every other failure is retried.
@@ -149,7 +151,7 @@ impl DisplaySync {
         }))
     }
 
-    async fn observe(&mut self) -> Result<Current, Error> {
+    async fn observe_publication(&mut self) -> Result<Current, Error> {
         let polled = self
             .source
             .poll(
@@ -193,37 +195,6 @@ impl DisplaySync {
         }
         Ok(())
     }
-    async fn update(&mut self) -> Result<serde_json::Value, Error> {
-        let current = self.observe().await?;
-        self.collect().await?;
-        crate::transparent::validation::repair_failed(&mut self.source, &self.config.directory)
-            .await;
-        if self.current.as_ref() == Some(&current) {
-            return Ok(serde_json::json!({"unchanged":true,"revision":current.revision}));
-        }
-        let result = self.download(&current).await;
-        let publication = match result {
-            Ok(publication) => publication,
-            Err(error) => {
-                if self.current.is_none() {
-                    if let Ok(bytes) = std::fs::read(self.config.directory.join("active.json")) {
-                        if let Ok(saved) = serde_json::from_slice::<DisplayPublication>(&bytes) {
-                            if let Err(recovery) = self.activate(&current, saved).await {
-                                tracing::warn!(%recovery,"saved display publication refused");
-                            }
-                        }
-                    }
-                }
-                return Err(error);
-            }
-        };
-        self.activate(&current, publication).await?;
-        self.collect().await?;
-        self.current = Some(current.clone());
-        Ok(
-            serde_json::json!({"unchanged":false,"revision":current.revision,"downloaded_bytes":self.source.downloaded()}),
-        )
-    }
     /// Whether a checked publication is actually active; saved pointers alone never count.
     pub async fn ready(&self) -> bool {
         self.live
@@ -256,7 +227,7 @@ impl DisplaySync {
             let objects = crate::transparent::objects::prepare_objects(&self.config.directory)?;
             let mut transfer = std::time::Duration::ZERO;
             for artifact in &inventory.artifacts {
-                crate::transparent::objects::ensure_object(
+                let fetched = crate::transparent::objects::ensure_object(
                     &mut self.source,
                     &objects,
                     artifact,
@@ -266,7 +237,7 @@ impl DisplaySync {
                 crate::transparent::objects::stage_object(
                     &self.config.directory,
                     &stage,
-                    &objects.directory().join(&artifact.sha256),
+                    &fetched.file,
                     artifact,
                 )?;
             }
@@ -297,11 +268,12 @@ impl DisplaySync {
         }
         result
     }
-    async fn activate(
+    async fn prepare_display(
         &mut self,
-        current: &Current,
+        current: Current,
         publication: DisplayPublication,
-    ) -> Result<(), Error> {
+        recovery_error: Option<Error>,
+    ) -> Result<PreparedDisplay, Error> {
         let directory = std::fs::canonicalize(&publication.directory)?;
         if !directory.starts_with(&self.config.directory) {
             return Err("saved display publication escapes provider root".into());
@@ -339,94 +311,200 @@ impl DisplaySync {
                 publication: publication.clone(),
             })
             .await?;
-        let live = self.live.clone();
-        let root = self.config.directory.clone();
-        let floor = &mut self.floor;
-        let source = &mut self.source;
-        live.activate_checked(expected, publication.map_sha256, || async {
-            let latest = refresh_serving(source, &root, &live, floor, current)
-                .await
-                .map_err(|e| e.to_string())?;
-            if latest != *current || !latest.eligible() {
-                return Err("display candidate superseded or invalidated".into());
-            }
-            let mut keep = BTreeSet::new();
-            for (digest, height, hash) in &anchors {
-                if !source
-                    .anchor(&latest, *height, hash)
-                    .await
-                    .map_err(|e| e.to_string())?
-                {
-                    let revoked = revoke(
-                        &root,
-                        &live,
-                        floor,
-                        &latest,
-                        BTreeSet::from([digest.clone()]),
-                    );
-                    // The chain can change after the preceding pointer check.
-                    // Refresh serving authority before leaving the rejected candidate.
-                    let reconciled = refresh_serving(source, &root, &live, floor, &latest).await;
-                    revoked.map_err(|e| e.to_string())?;
-                    reconciled.map_err(|e| e.to_string())?;
-                    return Err("display candidate has noncanonical history".into());
-                }
-                if floor.digests.contains(digest) && latest.revision <= floor.revision {
-                    return Err("display recovery requires a higher source revision".into());
-                }
-                keep.insert(digest.clone());
-            }
-            let final_current = refresh_serving(source, &root, &live, floor, current)
-                .await
-                .map_err(|e| e.to_string())?;
-            if final_current != latest {
-                return Err("display current changed during anchor checks".into());
-            }
-            live.restore_verified(&keep)?;
-            Ok(())
+        let operation = self.live.reserve_activation().await;
+        Ok(PreparedDisplay {
+            current,
+            publication,
+            expected,
+            anchors,
+            operation,
+            recovery_error,
         })
-        .await?;
-        Ok(())
     }
 }
+struct DownloadedDisplay {
+    publication: DisplayPublication,
+    recovery_error: Option<Error>,
+}
+struct PreparedDisplay {
+    current: Current,
+    publication: DisplayPublication,
+    expected: String,
+    anchors: Vec<(String, u64, String)>,
+    operation: tokio::sync::OwnedMutexGuard<()>,
+    recovery_error: Option<Error>,
+}
 
-impl pir_pipeline::consumer::polling::SyncTask for DisplaySync {
+impl Consumer for DisplaySync {
+    type Observation = Current;
+    type Candidate = Current;
+    type Artifacts = DownloadedDisplay;
+    type Loaded = PreparedDisplay;
+    type Validation = (Current, Vec<(String, u64, String)>);
+    type Authority = ();
     type Report = serde_json::Value;
-    type Error = Error;
-    async fn synchronize(&mut self) -> Result<Self::Report, Error> {
+    async fn settle(&mut self) -> Result<(), Error> {
+        self.source.discover().await
+    }
+    async fn observe(&mut self) -> Result<Current, Error> {
+        self.observe_publication().await
+    }
+    fn eligible(&self, current: &Current) -> bool {
+        current.eligible()
+    }
+    fn keep_loaded(&self, _: &PreparedDisplay) -> bool {
+        false
+    }
+    async fn check_serving(&mut self, _: &Current) -> Result<(), Error> {
+        Ok(())
+    }
+    async fn select(&mut self, current: &Current) -> Result<Input<Current>, Error> {
+        self.collect().await?;
+        crate::transparent::validation::repair_failed(&mut self.source, &self.config.directory)
+            .await;
+        Ok(if self.current.as_ref() == Some(current) {
+            Input::Unchanged
+        } else {
+            Input::Work(current.clone())
+        })
+    }
+    async fn reserve(&mut self, _: &mut Current) -> Result<PeerReservation, Error> {
+        Ok(PeerReservation::Reserved)
+    }
+    async fn obtain(&mut self, current: &Current) -> Result<DownloadedDisplay, Error> {
+        match self.download(current).await {
+            Ok(publication) => Ok(DownloadedDisplay {
+                publication,
+                recovery_error: None,
+            }),
+            Err(error) => {
+                if self.current.is_none() {
+                    if let Ok(bytes) = std::fs::read(self.config.directory.join("active.json")) {
+                        if let Ok(publication) = serde_json::from_slice(&bytes) {
+                            return Ok(DownloadedDisplay {
+                                publication,
+                                recovery_error: Some(error),
+                            });
+                        }
+                    }
+                }
+                Err(error)
+            }
+        }
+    }
+    async fn load(
+        &mut self,
+        current: Current,
+        downloaded: DownloadedDisplay,
+    ) -> Result<PreparedDisplay, Error> {
+        self.prepare_display(current, downloaded.publication, downloaded.recovery_error)
+            .await
+    }
+    async fn rebind(
+        &mut self,
+        _: &Current,
+        loaded: PreparedDisplay,
+    ) -> Result<PreparedDisplay, Error> {
+        Ok(loaded)
+    }
+    fn validate(
+        &self,
+        latest: &Current,
+        loaded: &PreparedDisplay,
+    ) -> Result<Self::Validation, Error> {
+        if latest != &loaded.current {
+            return Err("display candidate superseded or invalidated".into());
+        }
+        Ok((latest.clone(), loaded.anchors.clone()))
+    }
+    async fn authorize(&mut self, _: &Current, checked: &Self::Validation) -> Result<(), Error> {
+        let (current, anchors) = checked;
+        let latest = current.clone();
+        let live = self.live.clone();
+        let root = self.config.directory.clone();
+        let mut keep = BTreeSet::new();
+        for (digest, height, hash) in anchors {
+            if !self.source.anchor(&latest, *height, hash).await? {
+                let revoked = revoke(
+                    &root,
+                    &live,
+                    &mut self.floor,
+                    &latest,
+                    BTreeSet::from([digest.clone()]),
+                );
+                // The chain can change after the preceding pointer check.
+                // Refresh serving authority before leaving the rejected candidate.
+                let reconciled =
+                    refresh_serving(&mut self.source, &root, &live, &mut self.floor, &latest).await;
+                revoked?;
+                reconciled?;
+                return Err("display candidate has noncanonical history".into());
+            }
+            if self.floor.digests.contains(digest) && latest.revision <= self.floor.revision {
+                return Err("display recovery requires a higher source revision".into());
+            }
+            keep.insert(digest.clone());
+        }
+        let final_current =
+            refresh_serving(&mut self.source, &root, &live, &mut self.floor, current).await?;
+        if final_current != latest {
+            return Err("display current changed during anchor checks".into());
+        }
+        live.restore_verified(&keep)?;
+        Ok(())
+    }
+    async fn confirm(&mut self, _: &mut PreparedDisplay) -> Result<PeerReservation, Error> {
+        Ok(PeerReservation::Reserved)
+    }
+    async fn commit(
+        &mut self,
+        loaded: PreparedDisplay,
+        _: Self::Validation,
+        _: (),
+    ) -> Result<(serde_json::Value, PeerHandover), Error> {
+        self.live
+            .commit_checked(
+                loaded.expected,
+                loaded.publication.map_sha256,
+                loaded.operation,
+            )
+            .await?;
+        if let Some(error) = loaded.recovery_error {
+            return Err(error);
+        }
+        self.collect().await?;
+        self.current = Some(loaded.current.clone());
+        Ok((
+            serde_json::json!({"unchanged":false,"revision":loaded.current.revision,"downloaded_bytes":self.source.downloaded()}),
+            PeerHandover::Complete,
+        ))
+    }
+    async fn serving_report(&mut self) -> serde_json::Value {
+        serde_json::json!({"unchanged":true,"revision":self.current.as_ref().map_or(0, |current| current.revision)})
+    }
+    async fn pass_started(&mut self) {
         self.source.reset_budget();
         *self.synchronization.write().unwrap() = serde_json::json!({"state":"synchronizing"});
-        let result = async {
-            self.source.discover().await?;
-            self.update().await
-        }
-        .await;
+    }
+    async fn pass_finished(&mut self, result: &Result<ConsumerPass<Self::Report>, Error>) {
         if result.is_err() {
-            // A refusal must not leave obsolete downloads growing indefinitely.
-            // Preserve the original authority error when maintenance also fails.
             if let Err(error) = self.collect().await {
                 tracing::warn!(%error, "display source collection deferred after failed synchronization");
             }
         }
-        match &result {
-            Ok(report) => {
-                *self.synchronization.write().unwrap() =
-                    serde_json::json!({"state":"synchronized","last_change":report})
+        let mut status = self.synchronization.write().unwrap();
+        *status = match result {
+            Ok(ConsumerPass::Committed { report, .. } | ConsumerPass::Deferred { report }) => {
+                serde_json::json!({"state":"synchronized","last_change":report})
             }
             Err(error) => {
-                *self.synchronization.write().unwrap() =
-                    serde_json::json!({"state":"refused","error":error.to_string()})
+                tracing::warn!(%error,"display synchronization refused");
+                serde_json::json!({"state":"refused","error":error.to_string()})
             }
-        }
-        result
+        };
     }
     fn terminal(&self, error: &Error) -> bool {
         crate::transparent::source::is_incompatible(error)
-    }
-    fn report(&self, result: &Result<Self::Report, Error>) {
-        if let Err(error) = result {
-            tracing::warn!(%error,"display synchronization refused");
-        }
     }
 }
 

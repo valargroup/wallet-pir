@@ -77,7 +77,7 @@ default = []
 # Repeated Status sync campaigns. Fast keeps one case for each outcome.
 qualification-tests = []
 # Scoped record-write injection for integration tests; absent in service builds.
-test-support = []
+test-support = ["pir-publication?/test-support"]
 enhance = [
     "dep:enhance-shared",
     "dep:pir-control",

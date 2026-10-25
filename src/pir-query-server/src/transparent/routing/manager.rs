@@ -1,9 +1,9 @@
 //! Autonomous recent-worker synchronization. The private root has one owner;
 //! completed bytes are reusable inputs, never saved serving authority.
+use pir_publication::records::persist;
 use zakura_pir_protocol::transparent::filter as transparent_filter;
 
 use crate::transparent::{
-    durable::persist,
     history::{
         live::{Command, LiveService, Publication},
         service::{ServiceConfig, ServiceState},
@@ -11,11 +11,13 @@ use crate::transparent::{
     routing::bootstrap::{self, Config},
     source::Source,
 };
-use pir_pipeline::Input;
+use pir_pipeline::{
+    consumer::{Consumer, ConsumerEngine, ConsumerPass, PeerHandover, PeerReservation},
+    Input,
+};
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::Path,
-    time::Duration,
 };
 use transparent_shared::publication::{self, Current, Error, Inventory};
 use transparent_shared::{
@@ -28,7 +30,7 @@ use transparent_shared::{
 
 /// Transparent publication policy hosted by the shared synchronization loop.
 pub struct Manager {
-    sync: pir_pipeline::consumer::polling::SyncManager<HistorySync>,
+    sync: pir_pipeline::consumer::polling::SyncManager<ConsumerEngine<HistorySync>>,
 }
 impl Manager {
     /// Check publisher discovery, then open the provider root. An unreachable or
@@ -36,31 +38,31 @@ impl Manager {
     pub async fn new(config: Config, service: ServiceConfig) -> Result<Self, Error> {
         crate::transparent::source::discover(&config).await?;
         Ok(Self {
-            sync: pir_pipeline::consumer::polling::SyncManager::new(HistorySync::new(
-                config, service,
-            )?),
+            sync: pir_pipeline::consumer::polling::SyncManager::new(ConsumerEngine::new(
+                HistorySync::new(config, service)?,
+            )),
         })
     }
     /// Hold and verify every shard locally, including archive runtimes.
     pub fn with_full_holdings(mut self) -> Self {
-        self.sync.task_mut().full = true;
+        self.sync.task_mut().context_mut().full = true;
         self
     }
     pub fn with_archive(
         mut self,
         archive: std::sync::Arc<crate::transparent::routing::archive::Archive>,
     ) -> Self {
-        self.sync.task_mut().archive = Some(archive);
+        self.sync.task_mut().context_mut().archive = Some(archive);
         self
     }
     pub fn live(&self) -> Option<LiveService> {
-        self.sync.task().live()
+        self.sync.task().context().live()
     }
     pub fn router(&self) -> Result<axum::Router, Error> {
-        self.sync.task().router()
+        self.sync.task().context().router()
     }
     pub async fn poll_once(&mut self) -> Result<Progress, Error> {
-        self.sync.poll_once().await
+        self.sync.poll_once().await.map(ConsumerPass::into_report)
     }
     /// Synchronize until a publisher contract version mismatch, which is
     /// returned unchanged. Every other failure is retried.
@@ -88,6 +90,9 @@ struct HistorySync {
     /// Exact-anchor negatives need their own revision floor: eligible Current
     /// alone does not encode them. Retain it before any fallible intent I/O.
     revocations: Revocations,
+    recovery_attempted: bool,
+    continuation: bool,
+    observation_unchanged: bool,
     synchronization: std::sync::Arc<std::sync::RwLock<serde_json::Value>>,
 }
 #[derive(Debug, serde::Serialize)]
@@ -158,6 +163,9 @@ impl HistorySync {
             pending: None,
             current: None,
             revocations: intent,
+            recovery_attempted: false,
+            continuation: false,
+            observation_unchanged: false,
             synchronization: std::sync::Arc::new(std::sync::RwLock::new(
                 serde_json::json!({"state":"not-polled"}),
             )),
@@ -184,25 +192,6 @@ impl HistorySync {
                 }
             }),
         ))
-    }
-    async fn reconcile(&mut self) -> Result<Progress, Error> {
-        let input = pir_pipeline::acquire(self.acquire(), &mut ()).await?;
-        match pir_pipeline::advance(input, Acquired::prepare, Prepared::publish, &mut ()).await? {
-            Input::Work(progress) => Ok(progress),
-            Input::Unchanged => Ok(Progress {
-                unchanged: true,
-                revision: self
-                    .current
-                    .as_ref()
-                    .expect("conditional poll has an active snapshot")
-                    .revision,
-                downloaded_bytes: self.source.downloaded(),
-                downloaded_files: 0,
-                stages: None,
-            }),
-            // HTTPS acquisition has no deferred queue or admission outcome.
-            Input::Deferred => unreachable!("HTTPS acquisition never defers work"),
-        }
     }
     /// Collection is maintenance, not serving authority. Run it even while
     /// activation is refused, and refuse another allocation if it cannot finish.
@@ -231,78 +220,7 @@ impl HistorySync {
             .await??;
         Ok(())
     }
-    async fn acquire(&mut self) -> Result<Input<Acquired<'_>>, Error> {
-        self.source.reset_budget();
-        if let Some(live) = &self.live {
-            live.collect_memory().await?;
-        }
-        let current = poll_snapshot(
-            &mut self.source,
-            &self.config,
-            self.live.as_ref(),
-            self.current.as_ref(),
-            &mut self.revocations,
-        )
-        .await?;
-        // Repair after refreshing authority, before staging can refuse a
-        // withdrawn object shared with the next publication.
-        crate::transparent::validation::repair_failed(&mut self.source, &self.config.directory)
-            .await;
-        let Some(current) = current else {
-            return Ok(Input::Unchanged);
-        };
-        let mut recovered = false;
-        if self.live.is_none()
-            && self.pending.is_none()
-            && self.config.directory.join("active.json").exists()
-        {
-            // A failed update does not discard the complete predecessor across
-            // restart. Recovery still requires a fresh source snapshot and exact
-            // retained anchors; loading this record alone never opens a listener.
-            match self.recover(&current).await {
-                Ok(live) => {
-                    self.pending = None;
-                    self.live = Some(live);
-                    recovered = true;
-                }
-                Err(error) => tracing::warn!(%error, "saved publication not eligible for recovery"),
-            }
-        }
-        // A recovered owner was not present for the first observation.
-        if self.current.is_none() {
-            apply_snapshot(
-                &mut self.source,
-                &self.config.directory,
-                self.live.as_ref(),
-                &current,
-                &mut self.revocations,
-            )
-            .await?;
-        }
-        if !current.eligible() {
-            return Err("publisher current publication is withdrawn or noncanonical".into());
-        }
-        if recovered {
-            // The freshly checked predecessor already serves this exact snapshot:
-            // restaging would only load and warm the same files a second time.
-            match self.recovered_is_current(&current).await {
-                Ok(true) => {
-                    self.current = Some(current);
-                    return Ok(Input::Unchanged);
-                }
-                Ok(false) => {}
-                Err(error) => {
-                    tracing::warn!(%error, "recovered publication not confirmed current; updating")
-                }
-            }
-        }
-        self.collect().await?;
-        Ok(Input::Work(Acquired {
-            owner: self,
-            current,
-        }))
-    }
-    async fn recover(&mut self, current: &Current) -> Result<LiveService, Error> {
+    async fn load_saved(&mut self, current: Current) -> Result<PreparedHistory, Error> {
         let record = self.config.directory.join("active.json");
         let publication: Publication = serde_json::from_slice(&std::fs::read(&record)?)?;
         let directory = std::fs::canonicalize(&publication.directory)?;
@@ -370,37 +288,13 @@ impl HistorySync {
         // advances during recovery, keep these checked inputs private so the
         // next fresh update does not warm the saved publication all over again.
         self.pending = Some(live.clone());
-        let checked = live.clone();
-        let source = &mut self.source;
-        let config = &self.config;
-        let revocations = &mut self.revocations;
-        live.activate_checked(
-            publication.map_sha256.clone(),
-            publication.map_sha256,
-            true,
-            || async {
-                let result: Result<(), Error> = async {
-                    let latest = poll_snapshot(source, config, Some(&checked), None, revocations)
-                        .await?
-                        .ok_or("missing recovery current")?;
-                    if &latest != current {
-                        return Err("recovery snapshot superseded".into());
-                    }
-                    let final_current =
-                        poll_snapshot(source, config, Some(&checked), None, revocations)
-                            .await?
-                            .ok_or("missing recovery recheck")?;
-                    if latest != final_current {
-                        return Err("recovery snapshot superseded during anchor checks".into());
-                    }
-                    Ok(())
-                }
-                .await;
-                result.map_err(|e| e.to_string())
-            },
-        )
-        .await?;
-        Ok(live)
+        let operation = live.reserve_activation(true).await?;
+        Ok(PreparedHistory::Recovery {
+            current: Box::new(current),
+            live,
+            publication,
+            operation,
+        })
     }
     /// Whether the recovered predecessor is exactly the fresh `current`: its
     /// persisted verified inventory, map, holdings and runtime configuration
@@ -518,49 +412,462 @@ fn collect_saved(root: &Path) -> Result<(), Error> {
     }
     Ok(())
 }
-impl pir_pipeline::consumer::polling::SyncTask for HistorySync {
+enum HistoryCandidate {
+    Recovery(Current),
+    Update(Current),
+}
+enum HistoryArtifacts {
+    Recovery,
+    Staged(Box<bootstrap::Staged>),
+}
+struct PreparedUpdate {
+    current: Current,
+    staged: bootstrap::Staged,
+    publication: Publication,
+    live: LiveService,
+    expected: String,
+    initial: bool,
+    stages: Stages,
+    operation: tokio::sync::OwnedMutexGuard<()>,
+    activating: std::time::Instant,
+}
+enum PreparedHistory {
+    Recovery {
+        current: Box<Current>,
+        live: LiveService,
+        publication: Publication,
+        operation: tokio::sync::OwnedMutexGuard<()>,
+    },
+    Update(Box<PreparedUpdate>),
+}
+struct HistoryValidation {
+    current: Current,
+    live: LiveService,
+    map_path: Option<std::path::PathBuf>,
+}
+impl Consumer for HistorySync {
+    type Observation = Current;
+    type Candidate = HistoryCandidate;
+    type Artifacts = HistoryArtifacts;
+    type Loaded = PreparedHistory;
+    type Validation = HistoryValidation;
+    type Authority = ();
     type Report = Progress;
-    type Error = Error;
-    fn started(&mut self) {
+    async fn settle(&mut self) -> Result<(), Error> {
+        self.source.discover().await?;
+        if let Some(live) = &self.live {
+            live.collect_memory().await?;
+        }
+        Ok(())
+    }
+    async fn observe(&mut self) -> Result<Current, Error> {
+        let current = poll_snapshot(
+            &mut self.source,
+            &self.config,
+            self.live.as_ref().or(self.pending.as_ref()),
+            self.current.as_ref(),
+            &mut self.revocations,
+        )
+        .await?;
+        self.observation_unchanged = current.is_none();
+        let current = current
+            .or_else(|| self.current.clone())
+            .ok_or("missing current publication")?;
+        if !current.eligible() {
+            return Err("publisher current publication is withdrawn or noncanonical".into());
+        }
+        Ok(current)
+    }
+    fn eligible(&self, current: &Current) -> bool {
+        current.eligible()
+    }
+    fn keep_loaded(&self, _: &PreparedHistory) -> bool {
+        false
+    }
+    async fn check_serving(&mut self, _: &Current) -> Result<(), Error> {
+        Ok(())
+    }
+    async fn select(&mut self, current: &Current) -> Result<Input<HistoryCandidate>, Error> {
+        self.continuation = false;
+        crate::transparent::validation::repair_failed(&mut self.source, &self.config.directory)
+            .await;
+        if self.observation_unchanged {
+            return Ok(Input::Unchanged);
+        }
+        if !self.recovery_attempted
+            && self.live.is_none()
+            && self.pending.is_none()
+            && self.config.directory.join("active.json").exists()
+        {
+            self.recovery_attempted = true;
+            self.continuation = true;
+            return Ok(Input::Work(HistoryCandidate::Recovery(current.clone())));
+        }
+        self.collect().await?;
+        Ok(Input::Work(HistoryCandidate::Update(current.clone())))
+    }
+    async fn reserve(&mut self, _: &mut HistoryCandidate) -> Result<PeerReservation, Error> {
+        Ok(PeerReservation::Reserved)
+    }
+    async fn obtain(&mut self, candidate: &HistoryCandidate) -> Result<HistoryArtifacts, Error> {
+        match candidate {
+            HistoryCandidate::Recovery(_) => Ok(HistoryArtifacts::Recovery),
+            HistoryCandidate::Update(current) => Ok(HistoryArtifacts::Staged(Box::new(
+                bootstrap::stage_holdings(&self.config, &mut self.source, current, true, self.full)
+                    .await?,
+            ))),
+        }
+    }
+    async fn load(
+        &mut self,
+        candidate: HistoryCandidate,
+        artifacts: HistoryArtifacts,
+    ) -> Result<PreparedHistory, Error> {
+        match (candidate, artifacts) {
+            (HistoryCandidate::Recovery(current), HistoryArtifacts::Recovery) => {
+                self.load_saved(current).await
+            }
+            (HistoryCandidate::Update(current), HistoryArtifacts::Staged(staged)) => {
+                let staged = *staged;
+                let mut stages = Stages {
+                    transfer_seconds: staged.transfer_seconds,
+                    staging_seconds: staged.stage_seconds - staged.transfer_seconds,
+                    ..Stages::default()
+                };
+                let publication = Publication {
+                    directory: staged.directory.clone(),
+                    assignment: (!self.full).then(|| staged.directory.join("assignment.json")),
+                    map_sha256: staged.inventory.map_sha256.clone(),
+                    runtimes: Some(staged.directory.clone()),
+                };
+                let cold = self.live.is_none();
+                // Revocation permanently cancels a snapshot, even when the publisher
+                // later restores its map. Rebuild private data before that recovery.
+                if self
+                    .pending
+                    .as_ref()
+                    .is_some_and(LiveService::is_invalidated)
+                {
+                    self.pending = None;
+                }
+                let live = if let Some(live) = self.live.as_ref().or(self.pending.as_ref()) {
+                    live.clone()
+                } else {
+                    let loading = std::time::Instant::now();
+                    let root = staged.directory.clone();
+                    let options = staged.options.clone();
+                    let set = tokio::task::spawn_blocking(move || {
+                        ShardSet::open_for_serving(&root, &options)
+                    })
+                    .await??;
+                    let state = ServiceState::build_with_runtimes(
+                        set,
+                        self.service,
+                        None,
+                        Some(ShippedRuntimes::required(staged.directory.clone())),
+                    )?;
+                    let state = match &self.archive {
+                        Some(archive) => state.with_archive(archive.clone()),
+                        None => state,
+                    };
+                    stages.loading_seconds = loading.elapsed().as_secs_f64();
+                    let warming = std::time::Instant::now();
+                    let _prewarm = state.spawn_prewarm();
+                    state.check_required_material()?;
+                    stages.prewarm_seconds = warming.elapsed().as_secs_f64();
+                    LiveService::new_required(
+                        state,
+                        publication.clone(),
+                        self.service,
+                        staged.options.clone(),
+                        self.config.directory.join("active.json"),
+                        self._lock.clone(),
+                    )?
+                };
+                if cold {
+                    self.pending = Some(live.clone());
+                    live.fence_recovered(
+                        &combined_floor(&self.config.directory, &mut self.revocations)?.digests,
+                    )?;
+                }
+                let status = live.command(Command::Status).await?;
+                let expected = status["active"]["map_sha256"]
+                    .as_str()
+                    .ok_or("owner has no predecessor")?
+                    .to_string();
+                // An unchanged private bootstrap view still needs its first durable
+                // activation. A changed map uses the normal prepared-candidate path.
+                let initial = cold && expected == publication.map_sha256;
+                if !initial {
+                    let reply = live
+                        .command(Command::Prepare {
+                            expected: expected.clone(),
+                            publication: publication.clone(),
+                        })
+                        .await;
+                    let reply = match reply {
+                        Ok(reply) => reply,
+                        Err(error) => {
+                            if cold {
+                                self.pending = None;
+                            }
+                            return Err(error.into());
+                        }
+                    };
+                    stages.loading_seconds = reply["loading_seconds"].as_f64().unwrap_or_default();
+                    stages.prewarm_seconds = reply["warming_seconds"].as_f64().unwrap_or_default();
+                }
+                let activating = std::time::Instant::now();
+                let operation = live.reserve_activation(initial).await?;
+                Ok(PreparedHistory::Update(Box::new(PreparedUpdate {
+                    current,
+                    staged,
+                    publication,
+                    live,
+                    expected,
+                    initial,
+                    stages,
+                    operation,
+                    activating,
+                })))
+            }
+            _ => Err("history preparation does not match its artifact selection".into()),
+        }
+    }
+    async fn rebind(
+        &mut self,
+        _: &Current,
+        loaded: PreparedHistory,
+    ) -> Result<PreparedHistory, Error> {
+        Ok(loaded)
+    }
+    fn validate(
+        &self,
+        latest: &Current,
+        loaded: &PreparedHistory,
+    ) -> Result<HistoryValidation, Error> {
+        let (current, live, map_path) = match loaded {
+            PreparedHistory::Recovery { current, live, .. } => (current.as_ref(), live, None),
+            PreparedHistory::Update(next) => (
+                &next.current,
+                &next.live,
+                Some(next.staged.directory.join("shards.json")),
+            ),
+        };
+        if latest != current {
+            return Err("publication superseded before activation".into());
+        }
+        Ok(HistoryValidation {
+            current: current.clone(),
+            live: live.clone(),
+            map_path,
+        })
+    }
+    async fn authorize(&mut self, _: &Current, checked: &HistoryValidation) -> Result<(), Error> {
+        let current = &checked.current;
+        let config = &self.config;
+        let root = &config.directory;
+        let source = &mut self.source;
+        let revocations = &mut self.revocations;
+        let checked_live = checked.live.clone();
+        let latest = current.clone();
+        if let Some(map_path) = &checked.map_path {
+            // A missed invalidation is not encoded in the latest range.
+            // Revalidate exact candidate anchors, including formerly revoked
+            // revisions, before permitting a newer recovery to clear them.
+            let map: transparent_filter::ShardMap =
+                serde_json::from_slice(&std::fs::read(map_path)?)?;
+            let anchors = map.shards.iter().map(|shard| {
+                (
+                    shard.end_height,
+                    shard.terminal_block_hash.clone(),
+                    shard.manifest_digest.clone(),
+                )
+            });
+            if !fresh_anchors(
+                source,
+                root,
+                &checked_live,
+                &latest,
+                anchors,
+                true,
+                revocations,
+            )
+            .await?
+            {
+                return Err("candidate anchor is noncanonical".into());
+            }
+            let keep: BTreeSet<String> = map
+                .shards
+                .iter()
+                .map(|shard| shard.manifest_digest.clone())
+                .collect();
+            if latest.revision > combined_floor(root, revocations)?.revision {
+                checked_live.restore_verified(&keep)?;
+                let mut intent = combined_floor(root, revocations)?;
+                intent.digests.retain(|digest| !keep.contains(digest));
+                persist_floor(root, &intent)?;
+                *revocations = intent;
+            }
+            // Anchor checks cannot authorize a candidate across a source
+            // pointer/recovery change. Never use 304 for this final read.
+            let final_current =
+                poll_snapshot(source, config, Some(&checked_live), None, revocations)
+                    .await?
+                    .ok_or("missing final current")?;
+            if final_current != latest {
+                return Err("publication superseded during anchor checks".into());
+            }
+        } else {
+            let final_current =
+                poll_snapshot(source, config, Some(&checked_live), None, revocations)
+                    .await?
+                    .ok_or("missing recovery recheck")?;
+            if &final_current != current {
+                return Err("recovery snapshot superseded during anchor checks".into());
+            }
+        }
+        Ok(())
+    }
+    async fn confirm(&mut self, _: &mut PreparedHistory) -> Result<PeerReservation, Error> {
+        Ok(PeerReservation::Reserved)
+    }
+    async fn commit(
+        &mut self,
+        loaded: PreparedHistory,
+        _: HistoryValidation,
+        _: (),
+    ) -> Result<(Progress, PeerHandover), Error> {
+        match loaded {
+            PreparedHistory::Recovery {
+                current,
+                live,
+                publication,
+                operation,
+            } => {
+                let current = *current;
+                live.commit_checked(
+                    publication.map_sha256.clone(),
+                    publication.map_sha256,
+                    true,
+                    operation,
+                )
+                .await?;
+                self.pending = None;
+                self.live = Some(live);
+                let exact = match self.recovered_is_current(&current).await {
+                    Ok(exact) => exact,
+                    Err(error) => {
+                        tracing::warn!(%error, "recovered publication not confirmed current; updating");
+                        false
+                    }
+                };
+                self.continuation = !exact;
+                if exact {
+                    self.current = Some(current);
+                }
+                Ok((self.serving_report().await, PeerHandover::Complete))
+            }
+            PreparedHistory::Update(next) => {
+                let PreparedUpdate {
+                    current,
+                    staged,
+                    publication,
+                    live,
+                    expected,
+                    initial,
+                    mut stages,
+                    operation,
+                    activating,
+                } = *next;
+                live.commit_checked(expected, publication.map_sha256, initial, operation)
+                    .await?;
+                persist(
+                    &staged.directory.join("verified-inventory.json"),
+                    &staged.inventory,
+                )?;
+                self.pending = None;
+                self.live = Some(live.clone());
+                self.current = Some(current.clone());
+                collect_disk(&live, &self.config.directory, &staged.directory).await;
+                stages.activation_seconds = activating.elapsed().as_secs_f64();
+                Ok((
+                    Progress {
+                        unchanged: false,
+                        revision: current.revision,
+                        downloaded_bytes: self.source.downloaded(),
+                        downloaded_files: staged.downloaded_files,
+                        stages: Some(stages),
+                    },
+                    PeerHandover::Complete,
+                ))
+            }
+        }
+    }
+    async fn serving_report(&mut self) -> Progress {
+        Progress {
+            unchanged: true,
+            revision: self.current.as_ref().map_or(0, |current| current.revision),
+            downloaded_bytes: self.source.downloaded(),
+            downloaded_files: 0,
+            stages: None,
+        }
+    }
+    fn continue_after(&mut self, result: &Result<ConsumerPass<Progress>, Error>) -> bool {
+        let again = std::mem::take(&mut self.continuation);
+        if again {
+            if let Err(error) = result {
+                tracing::warn!(%error, "saved publication not eligible for recovery");
+            }
+        }
+        again
+            && !result
+                .as_ref()
+                .err()
+                .is_some_and(crate::transparent::source::is_incompatible)
+    }
+    async fn pass_started(&mut self) {
+        self.source.reset_budget();
+        self.recovery_attempted = false;
+        self.continuation = false;
         self.synchronization.write().unwrap()["in_progress"] = true.into();
     }
-    async fn synchronize(&mut self) -> Result<Progress, Error> {
-        // Every pass, unchanged ones included, rechecks the publisher's contract
-        // version before any product request.
-        let result = async {
-            self.source.discover().await?;
-            self.reconcile().await
-        }
-        .await;
-        if result.is_err() || result.as_ref().is_ok_and(|progress| progress.unchanged) {
+    async fn pass_finished(&mut self, result: &Result<ConsumerPass<Progress>, Error>) {
+        if result.is_err()
+            || result.as_ref().is_ok_and(|pass| match pass {
+                ConsumerPass::Committed { report, .. } | ConsumerPass::Deferred { report } => {
+                    report.unchanged
+                }
+            })
+        {
             if let Err(error) = self.collect().await {
                 tracing::warn!(%error, "failed-publication collection refused; staging remains paused");
             }
         }
-        result
-    }
-    fn terminal(&self, error: &Error) -> bool {
-        crate::transparent::source::is_incompatible(error)
-    }
-    fn finished(
-        &mut self,
-        result: &Result<Progress, Error>,
-        completed: std::time::SystemTime,
-        _elapsed: Duration,
-    ) {
+        let completed = std::time::SystemTime::now();
         let at = completed
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs());
         let mut sync = self.synchronization.write().unwrap();
         // The last activated change survives later unchanged or refused polls.
         let last_change = match result {
-            Ok(progress) if !progress.unchanged => {
+            Ok(
+                ConsumerPass::Committed {
+                    report: progress, ..
+                }
+                | ConsumerPass::Deferred { report: progress },
+            ) if !progress.unchanged => {
                 serde_json::json!({"completed_unix":at,"progress":progress})
             }
             _ => sync["last_change"].clone(),
         };
         *sync = match result {
-            Ok(progress) => {
+            Ok(
+                ConsumerPass::Committed {
+                    report: progress, ..
+                }
+                | ConsumerPass::Deferred { report: progress },
+            ) => {
                 serde_json::json!({"in_progress":false,"completed_unix":at,"state":"synchronized","progress":progress})
             }
             Err(error) => {
@@ -568,242 +875,15 @@ impl pir_pipeline::consumer::polling::SyncTask for HistorySync {
             }
         };
         sync["last_change"] = last_change;
-    }
-    fn report(&self, result: &Result<Progress, Error>) {
         match result {
-            Ok(progress) => tracing::info!(?progress, "publication synchronized"),
+            Ok(ConsumerPass::Committed { report, .. } | ConsumerPass::Deferred { report }) => {
+                tracing::info!(?report, "publication synchronized")
+            }
             Err(error) => tracing::warn!(%error, "publication synchronization refused"),
         }
     }
-}
-
-/// Authenticated, replay-ordered source work. Safety evidence is applied before
-/// returning it, including predecessor recovery. Neither this token nor staged
-/// files grant authority. The borrow keeps one source budget and one owner/pass.
-struct Acquired<'a> {
-    owner: &'a mut HistorySync,
-    current: Current,
-}
-
-/// Strictly loaded candidate; only the existing owner may publish it after its
-/// final source/anchor checks under activation serialization. No dataset copies
-/// or persisted phase token are needed.
-struct Prepared<'a> {
-    work: Acquired<'a>,
-    staged: bootstrap::Staged,
-    publication: Publication,
-    live: LiveService,
-    expected: String,
-    initial: bool,
-    stages: Stages,
-}
-
-impl<'a> Acquired<'a> {
-    async fn prepare(self) -> Result<Input<Prepared<'a>>, Error> {
-        let Acquired { owner, current } = self;
-        let staged =
-            bootstrap::stage_holdings(&owner.config, &mut owner.source, &current, true, owner.full)
-                .await?;
-        let mut stages = Stages {
-            transfer_seconds: staged.transfer_seconds,
-            staging_seconds: staged.stage_seconds - staged.transfer_seconds,
-            ..Stages::default()
-        };
-        let publication = Publication {
-            directory: staged.directory.clone(),
-            assignment: (!owner.full).then(|| staged.directory.join("assignment.json")),
-            map_sha256: staged.inventory.map_sha256.clone(),
-            runtimes: Some(staged.directory.clone()),
-        };
-        let cold = owner.live.is_none();
-        // Revocation permanently cancels a snapshot, even when the publisher
-        // later restores its map. Rebuild private data before that recovery.
-        if owner
-            .pending
-            .as_ref()
-            .is_some_and(LiveService::is_invalidated)
-        {
-            owner.pending = None;
-        }
-        let live = if let Some(live) = owner.live.as_ref().or(owner.pending.as_ref()) {
-            live.clone()
-        } else {
-            let loading = std::time::Instant::now();
-            let root = staged.directory.clone();
-            let options = staged.options.clone();
-            let set =
-                tokio::task::spawn_blocking(move || ShardSet::open_for_serving(&root, &options))
-                    .await??;
-            let state = ServiceState::build_with_runtimes(
-                set,
-                owner.service,
-                None,
-                Some(ShippedRuntimes::required(staged.directory.clone())),
-            )?;
-            let state = match &owner.archive {
-                Some(archive) => state.with_archive(archive.clone()),
-                None => state,
-            };
-            stages.loading_seconds = loading.elapsed().as_secs_f64();
-            let warming = std::time::Instant::now();
-            let _prewarm = state.spawn_prewarm();
-            state.check_required_material()?;
-            stages.prewarm_seconds = warming.elapsed().as_secs_f64();
-            LiveService::new_required(
-                state,
-                publication.clone(),
-                owner.service,
-                staged.options.clone(),
-                owner.config.directory.join("active.json"),
-                owner._lock.clone(),
-            )?
-        };
-        if cold {
-            owner.pending = Some(live.clone());
-            live.fence_recovered(
-                &combined_floor(&owner.config.directory, &mut owner.revocations)?.digests,
-            )?;
-        }
-        let status = live.command(Command::Status).await?;
-        let expected = status["active"]["map_sha256"]
-            .as_str()
-            .ok_or("owner has no predecessor")?
-            .to_string();
-        // An unchanged private bootstrap view still needs its first durable
-        // activation. A changed map uses the normal prepared-candidate path.
-        let initial = cold && expected == publication.map_sha256;
-        if !initial {
-            let reply = live
-                .command(Command::Prepare {
-                    expected: expected.clone(),
-                    publication: publication.clone(),
-                })
-                .await;
-            let reply = match reply {
-                Ok(reply) => reply,
-                Err(error) => {
-                    if cold {
-                        owner.pending = None;
-                    }
-                    return Err(error.into());
-                }
-            };
-            stages.loading_seconds = reply["loading_seconds"].as_f64().unwrap_or_default();
-            stages.prewarm_seconds = reply["warming_seconds"].as_f64().unwrap_or_default();
-        }
-        Ok(Input::Work(Prepared {
-            work: Acquired { owner, current },
-            staged,
-            publication,
-            live,
-            expected,
-            initial,
-            stages,
-        }))
-    }
-}
-
-impl Prepared<'_> {
-    async fn publish(self) -> Result<Progress, Error> {
-        let Prepared {
-            work: Acquired { owner, current },
-            staged,
-            publication,
-            live,
-            expected,
-            initial,
-            mut stages,
-        } = self;
-        let activating = std::time::Instant::now();
-        let config = &owner.config;
-        let root = &config.directory;
-        let revocations = &mut owner.revocations;
-        let source = &mut owner.source;
-        let checked_live = live.clone();
-        let map_path = staged.directory.join("shards.json");
-        // The owner obtains this check while it holds activation serialization.
-        live.activate_checked(
-            expected,
-            publication.map_sha256.clone(),
-            initial,
-            || async {
-                let result: Result<(), Error> = async {
-                    let latest =
-                        poll_snapshot(source, config, Some(&checked_live), None, revocations)
-                            .await?
-                            .ok_or("missing fresh current")?;
-                    if latest != current || !latest.eligible() {
-                        return Err("publication superseded before activation".into());
-                    }
-                    // A missed invalidation is not encoded in the latest range.
-                    // Revalidate exact candidate anchors, including formerly revoked
-                    // revisions, before permitting a newer recovery to clear them.
-                    let map: transparent_filter::ShardMap =
-                        serde_json::from_slice(&std::fs::read(&map_path)?)?;
-                    let anchors = map.shards.iter().map(|shard| {
-                        (
-                            shard.end_height,
-                            shard.terminal_block_hash.clone(),
-                            shard.manifest_digest.clone(),
-                        )
-                    });
-                    if !fresh_anchors(
-                        source,
-                        root,
-                        &checked_live,
-                        &latest,
-                        anchors,
-                        true,
-                        revocations,
-                    )
-                    .await?
-                    {
-                        return Err("candidate anchor is noncanonical".into());
-                    }
-                    let keep: BTreeSet<String> = map
-                        .shards
-                        .iter()
-                        .map(|shard| shard.manifest_digest.clone())
-                        .collect();
-                    if latest.revision > combined_floor(root, revocations)?.revision {
-                        checked_live.restore_verified(&keep)?;
-                        let mut intent = combined_floor(root, revocations)?;
-                        intent.digests.retain(|digest| !keep.contains(digest));
-                        persist_floor(root, &intent)?;
-                        *revocations = intent;
-                    }
-                    // Anchor checks cannot authorize a candidate across a source
-                    // pointer/recovery change. Never use 304 for this final read.
-                    let final_current =
-                        poll_snapshot(source, config, Some(&checked_live), None, revocations)
-                            .await?
-                            .ok_or("missing final current")?;
-                    if final_current != latest {
-                        return Err("publication superseded during anchor checks".into());
-                    }
-                    Ok(())
-                }
-                .await;
-                result.map_err(|e| e.to_string())
-            },
-        )
-        .await?;
-        persist(
-            &staged.directory.join("verified-inventory.json"),
-            &staged.inventory,
-        )?;
-        owner.pending = None;
-        owner.live = Some(live.clone());
-        owner.current = Some(current.clone());
-        collect_disk(&live, &owner.config.directory, &staged.directory).await;
-        stages.activation_seconds = activating.elapsed().as_secs_f64();
-        Ok(Progress {
-            unchanged: false,
-            revision: current.revision,
-            downloaded_bytes: owner.source.downloaded(),
-            downloaded_files: staged.downloaded_files,
-            stages: Some(stages),
-        })
+    fn terminal(&self, error: &Error) -> bool {
+        crate::transparent::source::is_incompatible(error)
     }
 }
 /// Disk retention after an activation follows the owner's snapshot policy:
@@ -1210,7 +1290,7 @@ mod collection_tests {
         symlink(source, directory.join(&digest)).unwrap();
         std::fs::File::open(&directory)
             .unwrap()
-            .set_modified(std::time::UNIX_EPOCH + Duration::from_secs(revision + 1))
+            .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(revision + 1))
             .unwrap();
         directory
     }

@@ -114,7 +114,7 @@ impl Job {
             stamp: self.stamp.lock().unwrap().clone(),
             passed,
         };
-        crate::transparent::durable::persist(&record_path(&self.primary), &record)
+        pir_publication::records::persist(&record_path(&self.primary), &record)
             .map_err(io::Error::other)
     }
     fn fail(&self, error: &io::Error) {

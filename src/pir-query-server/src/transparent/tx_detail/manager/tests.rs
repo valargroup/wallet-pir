@@ -132,19 +132,21 @@ async fn failed_sync_collects_old_downloads_but_preserves_restart_inputs() {
     std::fs::write(&orphan, b"unused download").unwrap();
     let foreign = root.join("operator-backup");
     std::fs::create_dir(&foreign).unwrap();
-    let mut sync = DisplaySync::new(
-        Config {
-            publisher: "https://127.0.0.1:1".into(),
-            network: "main".into(),
-            genesis_hash: "22".repeat(32),
-            directory: root.clone(),
-            cache_bytes: 1 << 20,
-            max_download_bytes: 1 << 20,
-            roots: Vec::new(),
-        },
-        crate::transparent::config::ServiceConfig::default(),
-    )
-    .unwrap();
+    let mut sync = ConsumerEngine::new(
+        DisplaySync::new(
+            Config {
+                publisher: "https://127.0.0.1:1".into(),
+                network: "main".into(),
+                genesis_hash: "22".repeat(32),
+                directory: root.clone(),
+                cache_bytes: 1 << 20,
+                max_download_bytes: 1 << 20,
+                roots: Vec::new(),
+            },
+            crate::transparent::config::ServiceConfig::default(),
+        )
+        .unwrap(),
+    );
     let lock = std::fs::OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -154,6 +156,7 @@ async fn failed_sync_collects_old_downloads_but_preserves_restart_inputs() {
         .unwrap();
     lock.lock().unwrap();
     assert!(sync
+        .context()
         .collect()
         .await
         .unwrap_err()

@@ -184,7 +184,17 @@ async fn a_failed_shared_file_does_not_block_other_publication_progress() {
     phase(&previous.revisions["previous"].1[0], FAILED).await;
     let stage = root.path().join("next");
     std::fs::create_dir(&stage).unwrap();
-    crate::transparent::objects::stage_object(root.path(), &stage, &object, &file).unwrap();
+    let received = crate::transparent::objects::ArtifactFile::Bulk(
+        pir_publication::ReceivedObjectFile::open(
+            object.clone(),
+            pir_publication::ObjectReference {
+                sha256: file.sha256.clone(),
+                bytes: file.bytes,
+            },
+        )
+        .unwrap(),
+    );
+    crate::transparent::objects::stage_object(root.path(), &stage, &received, &file).unwrap();
     let linked = stage.join(&file.path);
     let mut next = Scope::default();
     next.add("retained", 1, &linked, &cache, &key("retained"));
@@ -425,14 +435,12 @@ async fn real_https_defers_bulk_digest_checks_and_repairs_before_reenabling() {
     )
     .await
     .is_err());
-    assert!(crate::transparent::objects::ensure_object(
-        &mut source,
-        &objects,
-        &artifact,
-        &mut transfer
-    )
-    .await
-    .unwrap());
+    assert!(
+        crate::transparent::objects::ensure_object(&mut source, &objects, &artifact, &mut transfer)
+            .await
+            .unwrap()
+            .downloaded
+    );
     let object = objects.directory().join(&artifact.sha256);
     let alias = root.join("alias");
     crate::transparent::objects::link_object(&object, &alias, &artifact, |a, b| {

@@ -12,7 +12,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use pir_pipeline::Input;
+use pir_pipeline::publisher::PublicationInput;
 use pir_publication::{
     conditional_token, AuthorityCheckRefusal, AuthorityTransition, PublicationAuthority,
     PublicationReference, PublishedObjectStore, SubjectAnswer, AUTHORITY_CHECK_PATH, CURRENT_PATH,

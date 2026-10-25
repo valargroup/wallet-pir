@@ -879,7 +879,7 @@ async fn manager_persists_invalidation_and_refuses_equal_revision_reenable_after
     // An intent-write failure must still fence memory and the owner's own
     // durable record. Startup then reconciles the two records conservatively.
     let records = std::fs::canonicalize(&state).unwrap();
-    let refused = pir_query_server::transparent::test_support::record_writer(
+    let refused = pir_publication::records::test_support::record_writer(
         &records.join("revocation-floor.json"),
         |_, _| Err(std::io::Error::other("record directory write refused")),
     );
@@ -1877,10 +1877,9 @@ async fn manager_double_intent_write_failure_retains_exact_negative_revision() {
     let refused: Vec<_> = ["revocation-floor.json", "revocation-fallback.json"]
         .into_iter()
         .map(|name| {
-            pir_query_server::transparent::test_support::record_writer(
-                &records.join(name),
-                |_, _| Err(std::io::Error::other("record directory write refused")),
-            )
+            pir_publication::records::test_support::record_writer(&records.join(name), |_, _| {
+                Err(std::io::Error::other("record directory write refused"))
+            })
         })
         .collect();
     owner.0.distribution_revision.store(100, Ordering::Release);

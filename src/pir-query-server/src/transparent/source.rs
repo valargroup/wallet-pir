@@ -75,6 +75,9 @@ impl Source {
         self.transport.discover().await?;
         Ok(())
     }
+    pub(crate) fn artifact_source(&mut self) -> &mut pir_sync_manager::HttpsSource {
+        &mut self.transport
+    }
     pub(crate) fn downloaded(&self) -> u64 {
         self.transport.downloaded()
     }
@@ -186,13 +189,11 @@ impl Source {
             origin: self.transport.origin().to_string(),
             current: current.clone(),
         };
-        let primary = crate::transparent::durable::persist(
-            &directory.join("publisher-high-water.json"),
-            &saved,
-        );
+        let primary =
+            pir_publication::records::persist(&directory.join("publisher-high-water.json"), &saved);
         let fallback = directory.join("publisher-high-water-fallback.json");
         if primary.is_err() || fallback.exists() {
-            crate::transparent::durable::persist(&fallback, &saved)?;
+            pir_publication::records::persist(&fallback, &saved)?;
         }
         primary?;
         Ok(())
@@ -454,27 +455,27 @@ mod observation_tests {
                     origin: source.transport.origin().to_string(),
                     current: next.clone(),
                 };
-                crate::transparent::durable::persist(&root.path().join(companion), &saved).unwrap();
+                pir_publication::records::persist(&root.path().join(companion), &saved).unwrap();
                 assert!(source
                     .validate_observation(root.path(), &next)
                     .unwrap()
                     .is_some());
                 saved.current.revision += 1;
-                crate::transparent::durable::persist(&root.path().join(companion), &saved).unwrap();
+                pir_publication::records::persist(&root.path().join(companion), &saved).unwrap();
                 assert!(
                     source.validate_observation(root.path(), &next).is_err(),
                     "a damaged record must not hide a newer readable companion"
                 );
                 saved.current = next.clone();
                 saved.current.inventory_sha256 = "33".repeat(32);
-                crate::transparent::durable::persist(&root.path().join(companion), &saved).unwrap();
+                pir_publication::records::persist(&root.path().join(companion), &saved).unwrap();
                 assert!(
                     source.validate_observation(root.path(), &next).is_err(),
                     "equal revisions cannot substitute another inventory"
                 );
                 saved.current = next.clone();
                 saved.origin = "https://another.invalid/".into();
-                crate::transparent::durable::persist(&root.path().join(companion), &saved).unwrap();
+                pir_publication::records::persist(&root.path().join(companion), &saved).unwrap();
                 assert!(
                     source.validate_observation(root.path(), &next).is_err(),
                     "a damaged record must not hide a readable origin mismatch"

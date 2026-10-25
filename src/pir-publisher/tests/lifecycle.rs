@@ -212,11 +212,13 @@ async fn a_registered_publication_requires_completed_and_current_preparation() {
         type Error = pir_pipeline::publisher::Error;
         type Report = ();
         type Publication<'a> = ExampleWork;
-        async fn acquire(&mut self) -> Result<pir_pipeline::Input<ExampleWork>, Self::Error> {
-            Ok(self
-                .0
-                .take()
-                .map_or(pir_pipeline::Input::Unchanged, pir_pipeline::Input::Work))
+        async fn acquire(
+            &mut self,
+        ) -> Result<pir_pipeline::publisher::PublicationInput<ExampleWork>, Self::Error> {
+            Ok(self.0.take().map_or(
+                pir_pipeline::publisher::PublicationInput::Unchanged,
+                pir_pipeline::publisher::PublicationInput::NewMaterial,
+            ))
         }
         async fn wait(&mut self) -> Result<(), Self::Error> {
             std::future::pending().await

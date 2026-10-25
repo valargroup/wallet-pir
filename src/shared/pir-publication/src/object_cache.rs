@@ -6,7 +6,7 @@
 //! authority; the caller still observes and checks the publication.
 use crate::{
     is_object_digest, open_object_file, verify_object_file, FileIdentity, ObjectReference,
-    ObjectVerification,
+    ObjectVerification, ReceivedObjectFile,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -44,6 +44,24 @@ impl VerifiedObjectFile {
             file,
             verification: verified,
         })
+    }
+    /// Seal a verified cache entry without invalidating the proof through our
+    /// own permission change. Existing writable entries use the same inode.
+    pub fn make_read_only(mut self) -> io::Result<Self> {
+        self.check()?;
+        if !self.file.metadata()?.permissions().readonly() {
+            self.file
+                .set_permissions(fs::Permissions::from_mode(0o444))?;
+            self.verification.identity = self
+                .verification
+                .identity
+                .after_rename(&self.path, &self.file)?;
+            self.verification.reusable = false;
+        }
+        Ok(self)
+    }
+    pub fn path(&self) -> &Path {
+        &self.path
     }
     pub fn reference(&self) -> &ObjectReference {
         &self.verification.reference
@@ -182,6 +200,21 @@ impl ObjectCache {
             verification: verified,
         }))
     }
+    /// Open received bytes by length only. No digest evidence is created or
+    /// inferred, including after restart. The product owns deferred validation.
+    pub fn open_received(
+        &self,
+        object: &ObjectReference,
+    ) -> io::Result<Option<ReceivedObjectFile>> {
+        let path = self.object_path(object)?;
+        match ReceivedObjectFile::open(path, object.clone()) {
+            Ok(file) => Ok(Some(file.seal()?)),
+            Err(crate::ObjectFileError::Io(error)) if error.kind() == io::ErrorKind::NotFound => {
+                Ok(None)
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
     /// Start a new partial file for `object`. Dropping the partial before
     /// [`PartialObject::promote`] removes it.
     pub fn begin_partial(&self, object: &ObjectReference) -> io::Result<PartialObject> {
@@ -241,6 +274,16 @@ impl PartialObject {
             .take()
             .ok_or_else(|| io::Error::other("partial object file already taken"))
     }
+    /// Publish length-checked bytes for products whose whole-file validation
+    /// runs later. The receipt carries the same opened inode across promotion.
+    pub fn promote_received(self, written: fs::File) -> io::Result<ReceivedObjectFile> {
+        written.set_permissions(fs::Permissions::from_mode(0o444))?;
+        written.sync_all()?;
+        let received = ReceivedObjectFile::open(self.partial_path.clone(), self.expected.clone())?;
+        let path = self.promote(written)?;
+        Ok(received.renamed(path)?)
+    }
+
     /// Seal and verify the partial before exposing its completed name. The
     /// checked handle survives promotion; loading does not hash it again.
     pub fn promote_verified(self, written: fs::File) -> io::Result<VerifiedObjectFile> {

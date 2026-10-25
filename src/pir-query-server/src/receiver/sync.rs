@@ -304,7 +304,7 @@ impl PublicationAdapter for Receiver {
         let mut checked = pir_publication::VerifiedObjects::default();
         if let Some(filters) = &inventory.filters {
             for batch in &filters.batches {
-                checked.insert(objects.fetch(batch).await?);
+                checked.insert(objects.fetch(batch).await?.file);
             }
         }
         let filter_inventory = inventory.clone();

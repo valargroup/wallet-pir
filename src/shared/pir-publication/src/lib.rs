@@ -36,7 +36,9 @@ pub use authority_floor::{
     StaleSuccessionCheck, WrittenFloor,
 };
 pub use object_cache::{ObjectCache, PartialObject, VerifiedObjectFile, VerifiedObjects};
-pub use object_file::{hash_object_file, open_object_file, FileIdentity, ObjectFileError};
+pub use object_file::{
+    hash_object_file, open_object_file, FileIdentity, ObjectFileError, ReceivedObjectFile,
+};
 pub use object_installation::{InstalledObject, ObjectInstaller};
 pub use object_reference::{
     is_object_digest, object_digest, ObjectReference, ObjectReferenceError, OBJECTS_PATH,
@@ -64,3 +66,6 @@ pub type MaterialIdentity = [u8; 32];
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct ViewIdentity(pub [u8; 32]);
+
+/// Durable JSON publication records.
+pub mod records;

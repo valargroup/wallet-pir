@@ -82,7 +82,7 @@ pub async fn verify(config: Config) -> Result<Report, Error> {
         }
         let runtime_preparation = state.preparation();
         drop(state);
-        crate::transparent::durable::persist(&stage.join("verified-inventory.json"), &inventory)?;
+        pir_publication::records::persist(&stage.join("verified-inventory.json"), &inventory)?;
         Ok(Report {
             current,
             map_sha256: inventory.map_sha256,
@@ -180,15 +180,11 @@ pub(crate) async fn stage_holdings(
         ) {
             let target = stage.join(&artifact.path);
             if let Some(objects) = &objects {
-                if ensure_object(source, objects, artifact, &mut transfer).await? {
+                let fetched = ensure_object(source, objects, artifact, &mut transfer).await?;
+                if fetched.downloaded {
                     downloaded_files += 1;
                 }
-                stage_object(
-                    &config.directory,
-                    &stage,
-                    &objects.directory().join(&artifact.sha256),
-                    artifact,
-                )?;
+                stage_object(&config.directory, &stage, &fetched.file, artifact)?;
             } else {
                 std::fs::create_dir_all(target.parent().ok_or("artifact has no parent")?)?;
                 let fetching = std::time::Instant::now();
@@ -234,10 +230,7 @@ pub(crate) async fn stage_holdings(
         }
         let options = holdings(config, &map, &inventory, full)?;
         if let LoadScope::Assigned { assignment, .. } = &options.scope {
-            crate::transparent::durable::persist(
-                &stage.join("assignment.json"),
-                assignment.as_ref(),
-            )?;
+            pir_publication::records::persist(&stage.join("assignment.json"), assignment.as_ref())?;
         }
         if cache {
             sync_tree(&stage)?;
@@ -420,6 +413,7 @@ mod object_tests {
             !ensure_object(&mut source, &objects, &artifact, &mut transfer)
                 .await
                 .unwrap()
+                .downloaded
         );
         let target = root.path().join("stage");
         link_object(&path, &target, &artifact, |a, b| std::fs::hard_link(a, b)).unwrap();
