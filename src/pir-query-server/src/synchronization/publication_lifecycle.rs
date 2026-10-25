@@ -334,7 +334,7 @@ pub struct PublicationLifecycle<A: PublicationAdapter> {
 }
 
 impl<A: PublicationAdapter> PublicationLifecycle<A> {
-    #[cfg(test)]
+    #[cfg(all(test, feature = "receiver"))]
     pub(crate) async fn check_serving_proofs(
         &mut self,
         subjects: Vec<(ViewIdentity, A::AuthoritySubject)>,
@@ -342,7 +342,7 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
         let envelope = self.observe_envelope().await?;
         self.check_authority(&envelope, subjects).await
     }
-    #[cfg(test)]
+    #[cfg(all(test, feature = "receiver"))]
     pub(crate) fn view_was_invalidated(&self, identity: ViewIdentity) -> bool {
         self.floor.is_invalidated(&identity)
     }
