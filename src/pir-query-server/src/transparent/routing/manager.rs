@@ -418,7 +418,7 @@ enum HistoryCandidate {
 }
 enum HistoryArtifacts {
     Recovery,
-    Staged(bootstrap::Staged),
+    Staged(Box<bootstrap::Staged>),
 }
 struct PreparedUpdate {
     current: Current,
@@ -438,7 +438,7 @@ enum PreparedHistory {
         publication: Publication,
         operation: tokio::sync::OwnedMutexGuard<()>,
     },
-    Update(PreparedUpdate),
+    Update(Box<PreparedUpdate>),
 }
 struct HistoryValidation {
     current: Current,
@@ -512,10 +512,10 @@ impl Consumer for HistorySync {
     async fn obtain(&mut self, candidate: &HistoryCandidate) -> Result<HistoryArtifacts, Error> {
         match candidate {
             HistoryCandidate::Recovery(_) => Ok(HistoryArtifacts::Recovery),
-            HistoryCandidate::Update(current) => Ok(HistoryArtifacts::Staged(
+            HistoryCandidate::Update(current) => Ok(HistoryArtifacts::Staged(Box::new(
                 bootstrap::stage_holdings(&self.config, &mut self.source, current, true, self.full)
                     .await?,
-            )),
+            ))),
         }
     }
     async fn load(
@@ -528,6 +528,7 @@ impl Consumer for HistorySync {
                 self.load_saved(current).await
             }
             (HistoryCandidate::Update(current), HistoryArtifacts::Staged(staged)) => {
+                let staged = *staged;
                 let mut stages = Stages {
                     transfer_seconds: staged.transfer_seconds,
                     staging_seconds: staged.stage_seconds - staged.transfer_seconds,
@@ -618,7 +619,7 @@ impl Consumer for HistorySync {
                 }
                 let activating = std::time::Instant::now();
                 let operation = live.reserve_activation(initial).await?;
-                Ok(PreparedHistory::Update(PreparedUpdate {
+                Ok(PreparedHistory::Update(Box::new(PreparedUpdate {
                     current,
                     staged,
                     publication,
@@ -628,7 +629,7 @@ impl Consumer for HistorySync {
                     stages,
                     operation,
                     activating,
-                }))
+                })))
             }
             _ => Err("history preparation does not match its artifact selection".into()),
         }
@@ -675,7 +676,7 @@ impl Consumer for HistorySync {
             // Revalidate exact candidate anchors, including formerly revoked
             // revisions, before permitting a newer recovery to clear them.
             let map: transparent_filter::ShardMap =
-                serde_json::from_slice(&std::fs::read(&map_path)?)?;
+                serde_json::from_slice(&std::fs::read(map_path)?)?;
             let anchors = map.shards.iter().map(|shard| {
                 (
                     shard.end_height,
@@ -777,7 +778,7 @@ impl Consumer for HistorySync {
                     mut stages,
                     operation,
                     activating,
-                } = next;
+                } = *next;
                 live.commit_checked(expected, publication.map_sha256, initial, operation)
                     .await?;
                 persist(
@@ -822,7 +823,7 @@ impl Consumer for HistorySync {
             && !result
                 .as_ref()
                 .err()
-                .is_some_and(|error| crate::transparent::source::is_incompatible(error))
+                .is_some_and(crate::transparent::source::is_incompatible)
     }
     async fn pass_started(&mut self) {
         self.source.reset_budget();
