@@ -417,7 +417,10 @@ mod tests {
         }
     }
 
-    fn writer(directory: &std::path::Path, config: receiver_store::Config) -> Writer<pir_pipeline::engine::PublisherEngine> {
+    fn writer(
+        directory: &std::path::Path,
+        config: receiver_store::Config,
+    ) -> Writer<pir_pipeline::engine::PublisherEngine> {
         let start = config.start_height;
         let (store, _) = receiver_store::open_in(directory, config, true).unwrap();
         let tip = store.tip().unwrap();
@@ -433,7 +436,8 @@ mod tests {
                 directory.into(),
                 NodeClient::new("http://127.0.0.1:1".into(), None).unwrap(),
                 600,
-            ).unwrap(),
+            )
+            .unwrap(),
             config: application::Config {
                 data_dir: directory.into(),
                 min_rows: 8192,
