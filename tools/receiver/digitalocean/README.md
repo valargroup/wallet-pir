@@ -40,6 +40,18 @@ Root offline checks precede installation. Publisher readiness, query readiness
 and the independent encrypted `receiver-probe` are separate observations. Keep
 all changes draft until full qualification and separate production approval.
 
+For the first shared-host cutover, `receiver-routing-*` uses checksum-bound
+`receiver-routing/1` requests to update one Caddyfile under the fleet lock.
+Prepare its `distribution` phase on the Receiver host and its `query` phase on
+the query host before replacing the old runtime. Those phases preserve the
+existing wallet upstream and the other products. After the publisher and query
+server are ready, the `wallet` phase switches the existing Receiver hostname
+to the HTTPS query origin and runs the inventory's encrypted Receiver probe.
+Use `plan`, `preflight`, `deploy`, `status` and `rollback` for each phase; retain
+the same state directory. Each journal saves the predecessor Caddyfile and
+refuses rollback over another operator's changes. Defer the binary transactions'
+public exact check until this final routing phase, when the complete path exists.
+
 ### Installing or rotating the NEAR key
 
 Use `near-key.py` and Infisical-backed credentials as before. The publisher's

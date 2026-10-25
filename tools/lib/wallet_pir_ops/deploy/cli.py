@@ -266,14 +266,16 @@ def parser():
     command = commands.add_parser('fleet', help='read configured hosts and roles; makes no host connections')
     command.add_argument('--complete', action='store_true',
                          help='also require every registered service, role, responsibility and ancillary kind')
-    for operation in ('plan', 'preflight', 'deploy', 'status', 'rollback'):
-        command = commands.add_parser('status-routing-' + operation, help='Status wallet-route cutover only')
-        command.add_argument('--request', type=Path, required=True)
-        command.add_argument('--request-sha256', required=True)
-        if operation == 'deploy':
-            command.add_argument('--expect-plan-sha256', required=True)
-        if operation in ('status', 'rollback'):
-            command.add_argument('--transaction')
+    for product in ('status', 'receiver'):
+        for operation in ('plan', 'preflight', 'deploy', 'status', 'rollback'):
+            command = commands.add_parser(product + '-routing-' + operation,
+                                          help=product.title() + ' wallet-route cutover only')
+            command.add_argument('--request', type=Path, required=True)
+            command.add_argument('--request-sha256', required=True)
+            if operation == 'deploy':
+                command.add_argument('--expect-plan-sha256', required=True)
+            if operation in ('status', 'rollback'):
+                command.add_argument('--transaction')
     for operation in ('plan', 'preflight', 'deploy', 'status', 'rollback', 'verify', 'dns-plan', 'dns-stage',
                       'history-relay-plan', 'history-relay-repair'):
         command = commands.add_parser('coordinator-edge-' + operation,
@@ -446,7 +448,7 @@ def run(args, executor, out, package_layout, package_github, **options):
         from ..bundle import check_installed
         product_command = args.command.startswith(('schema-', 'txid-display-', 'transparent-binary-', 'transparent-alerts-',
                                                    'transparent-load-repair-', 'transparent-provider-maintenance-',
-                                                   'ops-package-', 'publisher-cutover-', 'status-routing-',
+                                                   'ops-package-', 'publisher-cutover-', 'status-routing-', 'receiver-routing-',
                                                    'coordinator-edge-', 'cache-storage-', 'cache-volume-', 'cache-data-', 'query-node-'))
         mutation = (args.command in ('deploy', 'rollback') or getattr(args, 'stage', False)
                     or product_command and not args.command.endswith(('-plan', '-preflight', '-status', '-summary', '-recipe')))
@@ -488,14 +490,19 @@ def run(args, executor, out, package_layout, package_github, **options):
             return transparent_cli().dispatch(args, executor=executor, out=out, **options)
         if not args.inventory:
             raise DeployError('pass --inventory or set WALLET_PIR_DEPLOY_INVENTORY')
-        if args.command.startswith('status-routing-'):
+        if args.command.startswith(('status-routing-', 'receiver-routing-')):
             from .engine import mutation_fence
-            from tools.status.lib.routing import Routing, load_request, digest
+            if args.command.startswith('receiver-routing-'):
+                from tools.receiver.lib.routing import Routing, load_request, digest
+                prefix = 'receiver-routing-'
+            else:
+                from tools.status.lib.routing import Routing, load_request, digest
+                prefix = 'status-routing-'
             inventory = descriptors.load_inventory(args.inventory)
             request = load_request(args.request, args.request_sha256)
             routing = Routing(inventory, executor or SSHExecutor(inventory), args.state_dir, request,
                               lock=options.get('lock'))
-            operation = args.command.removeprefix('status-routing-')
+            operation = args.command.removeprefix(prefix)
             if operation in ('plan', 'preflight'):
                 mutation_fence(inventory, routing.ex)
                 plan, _before, _after = routing.plan(ready=operation == 'preflight')
@@ -506,7 +513,7 @@ def run(args, executor, out, package_layout, package_github, **options):
                 result = routing.rollback(args.transaction)
             else:
                 from .transaction import Journal
-                journal = Journal.load(args.state_dir, 'status-routing', args.transaction)
+                journal = Journal.load(args.state_dir, getattr(routing, 'service_name', 'status-routing'), args.transaction)
                 result = {'transaction': journal.id if journal else None,
                           'phase': journal.status if journal else None,
                           'caddyfile_sha256': routing.ex.sha256(routing.host, '/etc/caddy/Caddyfile')}
