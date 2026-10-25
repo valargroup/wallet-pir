@@ -2128,7 +2128,10 @@ async fn prepared_candidate_proof_binds_inventory_source_fence_and_original_age(
         generation,
         observed: observed.clone(),
     };
-    assert_eq!(task.context().adapter().resumable_view(&loaded, &observed), Some(view(&loaded.inventory.manifest)));
+    assert_eq!(
+        task.context().adapter().resumable_view(&loaded, &observed),
+        Some(view(&loaded.inventory.manifest))
+    );
     for field in ["source", "withdrawal", "epoch", "sequence", "eligible"] {
         let mut changed = observed.clone();
         match field {
@@ -2140,13 +2143,20 @@ async fn prepared_candidate_proof_binds_inventory_source_fence_and_original_age(
             _ => unreachable!(),
         }
         assert!(
-            task.context().adapter().resumable_view(&loaded, &changed).is_none(),
+            task.context()
+                .adapter()
+                .resumable_view(&loaded, &changed)
+                .is_none(),
             "{field}"
         );
     }
     let valid = loaded.inventory_object.clone();
     loaded.inventory_object = ObjectReference::for_bytes(b"another inventory");
-    assert!(!task.context().adapter().can_resume(&loaded, &observed));
+    assert!(task
+        .context()
+        .adapter()
+        .resumable_view(&loaded, &observed)
+        .is_none());
     loaded.inventory_object = valid;
     // Give the expired inventory a matching original envelope as well: the
     // freshness check must still refuse it rather than renewing its timestamp.
@@ -2158,10 +2168,11 @@ async fn prepared_candidate_proof_binds_inventory_source_fence_and_original_age(
             .inventory
             .publication_reference(&loaded.inventory_object),
     );
-    assert!(!task
+    assert!(task
         .context()
         .adapter()
-        .can_resume(&loaded, &loaded.observed));
+        .resumable_view(&loaded, &loaded.observed)
+        .is_none());
     assert!(worker.state.lock().await.controller.is_none());
     server.abort();
 }

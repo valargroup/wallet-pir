@@ -1,5 +1,4 @@
 use super::*;
-use crate::synchronization::SyncTask;
 use axum::{
     extract::Path,
     http::StatusCode,
@@ -7,6 +6,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use pir_pipeline::consumer::{polling::SyncTask, Consumer};
 use pir_publication::{
     AuthorityCheckRequest, AuthorityCheckResponse, AuthorityTransition, ObjectReference,
     PublicationAuthority, SubjectAnswer,
@@ -308,7 +308,7 @@ async fn https_authority_controls_real_wallet_queries_and_restart() {
     let publications = Publications::default();
     let mut lifecycle = sync::synchronization(&config, publications.clone()).unwrap();
     lifecycle.synchronize().await.unwrap();
-    lifecycle.adapter().check_unused_revocations();
+    lifecycle.context().adapter().check_unused_revocations();
     let mount = crate::public::receiver();
     mount.slot.install(router_with_health(
         publications.clone(),
@@ -492,11 +492,11 @@ async fn filter_successors_reuse_loaded_directory_across_authority_conflicts() {
     origin.advance_check_at.store(1, Ordering::SeqCst);
     let _ = lifecycle.synchronize().await;
     assert!(publications.current_anchor().is_none());
-    assert_eq!(lifecycle.adapter().directory_loads(), 1);
+    assert_eq!(lifecycle.context().adapter().directory_loads(), 1);
     lifecycle.synchronize().await.unwrap();
     assert!(publications.current_anchor().is_some());
     assert_eq!(
-        lifecycle.adapter().directory_loads(),
+        lifecycle.context().adapter().directory_loads(),
         1,
         "filter-only successors reuse the verified directory"
     );
@@ -507,11 +507,11 @@ async fn filter_successors_reuse_loaded_directory_across_authority_conflicts() {
         .advance_check_at
         .store(origin.checks.load(Ordering::SeqCst) + 2, Ordering::SeqCst);
     let _ = lifecycle.synchronize().await;
-    assert_eq!(lifecycle.adapter().directory_loads(), 2);
+    assert_eq!(lifecycle.context().adapter().directory_loads(), 2);
     // A correction cannot inherit that pending directory's prepared work.
     origin.publish(1, 3);
     lifecycle.synchronize().await.unwrap();
-    assert_eq!(lifecycle.adapter().directory_loads(), 3);
+    assert_eq!(lifecycle.context().adapter().directory_loads(), 3);
     assert_eq!(publications.history_revision(), 1);
     server.abort();
 }
@@ -539,23 +539,19 @@ async fn large_proofs_are_batched_and_negative_chunks_refute_only_their_view() {
                 .collect(),
         ),
     ];
-    lifecycle
-        .check_serving_proofs(vec![proofs[0].clone()])
+    check_proofs(&mut lifecycle, vec![proofs[0].clone()])
         .await
         .unwrap();
     // An authority change after a positive batch must defer the whole proof.
     origin
         .advance_check_at
         .store(origin.checks.load(Ordering::SeqCst) + 2, Ordering::SeqCst);
-    assert!(lifecycle
-        .check_serving_proofs(proofs.clone())
-        .await
-        .is_err());
-    assert!(!lifecycle.view_was_invalidated(healthy));
+    assert!(check_proofs(&mut lifecycle, proofs.clone()).await.is_err());
+    assert!(!lifecycle.context().floor().is_invalidated(&healthy));
     origin.reject_candidate.store(true, Ordering::SeqCst);
-    lifecycle.check_serving_proofs(proofs).await.unwrap();
-    assert!(!lifecycle.view_was_invalidated(healthy));
-    assert!(lifecycle.view_was_invalidated(rejected));
+    check_proofs(&mut lifecycle, proofs).await.unwrap();
+    assert!(!lifecycle.context().floor().is_invalidated(&healthy));
+    assert!(lifecycle.context().floor().is_invalidated(&rejected));
     // More retained views than the publisher permits in a single request.
     let retained = (0..300u32)
         .map(|number| {
@@ -564,7 +560,7 @@ async fn large_proofs_are_batched_and_negative_chunks_refute_only_their_view() {
             (ViewIdentity(id), vec![(number, [255; 32])])
         })
         .collect();
-    lifecycle.check_serving_proofs(retained).await.unwrap();
+    check_proofs(&mut lifecycle, retained).await.unwrap();
     server.abort();
 }
 
@@ -573,4 +569,15 @@ pub(super) fn empty_snapshot(variant: u8) -> Snapshot {
     manifest.salt[0] = variant;
     manifest.end_hash = [variant; 32];
     Snapshot::build(manifest, &[]).unwrap()
+}
+
+async fn check_proofs(
+    lifecycle: &mut sync::Lifecycle,
+    proofs: Vec<(pir_publication::ViewIdentity, Subject)>,
+) -> Result<()> {
+    let observed = lifecycle.context_mut().observe().await?;
+    lifecycle
+        .context_mut()
+        .check_authority(&observed, proofs)
+        .await
 }

@@ -16,7 +16,7 @@ impl<A: PublicationAdapter> EnvelopeConsumer<A> {
     /// then makes that invalidation durable. Unaffected views keep serving. A response
     /// that answers anything other than exactly `subjects`, in order, under
     /// that authority confirms and invalidates nothing.
-    pub(super) async fn check_authority(
+    pub async fn check_authority(
         &mut self,
         envelope: &Envelope<A>,
         subjects: Vec<(ViewIdentity, A::AuthoritySubject)>,

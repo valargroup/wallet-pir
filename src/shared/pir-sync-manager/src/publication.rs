@@ -394,7 +394,8 @@ impl<A: PublicationAdapter> Consumer for EnvelopeConsumer<A> {
     }
     fn keep_loaded(&self, loaded: &A::Loaded) -> bool {
         self.floor.envelope().is_some_and(|envelope| {
-            self.adapter.resumable_view(loaded, envelope)
+            self.adapter
+                .resumable_view(loaded, envelope)
                 .is_some_and(|identity| !self.floor.is_invalidated(&identity))
         })
     }

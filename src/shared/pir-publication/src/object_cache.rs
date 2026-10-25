@@ -11,7 +11,6 @@ use crate::{
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs, io,
-    io::Read,
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -61,19 +60,21 @@ impl VerifiedObjectFile {
     }
     /// Read the verified file from the beginning, rejecting concurrent changes.
     pub fn read_bytes(&self) -> io::Result<Vec<u8>> {
-        use std::io::Seek;
+        use std::os::unix::fs::FileExt;
         self.check()?;
-        let mut reader = &self.file;
-        reader.rewind()?;
         let size = self.verification.reference.bytes;
-        let mut bytes = Vec::new();
-        reader
-            .take(size.saturating_add(1))
-            .read_to_end(&mut bytes)?;
-        self.check()?;
-        if bytes.len() as u64 != size {
-            return Err(io::Error::other("verified object length changed"));
+        let capacity =
+            usize::try_from(size).map_err(|_| io::Error::other("object exceeds address space"))?;
+        let mut bytes = vec![0u8; capacity];
+        let mut read = 0;
+        while read < bytes.len() {
+            let count = self.file.read_at(&mut bytes[read..], read as u64)?;
+            if count == 0 {
+                return Err(io::Error::other("verified object length changed"));
+            }
+            read += count;
         }
+        self.check()?;
         Ok(bytes)
     }
 }
@@ -281,6 +282,31 @@ impl Drop for PartialObject {
 mod tests {
     use super::*;
     use std::io::{Seek, Write};
+
+    #[test]
+    fn checked_reads_are_independent_of_the_shared_file_cursor() {
+        use std::io::{Seek, SeekFrom};
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("checked");
+        let bytes = vec![7u8; 4096];
+        fs::write(&path, &bytes).unwrap();
+        let checked =
+            Arc::new(VerifiedObjectFile::open(path, &ObjectReference::for_bytes(&bytes)).unwrap());
+        let mut cursor = checked.file();
+        cursor.seek(SeekFrom::Start(17)).unwrap();
+        std::thread::scope(|scope| {
+            for _ in 0..2 {
+                let checked = checked.clone();
+                let expected = &bytes;
+                scope.spawn(move || {
+                    for _ in 0..10 {
+                        assert_eq!(&checked.read_bytes().unwrap(), expected);
+                    }
+                });
+            }
+        });
+        assert_eq!(cursor.stream_position().unwrap(), 17);
+    }
 
     #[test]
     fn settled_objects_reuse_integrity_across_clones_but_not_restarts_or_changes() {
