@@ -211,22 +211,24 @@ async fn run<E: PublisherExecutor + IngestionExecutor>(
         publications: publications.clone(),
         state: application::State::default(),
     };
-    let guard = guard(publications, feed.clone(), stop.clone());
+    let guard = spawn_guard(publications, feed.clone(), stop.clone());
+    tasks.own(&guard);
     let bind = args.bind;
     let serve_stop = stop.clone();
-    let serving = async move {
+    let serving = tokio::spawn(async move {
         tokio::select! { result = http.serve(bind, app) => result.map_err(Into::into), _ = serve_stop.cancelled() => Ok(()) }
-    };
+    });
+    tasks.own(&serving);
     let ingestion = executor.ingest(writer, feed, stop.clone());
     let guarded = async {
         let result = guard.await;
         stop.request();
-        result
+        result.map_err(|error| -> pir_pipeline::publisher::Error { error.into() })?
     };
     let served = async {
         let result = serving.await;
         stop.request();
-        result
+        result.map_err(|error| -> pir_pipeline::publisher::Error { error.into() })?
     };
     let ingested = async {
         let result = ingestion.await;
@@ -235,6 +237,18 @@ async fn run<E: PublisherExecutor + IngestionExecutor>(
     };
     let (guarded, served, ingested) = tokio::join!(guarded, served, ingested);
     guarded.and(served).and(ingested)
+}
+
+fn spawn_guard(
+    publications: Publications,
+    feed: ChainFeed,
+    stop: Shutdown,
+) -> tokio::task::JoinHandle<Result<()>> {
+    tokio::spawn(async move {
+        let result = guard(publications, feed, stop.clone()).await;
+        stop.request();
+        result
+    })
 }
 
 async fn guard(publications: Publications, mut feed: ChainFeed, stop: Shutdown) -> Result<()> {
@@ -367,6 +381,7 @@ impl Ingestion for Writer {
 mod tests {
     use super::*;
     use pir_pipeline::ingestion::{catch_up, CanonicalChain, ChainFuture};
+    use std::{sync::Arc, time::Instant};
     struct Chain;
     impl CanonicalChain for Chain {
         fn hash_at(&self, height: u64) -> ChainFuture<'_, String> {
@@ -461,5 +476,60 @@ mod tests {
         assert_eq!(writer.store.tip().unwrap().height, start + 2);
         writer.rewind(Some(&keep)).await.unwrap();
         assert_eq!(writer.store.tip().unwrap().height, start);
+    }
+
+    /// Synchronous writer work must not hold up the independently scheduled
+    /// canonical guard, including when no new RPC block can be fetched yet.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn canonical_guard_runs_while_preparation_blocks_its_task() {
+        use zakura_pir_query_server::receiver::blocks::{BlockFilter, BlockId as ReceiverBlock};
+        let publications = Publications::default();
+        let genesis = Network::Mainnet.genesis_hash();
+        let height = blocks::ironwood_activation();
+        let filter = BlockFilter::build(
+            &genesis,
+            ReceiverBlock {
+                height,
+                hash: [9; 32],
+            },
+            [0; 32],
+            &[],
+        )
+        .unwrap();
+        let window =
+            receiver_pir_server::blocks::BlockWindow::new(genesis, 0, vec![filter]).unwrap();
+        assert!(publications.publish_filters(window, 0));
+        let (sender, observations) = tokio::sync::watch::channel(None);
+        let stop = Shutdown::default();
+        let guard = spawn_guard(
+            publications.clone(),
+            ChainFeed {
+                chain: Arc::new(Chain),
+                observations,
+            },
+            stop.clone(),
+        );
+        let epoch = publications.epoch();
+        sender.send_replace(Some(ChainObservation {
+            genesis: hash::display(&genesis),
+            tip: BlockId {
+                height: u64::from(height),
+                hash: hash::display(&[height as u8; 32]),
+            },
+            pass: 1,
+        }));
+        // Block this task exactly as synchronous shard construction does. The
+        // spawned guard can use the second runtime worker; join! could not.
+        let deadline = Instant::now() + std::time::Duration::from_secs(2);
+        while publications.epoch() == epoch && Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        let revoked = publications.epoch() != epoch;
+        stop.request();
+        guard.await.unwrap().unwrap();
+        assert!(
+            revoked,
+            "canonical revocation must finish before preparation yields"
+        );
     }
 }
