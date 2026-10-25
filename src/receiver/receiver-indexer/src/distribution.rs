@@ -19,6 +19,10 @@ use std::{
 };
 use zakura_server_chain::{Network, NodeClient};
 
+/// Bounds total work across retained views, before any node lookups. Repeated
+/// anchors share one lookup; a disproven view stops checking immediately.
+const MAX_CHECK_ANCHORS: usize = 4096;
+
 #[cfg(test)]
 #[path = "../../receiver-store/tests/common/mod.rs"]
 mod common;
@@ -287,23 +291,42 @@ async fn authority_check(
             })
     };
     admit()?;
+    let count = request.subjects.iter().try_fold(0usize, |count, subject| {
+        if subject.is_empty() {
+            return None;
+        }
+        count
+            .checked_add(subject.len())
+            .filter(|n| *n <= MAX_CHECK_ANCHORS)
+    });
+    if count.is_none() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
     s.rpc
         .check_network(Network::Mainnet.genesis_hash())
         .await
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
     let mut answers = Vec::new();
+    let mut checked = HashMap::new();
     for subject in &request.subjects {
-        if subject.is_empty() || subject.len() > METADATA_LIMIT as usize / 36 {
-            return Err(StatusCode::BAD_REQUEST);
-        }
         let mut canonical = true;
         for &(height, expected) in subject {
-            canonical &= s
-                .rpc
-                .block_hash(u64::from(height))
-                .await
-                .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
-                == expected;
+            let actual = match checked.get(&height) {
+                Some(hash) => *hash,
+                None => {
+                    let hash = s
+                        .rpc
+                        .block_hash(u64::from(height))
+                        .await
+                        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+                    checked.insert(height, hash);
+                    hash
+                }
+            };
+            if actual != expected {
+                canonical = false;
+                break;
+            }
         }
         answers.push(SubjectAnswer {
             subject: subject.clone(),
@@ -395,7 +418,17 @@ impl pir_pipeline::publisher::Publication for Export {
                     now.saturating_add(self.distribution.retention_ms),
                     now,
                 )?;
-                authority.apply(AuthorityTransition::Publish(candidate.reference))?;
+                match authority.apply(AuthorityTransition::Publish(candidate.reference.clone())) {
+                    Err(pir_publication::PublicationAuthorityError::RecoveryRequired) => {
+                        // A previous write may have reached disk. Recover with
+                        // a durable negative fence before granting authority.
+                        authority.apply(AuthorityTransition::Recover)?;
+                        authority.apply(AuthorityTransition::Publish(candidate.reference))?;
+                    }
+                    result => {
+                        result?;
+                    }
+                }
                 self.distribution
                     .exported
                     .lock()
@@ -416,7 +449,7 @@ impl pir_pipeline::publisher::Publication for Export {
 mod tests {
     use super::*;
     use axum::routing::post;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use zakura_pir_query_server::receiver::blocks::{BlockFilter, BlockId};
 
     #[test]
@@ -499,9 +532,12 @@ mod tests {
         let node = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let rpc = NodeClient::new(format!("http://{}", node.local_addr().unwrap()), None).unwrap();
         let changed = fork.clone();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counted = calls.clone();
         let task = tokio::spawn(async move {
             axum::serve(node, Router::new().route("/", post(move |Json(request): Json<serde_json::Value>| {
-            let changed = changed.clone(); async move {
+            let changed = changed.clone(); let counted = counted.clone(); async move {
+                counted.fetch_add(1, Ordering::SeqCst);
                 assert_eq!(request["method"], "getblockhash");
                 let hash = if request["params"][0] == 0 { genesis } else if changed.load(Ordering::SeqCst) { [4;32] } else { [3;32] };
                 Json(serde_json::json!({"result":zakura_server_chain::hash::display(&hash),"error":null}))
@@ -526,10 +562,23 @@ mod tests {
             receiver_pir_server::blocks::BlockWindow::new(genesis, 0, vec![filter]).unwrap(),
             0
         ));
+        let authority_path = root.path().join("distribution/authority.json");
+        let before = distribution.authority.lock().unwrap().current().clone();
+        std::fs::remove_file(&authority_path).unwrap();
+        std::fs::create_dir(&authority_path).unwrap();
+        assert!(distribution
+            .export(&publications, &pir_pipeline::engine::PublisherEngine)
+            .await
+            .is_err());
+        assert!(!distribution.authority.lock().unwrap().current().eligible);
+        std::fs::remove_dir(&authority_path).unwrap();
         distribution
             .export(&publications, &pir_pipeline::engine::PublisherEngine)
             .await
             .unwrap();
+        let recovered = distribution.authority.lock().unwrap().current().clone();
+        assert!(recovered.eligible);
+        assert!(recovered.fence.recovery_epoch > before.fence.recovery_epoch);
         let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let origin = format!("http://{}", socket.local_addr().unwrap());
         let router = Router::new().nest(PREFIX.trim_end_matches('/'), distribution.router());
@@ -593,6 +642,63 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(request.verdicts(response).unwrap(), [true]);
+        let duplicate = AuthorityCheckRequest {
+            authority: current.authority().unwrap(),
+            subjects: vec![vec![(activation, [3; 32]); 4]; 3],
+        };
+        calls.store(0, Ordering::SeqCst);
+        let response: AuthorityCheckResponse<Subject> = client
+            .post(format!("{}{PREFIX}authority/check", tls.origin))
+            .json(&duplicate)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(duplicate.verdicts(response).unwrap(), [true, true, true]);
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            2,
+            "one network check and one shared anchor lookup"
+        );
+        let too_many = AuthorityCheckRequest {
+            authority: current.authority().unwrap(),
+            subjects: vec![vec![(activation, [3; 32]); MAX_CHECK_ANCHORS / 2 + 1]; 2],
+        };
+        calls.store(0, Ordering::SeqCst);
+        let response = client
+            .post(format!("{}{PREFIX}authority/check", tls.origin))
+            .json(&too_many)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "reject total nested work before node RPC"
+        );
+        let disproven = AuthorityCheckRequest {
+            authority: current.authority().unwrap(),
+            subjects: vec![vec![(activation, [9; 32]), (activation + 1, [3; 32])]],
+        };
+        calls.store(0, Ordering::SeqCst);
+        let response: AuthorityCheckResponse<Subject> = client
+            .post(format!("{}{PREFIX}authority/check", tls.origin))
+            .json(&disproven)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(disproven.verdicts(response).unwrap(), [false]);
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            2,
+            "stop when a subject is disproven"
+        );
         fork.store(true, Ordering::SeqCst);
         let response: AuthorityCheckResponse<Subject> = client
             .post(format!("{}{PREFIX}authority/check", tls.origin))
