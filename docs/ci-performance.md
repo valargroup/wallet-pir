@@ -37,11 +37,13 @@ only an enforced passing run establishes compliance with the selected budget.
 Native tests compile shared crates and product libraries once, on a feature set
 that does not change with the diff. The publisher and query hosts stay on that
 same command. Transparent publication tests use that
-command. History and detail reach the query host through its own
-dev-dependency; the publisher host binary does not enable them,
-because that links the same library again. Fast diagnostic binaries leave `transparent-tools/query-host`
-off for the same reason. The in-process Enhance hint target and the query
-host's fast roles stay on that command, so the host harness is compiled once.
+command. History and detail reach the query host as explicit features of that
+command; the publisher host binary does not enable them,
+because that links the same library again. The query host's dev-dependency does
+not force those roles. Fast diagnostic binaries leave `transparent-tools/query-host`
+off for the same reason. The in-process Enhance hint target stays on a second
+command with the query host's Enhance and Status roles only, so one rustc does
+not build the Transparent stack beside them.
 The chain reader stays on that command with its Enhance and Transparent targets. Receiver, status, and RocksDB chain-node targets stay in qualification so they do not rebuild the shared graph.
 Executables
 then run with at most three programs active and one case per program. The fast
@@ -164,10 +166,12 @@ and rebuild a second copy of the dependency graph. The hosts and the reader
 stay on this command for every diff. Taking them off for one change and putting
 them back afterwards changes feature unification and rebuilds the closure.
 Transparent publication tests are part of this command, and
-the publisher host is not relinked with history and detail. The in-process
-Enhance hint target and the query host's Enhance, Status, history, and detail
-roles stay in this same feature set, so a diff does not compile the host
-harness a second time. Publisher chain-node fixtures stay
+the publisher host is not relinked with history and detail. History and detail
+are explicit features of the query host on this command. The in-process
+Enhance hint target and the query host's Enhance and Status roles stay on a
+second command that names the same roots without history and detail, so the
+two harnesses are not one rustc and shared crates are not compiled again.
+Publisher chain-node fixtures stay
 in qualification. The reader's receiver, status, and RocksDB targets stay in
 full qualification; the reader's Enhance and Transparent targets stay on the
 stable command. Only the affected packages' programs run. Campaign
@@ -380,7 +384,11 @@ fast 6 GiB cap and the OOM kill drops the runner; one stays inside the cap
 and reuses the existing target. Before that compile, main deletes incremental
 sessions in the warm target. A killed rustc can leave a session that the next
 compile of the same crate grows past 6 GiB. Fingerprints and finished artifacts
-stay, so an unchanged crate is not rebuilt. A build cannot occupy the fast service's queue, but both services
+stay, so an unchanged crate is not rebuilt. The fast query host uses
+`release-fast` opt-level 1 and four codegen units: a from-scratch rustc of that
+crate at full optimization crosses 6 GiB. History and detail compile on the
+stable command; Enhance and Status compile on the hint command, without history
+and detail. Deploy binaries stay on the fat-LTO release profile. A build cannot occupy the fast service's queue, but both services
 share the host CPU and disk, so latency must also be measured under contention.
 The single build slot serializes CPU release builds, while full tests and lint
 use independent hosted Ubuntu runners with their own lane/scope caches. Initial

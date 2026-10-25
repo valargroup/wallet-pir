@@ -3,14 +3,16 @@
 Cargo unifies features for every package named in one command. Shared crates,
 product libraries, and the publisher and query hosts stay on one command with
 a fixed feature set, so a warm cache still hits. Transparent publication tests
-live in those libraries. Enabling history and detail on the host binary links
-the publisher again and is not part of this command. The query host's own
-Transparent `ci_smoke` names `pir-query-server/transparent-history`, which the
-host's own dev-dependency already unifies in. Moving the hosts onto
+live in those libraries. Enabling history and detail on the publisher binary
+links that library again and is not part of this command. The query host's own
+Transparent `ci_smoke` names `pir-query-server/transparent-history`. Detail is
+pinned beside it on the same command. The host's dev-dependency does not force
+those roles on, so the second command can leave them off. Moving the hosts onto
 another command changes that unification and rebuilds the closure. The
-in-process Enhance hint target and the query host's fast roles stay on this
-command, so the host test harness is compiled once. Receiver, status, and
-RocksDB chain-node targets stay in qualification.
+in-process Enhance hint target stays on that second command with the query
+host's Enhance and Status roles only. Transparent history and detail stay on
+the first command, so one rustc does not build both stacks. Receiver, status,
+and RocksDB chain-node targets stay in qualification.
 The Enhance and Transparent reader targets stay on this command: dropping
 `testing-node` rebuilds every consumer. Campaign targets are never
 selected. Test programs retain their package directory and Cargo environment.
@@ -202,13 +204,11 @@ HOST_PACKAGES = frozenset({'pir-publisher', 'pir-query-server', 'pir-e2e-tests'}
 
 # Fixture features pull one product's wallet client and chain test node into
 # every crate on their command. Fast leaves the chain node in qualification.
-# The hint target used to be a second command. That command compiled the query
-# host harness again, and the two links were the catch-up compile. The roles
-# below stay on the one stable command so the harness is built once, and the
-# set does not change with the diff.
-HINT_HOST_ROLES = ('pir-query-server/enhance', 'pir-query-server/status',
-                   'pir-query-server/transparent-detail',
-                   'pir-query-server/transparent-history')
+# History and detail stay on the stable command. Enhance and Status stay on
+# the hint command. One rustc of both stacks does not fit in the fast runner.
+TRANSPARENT_QUERY_ROLES = ('pir-query-server/transparent-detail',
+                           'pir-query-server/transparent-history')
+HINT_HOST_ROLES = ('pir-query-server/enhance', 'pir-query-server/status')
 
 PRODUCT_HOST_FEATURES = {
     'enhance': 'pir-e2e-tests/enhance-fast',
@@ -270,10 +270,11 @@ def host_features_for(products, package_names):
 
     Transparent fast tests do not use `transparent-tests`: that feature enables
     publisher fixtures and compiles the same libraries again. History and detail
-    stay on the publisher library's dev-dependency edge. Turning them on for the
-    host binary links that library a second time. Status `status-tests` enables
-    the chain node for fixture campaigns that fast does not run; qualification
-    enables it. The Enhance hint target uses `enhance-fast`, not `enhance-tests`.
+    are explicit features of the stable command, not of this one, and not of the
+    host dev-dependency. Turning them on for the publisher binary links that
+    library a second time. Status `status-tests` enables the chain node for
+    fixture campaigns that fast does not run; qualification enables it. The
+    Enhance hint target uses `enhance-fast`, not `enhance-tests`.
     """
     features = set()
     if 'pir-e2e-tests' in package_names and 'enhance' in products:
@@ -464,13 +465,19 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
     compile_integrations = {(name, target) for name in compile_packages
                             for target in registry.get(name, {}).get('fast', [])
                             if integration_allowed(name, target)}
-    # ci_hint's enhance-fast feature stays on this command for every diff.
-    # A second command with that feature compiled the query-host harness again.
+    # ci_hint enables enhance-fast. That feature stays on its own command so
+    # the stable command can keep a feature set that does not change with the
+    # diff. History and detail are not on this command.
     hint_identity = ('pir-e2e-tests', 'ci_hint')
-    if hint_identity[0] in compile_packages:
-        compile_integrations.add(hint_identity)
+    compile_hint = hint_identity in compile_integrations
+    if compile_hint:
+        compile_integrations.remove(hint_identity)
     expected_integrations = {item for item in compile_integrations if item[0] in run_packages}
+    if compile_hint and hint_identity[0] in run_packages:
+        expected_integrations.add(hint_identity)
     integration_names = {target for _, target in compile_integrations}
+    if compile_hint:
+        integration_names.add(hint_identity[1])
     # Name collisions are checked for every compiled root. Campaign targets of
     # an anchor must not be pulled in by another package's fast name.
     collisions = {(name, target) for name in compile_packages
@@ -519,18 +526,34 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
             continue
         if feature_serves(feature, frozenset()) or feature_serves(feature, products):
             stable['features'].add(feature)
-    # Constant host roles. enhance-fast is filtered above because it is a
-    # product feature; it is pinned here so a diff cannot take it off and
-    # rebuild the closure, and so the hint target is not a second harness.
-    if 'pir-e2e-tests' in stable['names']:
-        stable['features'].update(host_features_for(frozenset({'enhance'}), {'pir-e2e-tests'}))
-        stable['integrations'].add('ci_hint')
+    # History and detail are constant on this command. The dev-dependency does
+    # not enable them, and ci_smoke only names history.
     if 'pir-query-server' in stable['names']:
-        stable['features'].update(HINT_HOST_ROLES)
+        stable['features'].update(TRANSPARENT_QUERY_ROLES)
     commands = []
     command = _compile_command(stable, options)
     if command:
         commands.append(command)
+    if compile_hint:
+        # Ungated extra features (the native correctness profile) stay visible
+        # to this target. Fast feedback passes none, so the oracle stays on the
+        # reference profile. History and detail stay off: this rustc is Enhance
+        # and Status only.
+        features = set(host_features_for(frozenset({'enhance'}), {'pir-e2e-tests'}))
+        features.update(feature for feature in additional_features
+                        if feature_serves(feature, frozenset())
+                        and feature not in TRANSPARENT_QUERY_ROLES)
+        features.update(HINT_HOST_ROLES)
+        features.update(stable['features'] - set(TRANSPARENT_QUERY_ROLES))
+        # Naming only the two hosts drops leaf features the stable roots
+        # unify in and rebuilds shared crates. Naming the same roots with the
+        # stable features, minus the Transparent roles, resolves those crates
+        # as the stable command did. Only the query-host harness compiles again.
+        hint_packages = sorted(stable['names'] | {'pir-e2e-tests', 'pir-query-server'})
+        commands.append(['cargo', 'test', '--locked', '--profile', 'release-fast', '--no-run', *options,
+                         *[arg for name in hint_packages for arg in ('-p', name)], '--lib',
+                         '--test', 'ci_hint', '--test', 'operator',
+                         '--features', ','.join(sorted(features))])
     if not commands:
         return
     # Qualification controls cannot expand a routine correctness fixture.

@@ -181,12 +181,13 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
-# One query-host build carries history and detail for this command. The
+# Role features are selected by the test command. Putting history and detail
+# here would pull the Transparent stack into the Enhance and Status harness,
+# and that combined rustc does not fit in the fast runner's 6 GiB cap. The
 # publisher library depends on this host only through its fixture and
 # qualification features; a default edge would link the same libraries into the
-# publisher test binary. Fast compiles this closure one rustc process at a time
-# so the link stays inside 6 GiB.
-pir-query-server = { path = ".", features = ["test-support", "transparent-history", "transparent-detail"] }
+# publisher test binary.
+pir-query-server = { path = ".", features = ["test-support"] }
 # Paused clocks drive the synchronization cadence regressions.
 tokio = { version = "1", features = ["full", "test-util"] }
 tempfile = "3"

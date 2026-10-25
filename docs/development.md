@@ -62,18 +62,20 @@ Fast Rust checks run every library unit test, and every binary that declares one
 in `release-fast`, plus classified bounded integration targets. The compile names
 a stable dev-dependency closure so a smaller affected set reuses the warm
 dependency graph; only affected packages run. Transparent publication tests
-stay in that closure. The query host still receives history and detail through its own
-dev-dependency. The publisher host binary does not:
-those features link the same library again.
-Publisher fixtures stay off this
-command. The publisher and query hosts stay on that command for every diff.
-The in-process Enhance hint target and the query host's fast roles stay on
-that same command, so the host test harness is compiled once. The feature
-set does not change with the diff. Moving the hosts onto another command
-rebuilds the closure. Publisher
-chain-node fixtures stay in qualification, as do the reader's receiver, status,
-and RocksDB targets. A binary with no
-unit tests is left out of that compile; qualification still builds every binary.
+stay in that closure. History and detail reach the query host as explicit
+features of that command. The publisher host binary does not enable them:
+those features link the same library again. The query host's dev-dependency
+does not force those roles, so the Enhance and Status harness can leave them
+off. Publisher fixtures stay off this command. The publisher and query hosts
+stay on that command for every diff. The in-process Enhance hint target stays
+on a second command with the query host's Enhance and Status roles only. That
+command names the same roots and the stable features other than history and
+detail, so shared crates stay warm and one rustc does not build both stacks.
+The stable feature set does not change with the diff. Moving the hosts onto
+another command rebuilds the closure. Publisher chain-node fixtures stay in
+qualification, as do the reader's receiver, status, and RocksDB targets. A
+binary with no unit tests is left out of that compile; qualification still
+builds every binary.
 There are no named slow-unit exclusions.
 Required CLI features are enabled for binary unit targets. Ordinary cache,
 identity and fault matrices exercise one native column instance with the real
