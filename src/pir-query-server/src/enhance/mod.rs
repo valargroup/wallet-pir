@@ -26,6 +26,7 @@ mod http_metrics;
 
 mod query_timing;
 
+mod consumer;
 mod peers;
 
 pub mod combined;

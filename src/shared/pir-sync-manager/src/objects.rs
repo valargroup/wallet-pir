@@ -9,19 +9,46 @@ use pir_publication::{ObjectCache, ObjectReference, VerifiedObjectFile, OBJECTS_
 pub struct ObjectFetcher<'a> {
     source: &'a mut HttpsSource,
     cache: &'a ObjectCache,
+    replace_corrupt: bool,
+    cache_limit: Option<u64>,
 }
 impl<'a> ObjectFetcher<'a> {
     pub fn new(source: &'a mut HttpsSource, cache: &'a ObjectCache) -> Self {
-        Self { source, cache }
+        Self {
+            source,
+            cache,
+            replace_corrupt: false,
+            cache_limit: None,
+        }
+    }
+    /// Enhance replaces refused cache bytes; Status retains refusal policy.
+    pub fn replace_corrupt(mut self) -> Self {
+        self.replace_corrupt = true;
+        self
+    }
+    pub fn with_cache_limit(mut self, bytes: u64) -> Self {
+        self.cache_limit = Some(bytes);
+        self
     }
     /// An open verified object, downloading it when absent.
     pub async fn fetch(&mut self, object: &ObjectReference) -> Result<VerifiedObjectFile, Error> {
         let cache = self.cache.clone();
         let expected = object.clone();
-        if let Some(file) =
-            tokio::task::spawn_blocking(move || cache.open_verified(&expected)).await??
-        {
-            return Ok(file);
+        match tokio::task::spawn_blocking(move || cache.open_verified(&expected)).await? {
+            Ok(Some(file)) => return Ok(file),
+            Ok(None) => {}
+            Err(error) if !self.replace_corrupt => return Err(error.into()),
+            Err(_) => std::fs::remove_file(self.cache.object_path(object)?)?,
+        }
+        if let Some(limit) = self.cache_limit {
+            if self
+                .cache
+                .occupied_bytes()?
+                .checked_add(object.bytes)
+                .is_none_or(|sum| sum > limit)
+            {
+                return Err("artifact cache capacity reached".into());
+            }
         }
         let mut partial = self.cache.begin_partial(object)?;
         let mut file = tokio::fs::File::from_std(partial.take_file()?);

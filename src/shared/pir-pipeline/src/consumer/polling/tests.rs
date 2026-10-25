@@ -205,3 +205,27 @@ async fn a_stop_ends_only_the_wait_between_complete_passes() {
     assert!(running.await.unwrap().is_none());
     assert_eq!(probe.lock().unwrap().calls, 1);
 }
+
+#[tokio::test(start_paused = true)]
+async fn long_preparation_keeps_peer_promises_alive_without_restarting_it() {
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+    let renewals = Arc::new(AtomicUsize::new(0));
+    let observed = renewals.clone();
+    let result = super::maintain_during(
+        async {
+            tokio::time::sleep(Duration::from_secs(16)).await;
+            42
+        },
+        Duration::from_secs(5),
+        || {
+            observed.fetch_add(1, Ordering::SeqCst);
+            async {}
+        },
+    )
+    .await;
+    assert_eq!(result, 42);
+    assert_eq!(renewals.load(Ordering::SeqCst), 3);
+}

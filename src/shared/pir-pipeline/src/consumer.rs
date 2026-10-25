@@ -46,6 +46,7 @@ pub trait Consumer: Send {
     type Loaded: Send + Sync;
     type Artifacts: Send;
     type Validation: Send + Sync;
+    type Authority: Send;
     type Report: Send;
 
     /// Settle writes and acknowledgments left outstanding by a cancelled pass.
@@ -71,7 +72,7 @@ pub trait Consumer: Send {
     /// return Reserved without acquiring a promise.
     fn reserve(
         &mut self,
-        candidate: &Self::Candidate,
+        candidate: &mut Self::Candidate,
     ) -> impl Future<Output = Result<PeerReservation, Error>> + Send;
     fn obtain(
         &mut self,
@@ -96,10 +97,10 @@ pub trait Consumer: Send {
         &mut self,
         observation: &Self::Observation,
         validation: &Self::Validation,
-    ) -> impl Future<Output = Result<(), Error>> + Send;
+    ) -> impl Future<Output = Result<Self::Authority, Error>> + Send;
     fn confirm(
         &mut self,
-        loaded: &Self::Loaded,
+        loaded: &mut Self::Loaded,
     ) -> impl Future<Output = Result<PeerReservation, Error>> + Send;
     /// Record, install under the fence, complete peer acknowledgment and collect.
     /// Use the shared owned-operation primitives for work that outlives a waiter.
@@ -107,6 +108,7 @@ pub trait Consumer: Send {
         &mut self,
         loaded: Self::Loaded,
         validation: Self::Validation,
+        authority: Self::Authority,
     ) -> impl Future<Output = Result<(Self::Report, PeerHandover), Error>> + Send;
     fn serving_report(&mut self) -> impl Future<Output = Self::Report> + Send;
     fn deferral(&self, _error: &Error) -> Option<DeferralReason> {

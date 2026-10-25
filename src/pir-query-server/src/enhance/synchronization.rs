@@ -5,7 +5,7 @@ use enhance_shared::{
         AuthorityRequest, AuthorityResponse, Current, Inventory, Object, METADATA_LIMIT, PREFIX,
     },
 };
-use pir_publication::{ObjectCache, OBJECTS_PATH};
+use pir_publication::{ObjectCache, VerifiedObjectFile};
 use pir_sync_manager::HttpsSource;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -643,7 +643,7 @@ impl Client {
     /// authority.
     pub fn collect(&self, keep: &std::collections::BTreeSet<String>) -> Result<(), Error> {
         self.cache.collect_unreferenced(keep)?;
-        if self.occupied_bytes()? > self.cache_limit {
+        if self.cache.occupied_bytes()? > self.cache_limit {
             return Err("Enhance cache capacity reached".into());
         }
         Ok(())
@@ -651,47 +651,13 @@ impl Client {
 
     /// The verified cached path of `object`, downloading it within the cache
     /// budget when it is absent. A cached file whose bytes differ is replaced.
-    pub async fn object(&mut self, object: &Object) -> Result<PathBuf, Error> {
+    pub async fn object(&mut self, object: &Object) -> Result<VerifiedObjectFile, Error> {
         object.validate()?;
-        let reference = object.reference();
-        let cache = self.cache.clone();
-        let cached = reference.clone();
-        match tokio::task::spawn_blocking(move || cache.verified_cached(&cached)).await? {
-            Ok(Some(path)) => return Ok(path),
-            Ok(None) => {}
-            Err(_) => fs::remove_file(self.cache.object_path(&reference)?)?,
-        }
-        if self
-            .occupied_bytes()?
-            .checked_add(object.bytes)
-            .is_none_or(|sum| sum > self.cache_limit)
-        {
-            return Err("Enhance cache capacity reached".into());
-        }
-        let mut partial = self.cache.begin_partial(&reference)?;
-        let mut file = tokio::fs::File::from_std(partial.take_file()?);
-        let response = self
-            .source
-            .request(&format!("{OBJECTS_PATH}{}", object.sha256), None)
-            .await?;
-        response
-            .copy_to(
-                &mut file,
-                object.bytes,
-                pir_sync_manager::Verification::Sha256(&object.sha256),
-            )
-            .await?;
-        let written = file.into_std().await;
-        Ok(tokio::task::spawn_blocking(move || partial.promote(written)).await??)
-    }
-
-    fn occupied_bytes(&self) -> Result<u64, Error> {
-        Ok(
-            fs::read_dir(self.cache.directory())?.try_fold(0u64, |sum, entry| {
-                sum.checked_add(entry?.metadata()?.len())
-                    .ok_or_else(|| std::io::Error::other("cache size overflow"))
-            })?,
-        )
+        pir_sync_manager::objects::ObjectFetcher::new(&mut self.source, &self.cache)
+            .replace_corrupt()
+            .with_cache_limit(self.cache_limit)
+            .fetch(&object.reference())
+            .await
     }
 }
 

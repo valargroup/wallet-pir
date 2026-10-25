@@ -119,6 +119,26 @@ impl<T: SyncTask> SyncManager<T> {
         }
     }
 }
+/// Maintain peer promises while one owned phase runs. The operation is never
+/// cancelled by a timer, and maintenance does not start another consumer pass.
+pub async fn maintain_during<T, F, M, MF>(operation: F, interval: Duration, mut maintain: M) -> T
+where
+    F: Future<Output = T>,
+    M: FnMut() -> MF,
+    MF: Future<Output = ()>,
+{
+    let mut timer = tokio::time::interval(interval);
+    timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    timer.tick().await;
+    tokio::pin!(operation);
+    loop {
+        tokio::select! {
+            result = &mut operation => return result,
+            _ = timer.tick() => maintain().await,
+        }
+    }
+}
+
 fn delay(failures: u32, jitter_ms: u64) -> Duration {
     let seconds = 5u64.saturating_mul(1u64 << failures.min(5)).min(120);
     Duration::from_millis(seconds * 1000 + jitter_ms % 1000)

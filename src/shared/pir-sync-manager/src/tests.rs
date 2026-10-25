@@ -494,3 +494,44 @@ async fn streamed_objects_propagate_writer_errors_and_reject_refused_bodies() {
     assert!(output.is_empty());
     assert_eq!(source.downloaded(), 13);
 }
+
+#[tokio::test]
+async fn artifact_replacement_and_capacity_are_explicit_transfer_policies() {
+    use crate::objects::ObjectFetcher;
+    use pir_publication::{ObjectCache, ObjectReference};
+    let tls = Tls::new().await;
+    let root = tempfile::tempdir().unwrap();
+    let cache = ObjectCache::open(root.path().into()).unwrap();
+    let object = ObjectReference::for_bytes(b"abcdef");
+    let path = cache.object_path(&object).unwrap();
+    std::fs::write(&path, b"ABCDEF").unwrap();
+    let mut source = tls.source(100);
+    assert!(ObjectFetcher::new(&mut source, &cache)
+        .fetch(&object)
+        .await
+        .is_err());
+    assert!(
+        tls.requests.lock().unwrap().is_empty(),
+        "refusal does not repair silently"
+    );
+    let checked = ObjectFetcher::new(&mut source, &cache)
+        .replace_corrupt()
+        .with_cache_limit(6)
+        .fetch(&object)
+        .await
+        .unwrap();
+    assert_eq!(checked.read_bytes().unwrap(), b"abcdef");
+    assert_eq!(tls.requests.lock().unwrap().len(), 1);
+    std::fs::remove_file(path).unwrap();
+    let count = tls.requests.lock().unwrap().len();
+    assert!(ObjectFetcher::new(&mut source, &cache)
+        .with_cache_limit(5)
+        .fetch(&object)
+        .await
+        .is_err());
+    assert_eq!(
+        tls.requests.lock().unwrap().len(),
+        count,
+        "capacity is reserved before downloading"
+    );
+}

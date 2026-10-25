@@ -1,4 +1,5 @@
 //! Autonomous workers load published rows; they never prepare public hints.
+use super::consumer::{EnhanceConsumer, NoPeers, Role as ConsumerRole};
 use super::evaluation::{Evaluate, Intermediate};
 use crate::enhance::synchronization::{
     Client, Config as SourceConfig, Deferral, Error, Lease, Pacing, Safety,
@@ -20,7 +21,11 @@ use enhance_shared::{
     publication::Domain,
     runtime::{rlwe, DomainPlan},
 };
-use pir_pipeline::consumer::polling::SyncTask;
+use pir_pipeline::{
+    consumer::{polling::SyncTask, ConsumerEngine},
+    Input,
+};
+use pir_publication::VerifiedObjects;
 use pir_runtime::evaluation::{add_intermediate_assign_mod, PreparedDatabase};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -212,9 +217,13 @@ impl Worker {
                 .clone()
                 .try_acquire_owned()
                 .map_err(|_| "worker synchronization already owned")?,
-            worker: self.clone(),
+            engine: ConsumerEngine::new(EnhanceConsumer::new(
+                WorkerConsumer {
+                    worker: self.clone(),
+                },
+                Client::new(&self.root, &self.config.source, self.safety.clone())?,
+            )),
             pacing: Pacing::default(),
-            client: Client::new(&self.root, &self.config.source, self.safety.clone())?,
         })
     }
 
@@ -322,7 +331,11 @@ impl Worker {
         Ok(retained + growth + transition + OVERHEAD)
     }
 
-    fn load(&self, domains: Vec<Domain>) -> Result<BTreeMap<u64, Arc<Loaded>>, Error> {
+    fn load(
+        &self,
+        domains: Vec<Domain>,
+        objects: &VerifiedObjects,
+    ) -> Result<BTreeMap<u64, Arc<Loaded>>, Error> {
         self.admit(&domains)?;
         let mut loaded = BTreeMap::new();
         for domain in domains {
@@ -343,17 +356,13 @@ impl Worker {
                         shard_rows: identity.allocated_rows as usize,
                         ..enhance_shared::types::ENHANCE_LAYOUT
                     };
-                    let file = File::open(object.path(&self.root)?)?;
-                    if file.metadata()?.len() != object.bytes {
-                        return Err("cached rows have wrong length".into());
-                    }
-                    // SAFETY: cache inodes are immutable after atomic installation;
-                    // cleanup only unlinks them. Bind the handle again before loading.
-                    let map = unsafe { memmap2::MmapOptions::new().map(&file) }?;
-                    use sha2::{Digest, Sha256};
-                    if hex::encode(Sha256::digest(&map)) != object.sha256 {
-                        return Err("cached rows have wrong checksum".into());
-                    }
+                    let checked = objects.get(&object.reference())?;
+                    checked.check()?;
+                    let file = checked.file();
+                    // SAFETY: the shared transfer sealed and checked this inode;
+                    // the mapping retains it across namespace collection.
+                    let map = unsafe { memmap2::MmapOptions::new().map(file) }?;
+                    checked.check()?;
                     let (_, params) = enhance_shared::ipir::shard_parameters(&layout)?;
                     let coefficients = RowPlaintextIter::new(
                         &map,
@@ -370,7 +379,7 @@ impl Worker {
                         rows_sha256: object.sha256.clone(),
                         server,
                     });
-                    enhance_shared::artifact::release_file_cache(&file);
+                    enhance_shared::artifact::release_file_cache(file);
                     self.inner
                         .lock()
                         .unwrap()
@@ -394,22 +403,39 @@ impl Worker {
 
 pub struct Synchronizer {
     _ownership: tokio::sync::OwnedSemaphorePermit,
-    worker: Worker,
-    client: Client,
+    engine: ConsumerEngine<EnhanceConsumer<WorkerConsumer>>,
     pacing: Pacing,
 }
-
 impl Synchronizer {
     pub async fn poll_once(&mut self) -> Result<(), Error> {
-        self.client.begin().await?;
-        let response = self.client.current().await?;
-        let Some(manifest) = response.current.manifest.clone() else {
-            // A valid empty current is a publisher still preparing its first
-            // publication. Keep the ordinary cadence without granting a lease.
-            return Ok(());
-        };
-        let observed = Lease::from_response(response.clone(), &manifest, &self.worker.safety)?;
-        let id = digest(&manifest);
+        self.engine.synchronize().await.map(|_| ())
+    }
+}
+struct WorkerConsumer {
+    worker: Worker,
+}
+enum WorkerSelection {
+    Reuse(BTreeMap<u64, Arc<Loaded>>),
+    Load(Vec<Domain>),
+}
+impl ConsumerRole for WorkerConsumer {
+    type Selection = WorkerSelection;
+    type Material = BTreeMap<u64, Arc<Loaded>>;
+    type Promise = NoPeers;
+    fn safety(&self) -> &Safety {
+        &self.worker.safety
+    }
+    async fn select(
+        &mut self,
+        response: &enhance_shared::publication::AuthorityResponse,
+        client: &mut Client,
+    ) -> Result<Input<WorkerSelection>, Error> {
+        let manifest = response
+            .current
+            .manifest
+            .as_ref()
+            .ok_or("missing Enhance manifest")?;
+        let id = digest(manifest);
         {
             let mut inner = self.worker.inner.lock().unwrap();
             let active = inner.active.clone();
@@ -427,9 +453,8 @@ impl Synchronizer {
                             .is_ok())
             });
             inner.units.retain(|_, unit| unit.strong_count() > 0);
-            if let Some(view) = inner.views.get_mut(&id) {
-                view.lease = observed;
-                return Ok(());
+            if let Some(view) = inner.views.get(&id) {
+                return Ok(Input::Work(WorkerSelection::Reuse(view.domains.clone())));
             }
             // A fresh lease authorizes bytes, but only an upstream pin promises
             // that unadmitted requests may still need a prior view. Admitted
@@ -447,18 +472,17 @@ impl Synchronizer {
             }
             if !inner.views.contains_key(&id) && inner.views.len() >= RETAINED_GENERATIONS {
                 // Waiting for old material is coordination, not a transport retry.
-                return Ok(());
+                return Ok(Input::Deferred);
             }
         }
-        let inventory = self
-            .client
+        let inventory = client
             .inventory(
                 response
                     .current
                     .inventory
                     .as_ref()
                     .ok_or("missing inventory")?,
-                &manifest,
+                manifest,
             )
             .await?;
         let domains = inventory
@@ -472,22 +496,55 @@ impl Synchronizer {
             .flat_map(|d| &d.rows)
             .map(|object| object.sha256.clone())
             .collect();
-        self.client.collect(&keep)?;
-        for domain in &domains {
-            for object in &domain.rows {
-                self.client.object(object).await?;
+        client.collect(&keep)?;
+        Ok(Input::Work(WorkerSelection::Load(domains)))
+    }
+    fn objects(&self, selection: &WorkerSelection) -> Vec<enhance_shared::publication::Object> {
+        match selection {
+            WorkerSelection::Reuse(_) => Vec::new(),
+            WorkerSelection::Load(domains) => domains
+                .iter()
+                .flat_map(|domain| domain.rows.iter().cloned())
+                .collect(),
+        }
+    }
+    async fn reserve(
+        &mut self,
+        _: &Manifest,
+        _: &WorkerSelection,
+    ) -> Result<Option<NoPeers>, Error> {
+        Ok(Some(NoPeers))
+    }
+    async fn load(
+        &mut self,
+        selection: WorkerSelection,
+        objects: VerifiedObjects,
+    ) -> Result<Self::Material, Error> {
+        match selection {
+            WorkerSelection::Reuse(material) => Ok(material),
+            WorkerSelection::Load(domains) => {
+                let worker = self.worker.clone();
+                tokio::task::spawn_blocking(move || worker.load(domains, &objects)).await?
             }
         }
-        let worker = self.worker.clone();
-        let loaded = tokio::task::spawn_blocking(move || worker.load(domains)).await??;
-        let lease = self.client.renew(&manifest, &observed).await?;
-        lease.check(&manifest, &self.worker.safety)?;
+    }
+    async fn confirm(&mut self, _: &Manifest, _: &mut NoPeers) -> Result<bool, Error> {
+        Ok(true)
+    }
+    fn install(
+        &mut self,
+        manifest: Manifest,
+        domains: Self::Material,
+        _: NoPeers,
+        lease: Lease,
+    ) -> Result<(), Error> {
+        let id = digest(&manifest);
         let mut inner = self.worker.inner.lock().unwrap();
         inner.views.insert(
             id.clone(),
             View {
                 manifest,
-                domains: loaded,
+                domains,
                 lease,
             },
         );
