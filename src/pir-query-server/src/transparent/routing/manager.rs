@@ -290,7 +290,7 @@ impl HistorySync {
         self.pending = Some(live.clone());
         let operation = live.reserve_activation(true).await?;
         Ok(PreparedHistory::Recovery {
-            current,
+            current: Box::new(current),
             live,
             publication,
             operation,
@@ -433,7 +433,7 @@ struct PreparedUpdate {
 }
 enum PreparedHistory {
     Recovery {
-        current: Current,
+        current: Box<Current>,
         live: LiveService,
         publication: Publication,
         operation: tokio::sync::OwnedMutexGuard<()>,
@@ -647,7 +647,7 @@ impl Consumer for HistorySync {
         loaded: &PreparedHistory,
     ) -> Result<HistoryValidation, Error> {
         let (current, live, map_path) = match loaded {
-            PreparedHistory::Recovery { current, live, .. } => (current, live, None),
+            PreparedHistory::Recovery { current, live, .. } => (current.as_ref(), live, None),
             PreparedHistory::Update(next) => (
                 &next.current,
                 &next.live,
@@ -745,6 +745,7 @@ impl Consumer for HistorySync {
                 publication,
                 operation,
             } => {
+                let current = *current;
                 live.commit_checked(
                     publication.map_sha256.clone(),
                     publication.map_sha256,
