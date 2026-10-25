@@ -74,6 +74,8 @@ run "sidecar_at_first_boot" {
     receiver_pir_enabled                   = true
     pir_monitor_enabled                    = true
 
+    query_serving_enabled = true
+
     apm_sidecar_boot = {
       url    = "https://releases.example/pir-apm-sidecar"
       sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"

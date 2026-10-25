@@ -17,17 +17,18 @@ variable "query_serving_hostname" {
 }
 
 module "query_serving" {
-  source             = "../query-serving"
-  count              = var.query_serving_enabled ? 1 : 0
-  project_id         = var.wallet_pir_project_id
-  region             = var.region
-  image              = var.image
-  vpc_id             = digitalocean_vpc.wallet.id
-  ssh_key_ids        = var.ssh_key_ids
-  cloudflare_zone_id = var.cloudflare_zone_id
-  size               = var.query_serving_size
-  data_volume_gib    = var.query_serving_volume_gib
-  hostname           = var.query_serving_hostname
+  source                  = "../query-serving"
+  apm_sidecar_boot_script = local.apm_sidecar_boot_script
+  count                   = var.query_serving_enabled ? 1 : 0
+  project_id              = var.wallet_pir_project_id
+  region                  = var.region
+  image                   = var.image
+  vpc_id                  = digitalocean_vpc.wallet.id
+  ssh_key_ids             = var.ssh_key_ids
+  cloudflare_zone_id      = var.cloudflare_zone_id
+  size                    = var.query_serving_size
+  data_volume_gib         = var.query_serving_volume_gib
+  hostname                = var.query_serving_hostname
 }
 
 output "query_serving_node" {

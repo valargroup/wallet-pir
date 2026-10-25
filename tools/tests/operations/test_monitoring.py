@@ -269,6 +269,34 @@ class ObserverInventory(unittest.TestCase):
         _, report = monitoring.enroll(bare, terraform_outputs=outputs, role_units=units)
         self.assertEqual(report['volumes_to_bind'], {'coordinator': sorted(monitoring.COORDINATOR_VOLUMES)})
 
+    def test_unified_query_node_enrollment_requires_its_volume_and_checks_its_unit(self):
+        node = {'id': '12345', 'name': 'wallet-pir-query-01',
+                'public_ipv4': '203.0.113.10', 'private_ipv4': '10.0.0.10',
+                'volume_id': 'provider-volume-id', 'state_root': '/srv/wallet-pir-query'}
+        outputs = {'query_serving_node': {'value': node}}
+        document = {'hosts': {node['name']: {'address': node['public_ipv4']}},
+                    'services': {'query-server': {'roles': {'combined': [{'host': node['name']}]}}}}
+        units = {('query-server', 'combined'): SERVICES['query-server'].roles['combined'].unit}
+        report = monitoring.coverage(document, terraform_outputs=outputs, roster=[])
+        self.assertEqual(report['missing_declarations'], [node['name']])
+        enrolled, report = monitoring.enroll(document, terraform_outputs=outputs, role_units=units)
+        self.assertEqual(report, {'added': [node['name']], 'undeclared': [],
+                                  'volumes_to_bind': {node['name']: ['/srv/wallet-pir-query']}})
+        settings = enrolled['services']['apm-sidecar']['roles']['observer'][0]['settings']
+        self.assertEqual(settings['address'], node['private_ipv4'])
+        self.assertEqual(settings['units'], ['wallet-pir-query.service'])
+        report = monitoring.coverage(enrolled, terraform_outputs=outputs, roster=[])
+        self.assertEqual(report['missing_volumes'], {node['name']: ['/srv/wallet-pir-query']})
+        settings['required_volumes'] = [{'path': '/srv/wallet-pir-query', 'uuid': 'abcd-0010'}]
+        report = monitoring.coverage(enrolled, terraform_outputs=outputs, roster=[])
+        self.assertFalse(report['partial'])
+        self.assertEqual((report['missing_declarations'], report['missing_volumes'], report['not_provisioned']),
+                         ([], {}, []))
+        observer = monitoring.observers(enrolled, mode='shadow')['hosts'][0]
+        self.assertIn('volume:/srv/wallet-pir-query', observer['checks'])
+        self.assertIn('unit:wallet-pir-query.service:oom', observer['checks'])
+        self.assertEqual(monitoring.provisioned_hosts({'query_serving_node': {'value': None}}), [])
+
     def test_the_example_inventory_renders(self):
         example = json.loads((ROOT / 'tools/deploy/monitoring/monitoring-inventory.example.json').read_text())
         example['hosts'] = {entry['host']: {} for entry in example['services']['apm-sidecar']['roles']['observer']}
@@ -704,7 +732,7 @@ class BootInstall(unittest.TestCase):
         self.assertIn('deploy/monitoring/pir-apm-sidecar-boot.sh', wiring)
         self.assertIn('deploy/monitoring/pir-apm-sidecar.service.in', wiring)
         for module in ('fleet/shared.tf', 'fleet/monitor.tf', 'fleet/receiver.tf', 'enhance/main.tf',
-                       'status/main.tf', 'transparent/main.tf', 'transparent-tx-detail/main.tf',
+                       'status/main.tf', 'query-serving/main.tf', 'transparent/main.tf', 'transparent-tx-detail/main.tf',
                        'enhance/worker-pool/main.tf', 'transparent/worker-pool/main.tf'):
             text = (infra / module).read_text()
             with self.subTest(module=module):

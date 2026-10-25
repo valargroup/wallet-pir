@@ -425,7 +425,15 @@ under the production lock as journaled transactions (`reconcile` finishes
 an interrupted one, `rollback` undoes the latest). Its `enroll` adds an
 observer for every provisioned inventory host from Terraform outputs and
 declared external hosts (dialed at their declared address with the same mTLS
-checks). A completed `cache-data-activate` binds the new volume's path and
+checks). The opt-in unified query node uses the same pinned sidecar bootstrap.
+Its `query_serving_node` Terraform output enrolls it by private address; its
+`query-server.combined` role adds checks for `wallet-pir-query.service` and
+requires `/srv/wallet-pir-query`. Enrollment reports that mount in
+`volumes_to_bind` until its filesystem UUID is declared in `required_volumes`;
+coverage reports it missing until then. Existing nodes still need the normal
+credential installation and sidecar deployment because cloud-init runs only
+at first boot.
+A completed `cache-data-activate` binds the new volume's path and
 filesystem UUID, deploys the running sidecar configuration, and updates the
 collector's expected configuration digest under the same deployment lock.
 An interrupted monitoring update retains `monitoring-pending` in the activation

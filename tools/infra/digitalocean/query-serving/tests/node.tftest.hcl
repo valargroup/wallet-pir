@@ -43,7 +43,7 @@ run "approved_capacity_and_candidate_routes" {
     error_message = "Both resources belong to the existing Wallet PIR project."
   }
   assert {
-    condition     = strcontains(digitalocean_droplet.query.user_data, "scsi-0DO_Volume_wallet-pir-query-01-data") && strcontains(digitalocean_droplet.query.user_data, "reverse_proxy 127.0.0.1:8090") && strcontains(digitalocean_droplet.query.user_data, "respond 404")
+    condition     = startswith(digitalocean_droplet.query.user_data, "#cloud-config") && !strcontains(digitalocean_droplet.query.user_data, "pir-apm-sidecar") && strcontains(digitalocean_droplet.query.user_data, "scsi-0DO_Volume_wallet-pir-query-01-data") && strcontains(digitalocean_droplet.query.user_data, "reverse_proxy 127.0.0.1:8090") && strcontains(digitalocean_droplet.query.user_data, "respond 404")
     error_message = "Bootstrap must mount the named volume and expose only wallet routes through Caddy."
   }
 }
@@ -62,4 +62,32 @@ run "preserve_existing_public_endpoint" {
   command = plan
   variables { hostname = "wallet-pir.valargroup.dev" }
   expect_failures = [var.hostname]
+}
+
+run "monitoring_boot" {
+  command = apply
+  module {
+    source = "../apm-sidecar"
+  }
+  variables {
+    binary = {
+      url    = "https://releases.example/pir-apm-sidecar"
+      sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    }
+  }
+}
+run "sidecar_installs_at_first_boot" {
+  command   = apply
+  state_key = "sidecar-boot"
+  variables {
+    apm_sidecar_boot_script = run.monitoring_boot.script
+  }
+  assert {
+    condition = (startswith(digitalocean_droplet.query.user_data, "Content-Type: multipart/mixed")
+      && strcontains(digitalocean_droplet.query.user_data, "systemctl enable pir-apm-sidecar.service")
+      && strcontains(digitalocean_droplet.query.user_data, "export PIR_APM_SIDECAR_SHA256=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+      && strcontains(digitalocean_droplet.query.user_data, "wallet-pir-query-mount")
+    && !strcontains(digitalocean_droplet.query.user_data, "PRIVATE KEY"))
+    error_message = "New query nodes install the pinned sidecar and retain the query bootstrap without credentials."
+  }
 }

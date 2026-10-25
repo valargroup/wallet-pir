@@ -355,7 +355,8 @@ def coverage(inventory, *, terraform_outputs=None, external_hosts=(), roster=Non
     checker) to their addresses, and `roster` is the Transparent monitoring
     roster carrying dynamic sidecar enrollment records. `expected_volumes` maps an enrolled host to mount paths, or
     `{"path", "uuid"}` identities such as `activated_volumes` returns, that it
-    must check; coordinators always need their three data volumes. Each missing
+    must check; coordinators always need their three data volumes and unified
+    query hosts need their publication volume. Each missing
     source makes the report `partial`: it then proves nothing about the cloud.
     """
     entries = observer_entries(inventory)
@@ -398,11 +399,10 @@ def coverage(inventory, *, terraform_outputs=None, external_hosts=(), roster=Non
     missing = sorted({label for label, addresses in provisioned if not addresses & covered.keys()})
     seen = {covered[a] for _, addresses in provisioned for a in addresses if a in covered}
     volumes = {host: list(wanted) for host, wanted in (expected_volumes or {}).items()}
-    # The coordinator is where the central APM runs.
-    for host in apm_hosts(inventory):
+    for host, required in required_volume_paths(inventory).items():
         wanted = volumes.setdefault(host, [])
         paths = {v if isinstance(v, str) else v['path'] for v in wanted}
-        wanted.extend(path for path in COORDINATOR_VOLUMES if path not in paths)
+        wanted.extend(path for path in required if path not in paths)
     missing_volumes = {}
     for host, wanted in sorted(volumes.items()):
         declared = {v['path']: v['uuid'].lower() for v in enrolled.get(host, {}).get('required_volumes', [])}
@@ -476,6 +476,15 @@ def apm_hosts(inventory):
     return {entry['host'] for role in ('central', 'server') for entry in roles.get(role, [])}
 
 
+def required_volume_paths(inventory):
+    """Mounts required by the coordinator and the unified query deployment."""
+    required = {host: set(COORDINATOR_VOLUMES) for host in apm_hosts(inventory)}
+    roles = inventory.get('services', {}).get('query-server', {}).get('roles', {})
+    for entry in roles.get('combined', []):
+        required.setdefault(entry['host'], set()).add('/srv/wallet-pir-query')
+    return required
+
+
 def _host_units(inventory, host, role_units):
     """Units the deployment inventory runs on `host`, from its service role entries."""
     found = set()
@@ -498,7 +507,7 @@ def enroll(inventory, *, terraform_outputs, role_units, external_hosts=()):
     roles run. Existing observers are never changed or removed: only an
     explicit retirement decommissions. Returns the new inventory and a report
     naming provisioned hosts the inventory does not declare and observers that
-    still need required-volume identities bound (the coordinator's data volumes).
+    still need required-volume identities bound.
     """
     inventory = json.loads(json.dumps(inventory))
     roles = inventory.setdefault('services', {}).setdefault(SERVICE, {}).setdefault('roles', {}).setdefault(ROLE, [])
@@ -531,10 +540,11 @@ def enroll(inventory, *, terraform_outputs, role_units, external_hosts=()):
         roles.append({'host': host, 'install': True, 'settings': settings})
         observed.add(host)
         added.append(host)
-    apm = apm_hosts(inventory)
+    required = required_volume_paths(inventory)
     unbound = {}
     for entry in roles:
         declared = {v['path'] for v in entry['settings'].get('required_volumes', [])}
-        if entry['host'] in apm and set(COORDINATOR_VOLUMES) - declared:
-            unbound[entry['host']] = sorted(set(COORDINATOR_VOLUMES) - declared)
+        missing = required.get(entry['host'], set()) - declared
+        if missing:
+            unbound[entry['host']] = sorted(missing)
     return inventory, {'added': added, 'undeclared': sorted(set(undeclared)), 'volumes_to_bind': unbound}
