@@ -466,6 +466,9 @@ async fn worker_retains_the_routers_view_until_handover_commits() {
     let _ = provider_pin(State(service.clone()), Path(hex::encode(first)))
         .await
         .unwrap();
+    let _ = provider_commit(State(service.clone()), Path(hex::encode(first)))
+        .await
+        .unwrap();
     let mut second = manifest();
     second.generation += 1;
     let second_id = second.id();
@@ -510,6 +513,143 @@ async fn consumer_restart_requires_https_authority_despite_completed_objects() {
     assert!(task.synchronize().await.is_err());
     assert!(service.serving().await.is_err());
     assert!(path.join("objects").join(object.sha256).is_file());
+    server.abort();
+}
+
+#[tokio::test]
+async fn a_new_router_attempt_replaces_an_abandoned_hold_without_releasing_the_serving_view() {
+    let (_root, service, _task, _source, _tls, server) = setup().await;
+    let controller = service.state.lock().await.controller.clone().unwrap();
+    let serving_id = controller.current().manifest().id();
+    let _ = provider_pin(State(service.clone()), Path(hex::encode(serving_id)))
+        .await
+        .unwrap();
+    let _ = provider_commit(State(service.clone()), Path(hex::encode(serving_id)))
+        .await
+        .unwrap();
+
+    let mut incoming = manifest();
+    incoming.generation += 1;
+    let abandoned_id = incoming.id();
+    let incoming = Generation::public_only(incoming, Arc::new(vec![1]));
+    controller.activate(incoming.clone()).unwrap();
+    let _ = provider_pin(State(service.clone()), Path(hex::encode(abandoned_id)))
+        .await
+        .unwrap();
+    // Download failure or cancellation leaves this early reservation behind.
+    // A normal metadata refresh can advance without allocating a third material.
+    let newest = incoming.reidentified(incoming.manifest().generation + 1, 2, now_ms());
+    let newest_id = newest.manifest().id();
+    controller.activate(newest).unwrap();
+    let pin = provider_pin(State(service.clone()), Path(hex::encode(newest_id))).await;
+    assert!(
+        pin.is_ok(),
+        "a failed attempt cannot occupy the incoming slot: {pin:?}"
+    );
+    let held = service
+        .state
+        .lock()
+        .await
+        .router_holds
+        .iter()
+        .map(|g| g.manifest().id())
+        .collect::<Vec<_>>();
+    assert_eq!(held, [serving_id, newest_id]);
+    assert!(controller.resolve(serving_id).is_ok());
+    assert!(
+        !controller.can_prepare(),
+        "the serving predecessor still bounds preparation"
+    );
+
+    // Retried acknowledgments and reservations for the serving view cannot
+    // cancel the next preparation, and a late abandoned request cannot win.
+    let _ = provider_commit(State(service.clone()), Path(hex::encode(serving_id)))
+        .await
+        .unwrap();
+    let _ = provider_pin(State(service.clone()), Path(hex::encode(serving_id)))
+        .await
+        .unwrap();
+    assert_eq!(
+        provider_pin(State(service.clone()), Path(hex::encode(abandoned_id)))
+            .await
+            .err(),
+        Some(StatusCode::CONFLICT)
+    );
+    assert_eq!(
+        service
+            .state
+            .lock()
+            .await
+            .router_holds
+            .iter()
+            .map(|g| g.manifest().id())
+            .collect::<Vec<_>>(),
+        held
+    );
+
+    // A refused reservation must not release either valid hold.
+    assert_eq!(
+        provider_pin(State(service.clone()), Path(hex::encode([0xff; 32])))
+            .await
+            .err(),
+        Some(StatusCode::CONFLICT)
+    );
+    assert_eq!(
+        service
+            .state
+            .lock()
+            .await
+            .router_holds
+            .iter()
+            .map(|g| g.manifest().id())
+            .collect::<Vec<_>>(),
+        held
+    );
+    assert_eq!(
+        provider_commit(State(service.clone()), Path(hex::encode(abandoned_id)))
+            .await
+            .err(),
+        Some(StatusCode::CONFLICT)
+    );
+    let _ = provider_commit(State(service.clone()), Path(hex::encode(newest_id)))
+        .await
+        .unwrap();
+    drop(incoming);
+    assert_eq!(service.state.lock().await.router_holds.len(), 1);
+    assert!(controller.can_prepare());
+    let mut adapter = StatusPublication {
+        service: service.clone(),
+        loaded_inventory: None,
+        poll_soon: false,
+    };
+    adapter
+        .invalidate_views(vec![ViewIdentity(newest_id)])
+        .await;
+    assert!(service.state.lock().await.router_holds.is_empty());
+    assert_eq!(service.state.lock().await.router_committed, None);
+    server.abort();
+}
+
+#[tokio::test]
+async fn startup_attempts_do_not_accumulate_uncommitted_router_holds() {
+    let (_root, service, _task, _source, _tls, server) = setup().await;
+    let controller = service.state.lock().await.controller.clone().unwrap();
+    for generation in 4..7 {
+        let mut next = manifest();
+        next.generation = generation;
+        let id = next.id();
+        controller
+            .activate(Generation::public_only(next, Arc::new(vec![])))
+            .unwrap();
+        let _ = provider_pin(State(service.clone()), Path(hex::encode(id)))
+            .await
+            .unwrap();
+        assert_eq!(
+            service.state.lock().await.router_holds.len(),
+            1,
+            "before the first commit only the latest attempt needs retention"
+        );
+    }
     server.abort();
 }
 
@@ -1174,6 +1314,9 @@ async fn router_commits_its_workers_retained_predecessor_and_releases_the_worker
     let worker_controller = Controller::new(a.clone());
     worker.state.lock().await.controller = Some(worker_controller.clone());
     let _ = provider_pin(State(worker.clone()), Path(hex::encode(a.manifest().id())))
+        .await
+        .unwrap();
+    let _ = provider_commit(State(worker.clone()), Path(hex::encode(a.manifest().id())))
         .await
         .unwrap();
     worker_controller.activate(b).unwrap();

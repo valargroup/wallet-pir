@@ -192,6 +192,7 @@ impl PublicationAdapter for StatusPublication {
                 controller.revoke();
             }
             state.router_holds.clear();
+            state.router_committed = None;
             fenced
         }
     }
@@ -210,6 +211,9 @@ impl PublicationAdapter for StatusPublication {
             state
                 .router_holds
                 .retain(|generation| !views.contains(&generation.manifest().id()));
+            if state.router_committed.is_some_and(|id| views.contains(&id)) {
+                state.router_committed = None;
+            }
         }
     }
 
@@ -465,9 +469,9 @@ impl PublicationAdapter for StatusPublication {
             && worker_handover::pin(&self.service, &inventory.manifest).await?
                 == PeerReservation::PeerAdvanced
         {
-            // The original view remains pinned. If the worker advanced again
-            // or both hold slots are occupied, commit that still-fresh view
-            // rather than discarding its loaded material to chase metadata.
+            // The original view remains pinned. If the worker advanced again,
+            // commit that still-fresh view rather than discarding its loaded
+            // material to chase metadata.
             return Ok(loaded);
         }
         Ok(StatusLoaded {
@@ -627,6 +631,7 @@ impl PublicationAdapter for StatusPublication {
                 controller.revoke();
             }
             state.router_holds.clear();
+            state.router_committed = None;
             state.poisoned = true;
         });
         Ok((

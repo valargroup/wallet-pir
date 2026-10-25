@@ -28,8 +28,12 @@ a generation, the router selects the worker's reported inventory, verifies it
 against the publisher and confirms that the worker can evaluate the exact wallet
 manifest. A private pin/commit handover holds the router's previous and incoming
 views from before bulk transfer through durable activation, so worker refreshes
-cannot evict the incoming view during loading. Worker updates defer through the
-existing retention backpressure until that handover completes; expired views
+cannot evict the incoming view during loading. Each new serial attempt replaces
+an abandoned incoming reservation while retaining the last acknowledged serving
+view; before the first acknowledgment only the current incoming view is held.
+Late requests for older views cannot replace a newer incoming reservation, and
+repeated acknowledgments preserve the next preparation. Worker updates defer
+through the existing retention backpressure until that handover completes; expired views
 remain unusable and their holds are released. A lost acknowledgment is retried on
 the normal shared polling schedule. No publisher heartbeat or new lease is added.
 Independent polling cannot combine material from different generations.
@@ -122,7 +126,7 @@ negative authority, expiry and changed worker pins prevent reuse. This avoids
 repeated loading while the publisher changes, without waiting for it to stop.
 After loading, a router can adopt fresher metadata already served by its worker
 when it names the same verified material; it still pins that exact worker view
-before using it. If that extra pin is unavailable, its original pinned view can
+before using it. If the worker has advanced again, its original pinned view can
 still finish under fresh authority and its original observation deadline.
 A worker sampled ahead of the router's publisher envelope
 causes another normal poll, rather than failure backoff.

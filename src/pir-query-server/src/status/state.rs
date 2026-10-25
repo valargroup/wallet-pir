@@ -16,6 +16,9 @@ pub(super) struct ServiceState {
     pub(super) synchronization: String,
     pub(super) poisoned: bool,
     pub(super) router_holds: Vec<Arc<Generation>>,
+    /// Last view the colocated router acknowledged. Its still-fresh hold is
+    /// protected while a new preparation supersedes an abandoned incoming one.
+    pub(super) router_committed: Option<Hash>,
 }
 /// Shared state for one router or worker. Clones retain the directory lock and
 /// refer to the same serving authority and admission limits.
