@@ -89,6 +89,18 @@ impl<K: Eq + Clone, V> Reservations<K, V> {
         true
     }
 }
+/// Explicit reservation service for consumers without downstream peers.
+#[derive(Clone, Copy, Default)]
+pub struct NoPeers;
+impl NoPeers {
+    pub fn reserve(&self) -> super::PeerReservation {
+        super::PeerReservation::Reserved
+    }
+    pub fn complete(&self) -> super::PeerHandover {
+        super::PeerHandover::Complete
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -114,17 +126,5 @@ mod tests {
         holds.revoke(&99);
         assert!(holds.is_empty());
         assert_eq!(holds.acknowledged(), None);
-    }
-}
-
-/// Explicit reservation service for consumers without downstream peers.
-#[derive(Clone, Copy, Default)]
-pub struct NoPeers;
-impl NoPeers {
-    pub fn reserve(&self) -> super::PeerReservation {
-        super::PeerReservation::Reserved
-    }
-    pub fn complete(&self) -> super::PeerHandover {
-        super::PeerHandover::Complete
     }
 }

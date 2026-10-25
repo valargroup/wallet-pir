@@ -15,7 +15,6 @@ path = "src/bin/receiver-probe.rs"
 qualification-tests = []
 
 [dependencies]
-pir-publication = { path = "../../shared/pir-publication" }
 pir-pipeline = { path = "../../shared/pir-pipeline" }
 pir-publication = { path = "../../shared/pir-publication" }
 tokio-util = { version = "0.7", features = ["io"] }

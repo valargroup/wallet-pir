@@ -8,7 +8,7 @@ pub(super) enum ReceiverMaterial<'a> {
         epoch: u64,
         report: serde_json::Value,
     },
-    Prepared(Prepared<'a>),
+    Prepared(Box<Prepared<'a>>),
 }
 pub(super) struct ReceiverPublication<'a> {
     pub(super) fence: Option<(&'a Publications, u64)>,
@@ -48,9 +48,9 @@ impl<'a> pir_pipeline::publisher::Publication for ReceiverPublication<'a> {
                 report,
             })
         } else {
-            Ok(ReceiverMaterial::Prepared(
+            Ok(ReceiverMaterial::Prepared(Box::new(
                 work.prepare(state, report).await?,
-            ))
+            )))
         }
     }
     async fn store(&mut self, mut material: Self::Material) -> Result<Self::Stored> {
@@ -111,42 +111,47 @@ impl<'a> pir_pipeline::publisher::Publication for ReceiverPublication<'a> {
                     return Err("publication invalidated during the audit refresh; retrying".into());
                 }
             }
-            ReceiverMaterial::Prepared(Prepared {
-                candidate,
-                serving,
-                epoch,
-                active,
-                history_revision,
-                report,
-                refresh_started,
-                revision,
-                summary,
-                ..
-            }) => match candidate {
-                Candidate::Unassembled { .. } => {
-                    unreachable!("the engine assembles before committing")
-                }
-                Candidate::Files(_) => println!("{summary}"),
-                Candidate::Serving(publication) => {
-                    let started = std::time::Instant::now();
-                    let head = publication.head();
-                    let anchor = (head.end_height, head.end_hash);
-                    if !serving
-                        .expect("live candidate")
-                        .publish(publication.with_report(report), epoch.unwrap())
-                    {
-                        return Err("publication invalidated during preparation; retrying".into());
+            ReceiverMaterial::Prepared(prepared) => {
+                let Prepared {
+                    candidate,
+                    serving,
+                    epoch,
+                    active,
+                    history_revision,
+                    report,
+                    refresh_started,
+                    revision,
+                    summary,
+                    ..
+                } = *prepared;
+                match candidate {
+                    Candidate::Unassembled { .. } => {
+                        unreachable!("the engine assembles before committing")
                     }
-                    *active = Some(Active {
-                        anchor,
-                        history_revision,
-                    });
-                    log_stage("activate", started);
-                    info!(height = anchor.0, %revision,
+                    Candidate::Files(_) => println!("{summary}"),
+                    Candidate::Serving(publication) => {
+                        let started = std::time::Instant::now();
+                        let head = publication.head();
+                        let anchor = (head.end_height, head.end_hash);
+                        if !serving
+                            .expect("live candidate")
+                            .publish(publication.with_report(report), epoch.unwrap())
+                        {
+                            return Err(
+                                "publication invalidated during preparation; retrying".into()
+                            );
+                        }
+                        *active = Some(Active {
+                            anchor,
+                            history_revision,
+                        });
+                        log_stage("activate", started);
+                        info!(height = anchor.0, %revision,
                             processing_ms = refresh_started.elapsed().as_millis() as u64,
                             publication = %summary, "receiver publication");
+                    }
                 }
-            },
+            }
         }
         Ok(())
     }

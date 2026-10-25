@@ -1,7 +1,13 @@
 //! Domain operations supplied to the host's publication engine.
-use super::Control;
 use crate::FailurePolicy;
 use std::{future::Future, pin::Pin};
+
+/// Continue polling or finish a bounded publication run.
+#[derive(Clone, Copy)]
+pub enum Control {
+    Continue,
+    Complete,
+}
 
 /// One source-bound publication. Each phase consumes the preceding phase's
 /// result; only the host sequences them. Product code supplies construction,
