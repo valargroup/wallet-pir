@@ -48,7 +48,7 @@ class ProgramTests(unittest.TestCase):
         with patch.dict(os.environ, WALLET_PIR_ENFORCE_BUDGET='0'), \
                 patch.object(unit_tests.subprocess, 'check_output', return_value='/rust/lib\n'), \
                 patch.object(unit_tests, 'ThreadPoolExecutor', return_value=pool), \
-                patch.object(unit_tests, 'as_completed', return_value=iter(futures)), \
+                patch.object(unit_tests, 'wait', side_effect=lambda running, **_: (set(running), set())), \
                 patch.object(test_budget, 'stop') as stop:
             with self.assertRaisesRegex(RuntimeError, '1 diagnostic test programs failed'):
                 unit_tests.execute(programs, 1, budget=True)

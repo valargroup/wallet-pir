@@ -5,7 +5,7 @@ Cases stay in one process per program so immutable public fixtures can be reused
 Cargo compilation has already finished; no target directory writer runs here.
 """
 import argparse
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 import json
 import os
 from pathlib import Path
@@ -17,7 +17,46 @@ import time
 from stage import run
 
 
-def execute(programs, jobs, *, budget=False, test_threads=1):
+def run_pool(programs, workers, heavy_limit, invoke, *, tolerate=lambda error: False, cancel=lambda: None):
+    """Run in queue order, starting a memory-heavy program only while a heavy slot is free.
+
+    A later light program may start ahead of a waiting heavy one, so the pool
+    stays busy without overlapping more heavy fixtures than fit. Returns the
+    errors `tolerate` accepted; any other error cancels the rest and is raised.
+    """
+    pending = list(programs)
+    running = {}
+    failures = []
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        try:
+            while pending or running:
+                heavy = sum(running.values())
+                while len(running) < workers:
+                    index = next((i for i, program in enumerate(pending)
+                                  if not program.get('heavy') or heavy < heavy_limit), None)
+                    if index is None:
+                        break
+                    program = pending.pop(index)
+                    running[pool.submit(invoke, program)] = bool(program.get('heavy'))
+                    heavy += bool(program.get('heavy'))
+                done, _ = wait(running, return_when=FIRST_COMPLETED)
+                for future in done:
+                    del running[future]
+                    try:
+                        future.result()
+                    except Exception as error:
+                        if not tolerate(error):
+                            raise
+                        failures.append(error)
+        except BaseException:
+            cancel()
+            for future in running:
+                future.cancel()
+            raise
+    return failures
+
+
+def execute(programs, jobs, *, budget=False, test_threads=1, heavy_slots=None):
     library_directory = subprocess.check_output(['rustc', '--print', 'target-libdir'], text=True).strip()
 
     def execute_program(program):
@@ -61,29 +100,18 @@ def execute(programs, jobs, *, budget=False, test_threads=1):
                 seconds=round(time.monotonic() - started, 3), passed=passed)), flush=True)
 
     def run_concurrent(selected, workers):
-        if not selected:
-            return
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = [pool.submit(invoke, program) for program in selected]
-            failures = []
-            try:
-                for future in as_completed(futures):
-                    try:
-                        future.result()
-                    except Exception as error:
-                        if budget and os.environ.get('WALLET_PIR_ENFORCE_BUDGET') == '0':
-                            failures.append(error)
-                        else:
-                            raise
-            except BaseException:
-                if budget:
-                    from test_budget import stop
-                    stop()
-                for future in futures:
-                    future.cancel()
-                raise
-            if failures:
-                raise RuntimeError(f'{len(failures)} diagnostic test programs failed') from failures[0]
+        def tolerate(error):
+            return budget and os.environ.get('WALLET_PIR_ENFORCE_BUDGET') == '0'
+
+        def cancel():
+            if budget:
+                from test_budget import stop
+                stop()
+
+        failures = run_pool(selected, workers, workers if heavy_slots is None else heavy_slots,
+                            invoke, tolerate=tolerate, cancel=cancel)
+        if failures:
+            raise RuntimeError(f'{len(failures)} diagnostic test programs failed') from failures[0]
 
     # Encrypted HTTP fixtures retain their own concurrency. Keep their working
     # sets apart from other Rust programs before overlapping ordinary units.
@@ -100,12 +128,14 @@ def main():
     parser.add_argument('plan', type=Path)
     parser.add_argument('--jobs', type=int, choices=(1, 2, 3), required=True)
     parser.add_argument('--budget', action='store_true', help='time every case and enforce the correctness budget')
+    parser.add_argument('--heavy-slots', type=int, help='memory-heavy programs that may run at once (default: --jobs)')
     parser.add_argument('--test-threads', type=int, choices=(1, 2), default=1)
     args = parser.parse_args()
     if args.budget:
         from test_budget import install_cancellation
         install_cancellation()
-    execute(json.loads(args.plan.read_text()), args.jobs, budget=args.budget, test_threads=args.test_threads)
+    execute(json.loads(args.plan.read_text()), args.jobs, budget=args.budget, test_threads=args.test_threads,
+            heavy_slots=args.heavy_slots)
 
 
 if __name__ == '__main__':

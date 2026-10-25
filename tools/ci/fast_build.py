@@ -56,6 +56,46 @@ def cgroup_cpus(root=Path('/sys/fs/cgroup'), membership=Path('/proc/self/cgroup'
     return min(limits) if limits else None
 
 
+def cgroup_memory(root=Path('/sys/fs/cgroup'), membership=Path('/proc/self/cgroup')):
+    """The tightest cgroup v2 memory limit above this process in bytes, or None."""
+    try:
+        path = next(line[3:] for line in membership.read_text().splitlines()
+                    if line.startswith('0::'))
+    except (OSError, StopIteration):
+        return None
+    limits = []
+    directory = root / path.lstrip('/')
+    while True:
+        try:
+            value = (directory / 'memory.max').read_text().strip()
+            if value != 'max':
+                limits.append(int(value))
+        except (OSError, ValueError):
+            pass
+        if directory == root or root not in directory.parents:
+            break
+        directory = directory.parent
+    return min(limits) if limits else None
+
+
+# A memory-heavy test program's peak, and what the runner and light programs
+# beside it need. Measured peaks on the fast runner were 2.1 to 3.5 GB.
+HEAVY_PROGRAM_BYTES = 3 << 30
+HEAVY_HEADROOM_BYTES = 2 << 30
+
+
+def heavy_slots(jobs, limit=None):
+    """How many memory-heavy programs may overlap under the runner's memory limit.
+
+    The fast runner's 6 GiB limit fits one. Exceeding it kills the whole runner
+    service, which GitHub reports only as lost communication with the runner.
+    """
+    limit = cgroup_memory() if limit is None else limit
+    if limit is None:
+        return jobs
+    return max(1, min(jobs, (limit - HEAVY_HEADROOM_BYTES) // HEAVY_PROGRAM_BYTES))
+
+
 def available_cpus():
     """CPUs this process may use: its affinity, bounded by any cgroup quota."""
     if hasattr(os, 'sched_getaffinity'):
@@ -101,6 +141,13 @@ def isolate_status_fixture(parts, package, kinds, discovered):
 
 # Unit cases that build full runtimes on every core, each near the case budget.
 RUNTIME_LIBRARIES = frozenset({'enhance-shared', 'receiver-indexer'})
+# Unit libraries whose fixtures each hold gigabytes: prepared runtimes, the
+# shared Status database and the query host's product fixtures.
+HEAVY_LIBRARIES = RUNTIME_LIBRARIES | {'transparent-publisher', 'enhance-publisher', 'pir-query-server'}
+
+
+def memory_heavy(name, kinds):
+    return name in HEAVY_LIBRARIES and 'lib' in kinds
 
 
 def runtime_runs_alone(name, kinds):
@@ -581,6 +628,7 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
                              or runtime_runs_alone(name, target['kind'])
                              or identity == ('pir-e2e-tests', 'ci_hint')
                              or (name == 'enhance-publisher' and 'lib' in target['kind']),
+                             heavy=not integration and memory_heavy(name, target['kind']),
                              case_count=len(names),
                              args=[arg for case in exclusions for arg in ('--skip', case)])
         if repeated:
@@ -625,7 +673,8 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
         try:
             if before_tests is not None:
                 before_tests()
-            run(['python3', 'tools/ci/unit_tests.py', str(plan), '--budget', '--jobs', str(jobs)],
+            run(['python3', 'tools/ci/unit_tests.py', str(plan), '--budget', '--jobs', str(jobs),
+                 '--heavy-slots', str(heavy_slots(jobs))],
                 env=env, stage='tests:fast-programs')
         finally:
             timings = [json.loads(line) for line in cases.read_text().splitlines()] if cases.exists() else []

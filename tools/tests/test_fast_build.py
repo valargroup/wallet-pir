@@ -140,6 +140,73 @@ class FastBuildTests(unittest.TestCase):
         self.assertIsNone(fast_build.cgroup_cpus(root, membership))
         self.assertIsNone(fast_build.cgroup_cpus(root, Path(self.directory.name) / 'missing'))
 
+    def test_memory_limit_bounds_overlapping_heavy_programs(self):
+        root = Path(self.directory.name) / 'cgroup'
+        leaf = root / 'system.slice' / 'runner.service'
+        leaf.mkdir(parents=True)
+        (root / 'memory.max').write_text('max\n')
+        (leaf / 'memory.max').write_text(f'{6 << 30}\n')
+        membership = Path(self.directory.name) / 'membership'
+        membership.write_text('0::/system.slice/runner.service\n')
+        self.assertEqual(fast_build.cgroup_memory(root, membership), 6 << 30)
+        (leaf / 'memory.max').write_text('max\n')
+        self.assertIsNone(fast_build.cgroup_memory(root, membership))
+        # The fast runner's 6 GiB fits one heavy program; no limit leaves the pool as is.
+        self.assertEqual(fast_build.heavy_slots(3, 6 << 30), 1)
+        self.assertEqual(fast_build.heavy_slots(3, 1 << 30), 1)
+        self.assertEqual(fast_build.heavy_slots(3, 64 << 30), 3)
+        with patch.object(fast_build, 'cgroup_memory', return_value=None):
+            self.assertEqual(fast_build.heavy_slots(3), 3)
+        self.assertTrue(fast_build.memory_heavy('pir-query-server', ['lib']))
+        self.assertTrue(fast_build.memory_heavy('enhance-shared', ['lib']))
+        self.assertFalse(fast_build.memory_heavy('pir-query-server', ['test']))
+        self.assertFalse(fast_build.memory_heavy('status-shared', ['lib']))
+
+    def test_pool_never_overlaps_more_heavy_programs_than_its_slots(self):
+        import threading
+        import time
+        import unit_tests
+        lock = threading.Lock()
+        state = {'heavy': 0, 'peak': 0, 'running': 0, 'busiest': 0}
+        order = []
+
+        def invoke(program):
+            with lock:
+                order.append(program['name'])
+                state['running'] += 1
+                state['busiest'] = max(state['busiest'], state['running'])
+                if program.get('heavy'):
+                    state['heavy'] += 1
+                    state['peak'] = max(state['peak'], state['heavy'])
+            time.sleep(0.02)
+            with lock:
+                state['running'] -= 1
+                state['heavy'] -= bool(program.get('heavy'))
+
+        programs = [dict(name=f'heavy{i}', heavy=True) for i in range(3)]
+        programs += [dict(name=f'light{i}') for i in range(4)]
+        self.assertEqual(unit_tests.run_pool(programs, 3, 1, invoke), [])
+        self.assertEqual(state['peak'], 1)
+        self.assertEqual(state['busiest'], 3)
+        self.assertCountEqual(order, [program['name'] for program in programs])
+        # Light programs start while the heavy ones wait for the single slot.
+        self.assertLess(order.index('light0'), order.index('heavy1'))
+
+    def test_pool_raises_the_first_error_unless_tolerated(self):
+        import unit_tests
+
+        def invoke(program):
+            if program.get('fail'):
+                raise ValueError('case failed')
+
+        programs = [dict(name='a', fail=True), dict(name='b', heavy=True)]
+        cancelled = []
+        with self.assertRaisesRegex(ValueError, 'case failed'):
+            unit_tests.run_pool(programs, 1, 1, invoke, cancel=lambda: cancelled.append(True))
+        self.assertEqual(cancelled, [True])
+        failures = unit_tests.run_pool(programs, 2, 1, invoke, tolerate=lambda error: True)
+        self.assertEqual([str(error) for error in failures], ['case failed'])
+
     def test_status_unit_program_runs_alone_only_on_small_hosts(self):
         names = {'status::sync::tests::case', 'config::tests::case'}
         with patch.object(fast_build, 'available_cpus', return_value=3):
@@ -229,7 +296,9 @@ class FastBuildTests(unittest.TestCase):
             expected = ['--skip', 'slow'] if program['package'] == 'a' and not program['executable'].endswith('smoke') else []
             self.assertEqual(program['args'], expected)
         runner, options = self.calls[-1]
-        self.assertEqual(runner[-2:], ['--jobs', '2'])
+        self.assertEqual(runner[runner.index('--jobs') + 1], '2')
+        self.assertIn('--heavy-slots', runner)
+        self.assertFalse(program['heavy'])
         self.assertIn('--budget', runner)
         self.assertEqual(options['env']['WALLET_PIR_ENFORCE_BUDGET'], '1')
         self.assertNotIn('QUALIFY_PUBLICATIONS', options['env'])
