@@ -94,3 +94,11 @@ inherits = "release"
 lto = false
 codegen-units = 16
 incremental = true
+
+# The fast runner caps the job at 6 GiB. One release-fast rustc of the unified
+# query host, at full optimization and sixteen codegen units, crosses that cap
+# and spends minutes in LLVM. This package is the host harness; deploy
+# binaries stay on the fat-LTO release profile above.
+[profile.release-fast.package.pir-query-server]
+opt-level = 2
+codegen-units = 4

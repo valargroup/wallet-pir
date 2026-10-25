@@ -62,13 +62,15 @@ Fast Rust checks run every library unit test, and every binary that declares one
 in `release-fast`, plus classified bounded integration targets. The compile names
 a stable dev-dependency closure so a smaller affected set reuses the warm
 dependency graph; only affected packages run. Transparent publication tests
-stay in that closure. The query host still receives history and detail through
-the publisher library's dev-dependency. The publisher host binary does not:
+stay in that closure. The query host still receives history and detail through its own
+dev-dependency. The publisher host binary does not:
 those features link the same library again.
 Publisher fixtures stay off this
-command. The publisher and query hosts stay on that command for every diff. The
-in-process Enhance hint graph stays on a separate command and does not join
-it; moving the hosts onto that command rebuilds the closure. Publisher
+command. The publisher and query hosts stay on that command for every diff.
+The in-process Enhance hint target and the query host's fast roles stay on
+that same command, so the host test harness is compiled once. The feature
+set does not change with the diff. Moving the hosts onto another command
+rebuilds the closure. Publisher
 chain-node fixtures stay in qualification, as do the reader's receiver, status,
 and RocksDB targets. A binary with no
 unit tests is left out of that compile; qualification still builds every binary.

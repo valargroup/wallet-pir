@@ -37,11 +37,12 @@ only an enforced passing run establishes compliance with the selected budget.
 Native tests compile shared crates and product libraries once, on a feature set
 that does not change with the diff. The publisher and query hosts stay on that
 same command. Transparent publication tests use that
-command. History and detail reach the query host through the publisher
-library's dev-dependency; the publisher host binary does not enable them,
+command. History and detail reach the query host through its own
+dev-dependency; the publisher host binary does not enable them,
 because that links the same library again. Fast diagnostic binaries leave `transparent-tools/query-host`
-off for the same reason. The in-process Enhance hint graph compiles on a
-second command and does not take the hosts with it. The chain reader stays on that command with its Enhance and Transparent targets. Receiver, status, and RocksDB chain-node targets stay in qualification so they do not rebuild the shared graph.
+off for the same reason. The in-process Enhance hint target and the query
+host's fast roles stay on that command, so the host harness is compiled once.
+The chain reader stays on that command with its Enhance and Transparent targets. Receiver, status, and RocksDB chain-node targets stay in qualification so they do not rebuild the shared graph.
 Executables
 then run with at most three programs active and one case per program. The fast
 compile leaves out binaries that declare no unit tests; qualification still
@@ -163,11 +164,10 @@ and rebuild a second copy of the dependency graph. The hosts and the reader
 stay on this command for every diff. Taking them off for one change and putting
 them back afterwards changes feature unification and rebuilds the closure.
 Transparent publication tests are part of this command, and
-the publisher host is not relinked with history and detail. A second
-invocation adds the in-process Enhance hint graph. Its features must not unify
-into the stable graph, but it names the same roots with the stable features, so
-every shared crate resolves exactly as before and only the hosts and the
-harnesses that depend on them compile again. Publisher chain-node fixtures stay
+the publisher host is not relinked with history and detail. The in-process
+Enhance hint target and the query host's Enhance, Status, history, and detail
+roles stay in this same feature set, so a diff does not compile the host
+harness a second time. Publisher chain-node fixtures stay
 in qualification. The reader's receiver, status, and RocksDB targets stay in
 full qualification; the reader's Enhance and Transparent targets stay on the
 stable command. Only the affected packages' programs run. Campaign
