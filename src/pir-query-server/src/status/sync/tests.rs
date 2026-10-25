@@ -42,8 +42,7 @@ struct DownloadPause {
 }
 #[cfg(feature = "native-reinspiring")]
 use crate::status::status_http as http;
-#[path = "../../../tests/support/status_tls.rs"]
-mod tls;
+use crate::test_tls as tls;
 
 fn manifest() -> Manifest {
     Manifest {

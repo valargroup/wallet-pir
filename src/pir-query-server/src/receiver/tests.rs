@@ -30,8 +30,7 @@ mod common;
 mod history;
 #[path = "../../../receiver/receiver-pir-server/tests/common/prepared.rs"]
 mod prepared;
-#[path = "../../tests/support/status_tls.rs"]
-mod tls;
+use crate::test_tls as tls;
 
 struct Origin {
     authority: Mutex<PublicationAuthority<distribution::Descriptor>>,

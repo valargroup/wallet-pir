@@ -22,3 +22,7 @@ pub mod synchronization;
 pub mod transparent;
 pub use host::{run, verify};
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
+
+#[cfg(all(test, any(feature = "status", feature = "receiver")))]
+#[path = "../tests/support/status_tls.rs"]
+mod test_tls;
