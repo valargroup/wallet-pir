@@ -91,7 +91,10 @@ class ReceiverOpsConfig(unittest.TestCase):
                                       '/shard-filters/*', '/block-filters/*')}
         self.assertEqual(set(wallet), expected)
         provider = re.search(r'@provider path (.*)', text).group(1).split()
-        self.assertEqual(provider, ['/.well-known/pir-service-discovery', '/provider/receiver/v1/*'])
+        self.assertEqual(provider, ['/provider/receiver/v1/*'])
+        self.assertRegex(text, r'handle @provider\s*\{\s*reverse_proxy 127\.0\.0\.1:18380')
+        self.assertRegex(text, r'handle /\.well-known/pir-service-discovery\s*\{\s*reverse_proxy 127\.0\.0\.1:18381')
+        self.assertIn('header_up Host {upstream_hostport}', text)
         self.assertNotIn('/v1/receiver/health', wallet)
         self.assertIn('reverse_proxy {$RECEIVER_QUERY_UPSTREAM}', text)
         self.assertRegex(text, r'handle\s*\{\s*respond 404')
