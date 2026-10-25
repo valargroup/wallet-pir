@@ -221,6 +221,8 @@ fn wallet_routes() -> Router<Service> {
                 // Filter bytes are read into the table budget and stay counted until
                 // the response is sent. Holding the selected inventory meanwhile keeps
                 // the filter's file (see `Publications::references`).
+                let authorization = publication.authorization();
+                let held = publication.clone();
                 let tables = s.publications.tables();
                 let loaded = tokio::task::spawn_blocking(move || {
                     tables.filter(publication.filter(&digest).expect("selected by digest"))
@@ -228,9 +230,10 @@ fn wallet_routes() -> Router<Service> {
                 .await;
                 // A revocation during the load is 410, as for queries: a revoked
                 // inventory's filter could wrongly rule a payment out.
-                if s.publications.epoch() != epoch {
+                if s.publications.epoch() != epoch || !authorization.load(std::sync::atomic::Ordering::Acquire) {
                     return StatusCode::GONE.into_response();
                 }
+                drop(held);
                 match loaded {
                     Ok(Ok(resident)) => binary(axum::body::Bytes::from_owner(Filter(resident))),
                     Ok(Err(tables::LoadError::Busy)) => overloaded(),
@@ -393,6 +396,7 @@ async fn query(State(s): State<Service>, request: Request) -> Response {
     let Ok(permit) = s.queue.acquire(|| ()).await else {
         return overloaded();
     };
+    let authorization = publication.authorization();
     let tables = s.publications.tables();
     let result =
         pir_control::admission::spawn_admitted(
@@ -406,7 +410,8 @@ async fn query(State(s): State<Service>, request: Request) -> Response {
         )
         .await;
     // A revocation during evaluation is 410; after it, wallets revalidate their anchor.
-    if s.publications.epoch() != epoch {
+    if s.publications.epoch() != epoch || !authorization.load(std::sync::atomic::Ordering::Acquire)
+    {
         return StatusCode::GONE.into_response();
     }
     match result {

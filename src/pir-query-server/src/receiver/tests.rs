@@ -39,6 +39,7 @@ struct Origin {
     canonical: AtomicBool,
     available: AtomicBool,
     corrupt: AtomicBool,
+    reject_candidate: AtomicBool,
 }
 impl Origin {
     fn store(&self, bytes: &[u8]) -> ObjectReference {
@@ -50,9 +51,19 @@ impl Origin {
         object
     }
     fn publish(&self, revision: u64, pages: u32) {
+        self.publish_at(revision, pages, [3; 32]);
+    }
+    fn publish_at(&self, revision: u64, pages: u32, end_hash: [u8; 32]) {
         let mut manifest = common::manifest(MIN_ROWS);
         manifest.history_revision = revision;
-        let records: Vec<_> = (0..pages).map(|page| common::record(page, pages)).collect();
+        manifest.end_hash = end_hash;
+        let records: Vec<_> = (0..pages)
+            .map(|page| {
+                let mut record = common::record(page, pages);
+                record.payment.block_hash = end_hash;
+                record
+            })
+            .collect();
         let snapshot = Snapshot::build(manifest, &records).unwrap();
         let table = prepared::companion_table(&snapshot, &vec![[7; 512]; pages as usize]);
         let serving = prepared::prepare(snapshot.clone(), table.clone()).unwrap();
@@ -109,6 +120,7 @@ async fn origin(root: &std::path::Path) -> (Arc<Origin>, tls::Tls, tokio::task::
         canonical: AtomicBool::new(true),
         available: AtomicBool::new(true),
         corrupt: AtomicBool::new(false),
+        reject_candidate: AtomicBool::new(false),
     });
     origin.publish(0, 1);
     let current = origin.clone();
@@ -158,9 +170,14 @@ async fn origin(root: &std::path::Path) -> (Arc<Origin>, tls::Tls, tokio::task::
                         answers: request
                             .subjects
                             .into_iter()
-                            .map(|subject| SubjectAnswer {
-                                subject,
-                                still_authoritative: s.canonical.load(Ordering::SeqCst),
+                            .map(|subject| {
+                                let still_authoritative = s.canonical.load(Ordering::SeqCst)
+                                    && !(s.reject_candidate.load(Ordering::SeqCst)
+                                        && subject.iter().any(|(_, hash)| hash == &[4; 32]));
+                                SubjectAnswer {
+                                    subject,
+                                    still_authoritative,
+                                }
                             })
                             .collect(),
                     })
@@ -296,6 +313,26 @@ async fn https_authority_controls_real_wallet_queries_and_restart() {
         );
     }
     assert!(first.page(common::receiver(), 0).await.unwrap().is_some());
+    let approved_epoch = publications.epoch();
+    origin.reject_candidate.store(true, Ordering::SeqCst);
+    origin.publish_at(0, 3, [4; 32]);
+    let _ = lifecycle.synchronize().await;
+    assert_eq!(
+        publications.epoch(),
+        approved_epoch,
+        "a rejected candidate does not fence approved views"
+    );
+    assert!(publications.current_anchor().is_some());
+    assert!(
+        first.page(common::receiver(), 0).await.unwrap().is_some(),
+        "a rejected candidate preserves retained wallet sessions"
+    );
+    let _ = lifecycle.synchronize().await;
+    assert!(
+        first.page(common::receiver(), 0).await.unwrap().is_some(),
+        "repeated rejection preserves approved answers"
+    );
+    origin.reject_candidate.store(false, Ordering::SeqCst);
     origin.publish(0, 3);
     origin.corrupt.store(true, Ordering::SeqCst);
     assert!(lifecycle.synchronize().await.is_err());

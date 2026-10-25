@@ -103,7 +103,7 @@ impl Receiver {
     fn expire(&mut self) {
         drop(self.publications.live());
         let mut views = self.views.lock().unwrap();
-        let current = views.current.clone();
+        let current = views.current;
         views.views.retain(|view| {
             Some(&view.id) == current.as_ref()
                 || view
@@ -138,11 +138,46 @@ impl PublicationAdapter for Receiver {
     }
     fn invalidate_views(
         &mut self,
-        _views: Vec<ViewIdentity>,
+        rejected: Vec<ViewIdentity>,
     ) -> impl std::future::Future<Output = ()> + Send + 'static {
-        let revoke = self.revoke();
+        let views = self.views.clone();
+        let publications = self.publications.clone();
         async move {
-            revoke.await;
+            let mut views = views.lock().unwrap();
+            let mut directories = std::collections::HashSet::new();
+            let mut filters = Vec::new();
+            for view in views
+                .views
+                .iter()
+                .filter(|view| rejected.contains(&view.id))
+            {
+                if let Some(directory) = &view.inventory.directory {
+                    directories.insert(directory.head.inventory);
+                }
+                if let Some(window) = &view.inventory.filters {
+                    filters.push(window.head.clone());
+                }
+            }
+            views.views.retain(|view| !rejected.contains(&view.id));
+            for view in &views.views {
+                if let Some(directory) = &view.inventory.directory {
+                    directories.remove(&directory.head.inventory);
+                }
+                if let Some(window) = &view.inventory.filters {
+                    filters.retain(|head| head != &window.head);
+                }
+            }
+            if views
+                .current
+                .as_ref()
+                .is_some_and(|id| rejected.contains(id))
+            {
+                views.current = None;
+            }
+            publications.invalidate(&directories, None);
+            for head in filters {
+                publications.invalidate(&std::collections::HashSet::new(), Some(&head));
+            }
         }
     }
     fn close_admission(&mut self) -> impl std::future::Future<Output = ()> + Send + 'static {
@@ -158,7 +193,7 @@ impl PublicationAdapter for Receiver {
             .unwrap()
             .views
             .iter()
-            .map(|view| (view.id.clone(), view.inventory.anchors()))
+            .map(|view| (view.id, view.inventory.anchors()))
             .collect()
     }
     async fn plan(
@@ -187,7 +222,7 @@ impl PublicationAdapter for Receiver {
         }
         Ok(PublicationPlan::Candidate {
             required_objects: inventory.objects(),
-            identity: id.clone(),
+            identity: id,
             candidate: Candidate {
                 inventory,
                 object,
@@ -230,7 +265,7 @@ impl PublicationAdapter for Receiver {
         {
             return Err("Receiver publication advanced during loading".into());
         }
-        Ok((candidate.id.clone(), candidate.inventory.anchors()))
+        Ok((candidate.id, candidate.inventory.anchors()))
     }
     async fn reserve_peer(&mut self, _: &Loaded) -> Result<PeerReservation, Error> {
         Ok(PeerReservation::Reserved)
@@ -248,7 +283,7 @@ impl PublicationAdapter for Receiver {
             .unwrap()
             .views
             .iter()
-            .map(|view| (view.id.clone(), ViewRequirement::Serving))
+            .map(|view| (view.id, ViewRequirement::Serving))
             .collect()
     }
     fn prepare_commit(
@@ -271,7 +306,7 @@ impl PublicationAdapter for Receiver {
         let installed = held.clone();
         let publications = self.publications.clone();
         let revision = candidate.inventory.history_revision;
-        let id = candidate.id.clone();
+        let id = candidate.id;
         let install = Box::pin(async move {
             let directory = publications.install_view(directory, filters, revision, epoch)?;
             *installed.lock().unwrap() = directory.as_ref().map(Arc::downgrade);
@@ -297,7 +332,7 @@ impl PublicationAdapter for Receiver {
     fn installed(&mut self, view: View) {
         {
             let mut views = self.views.lock().unwrap();
-            views.current = Some(view.id.clone());
+            views.current = Some(view.id);
             views.views.push(view);
         }
         self.expire();
@@ -311,7 +346,7 @@ impl PublicationAdapter for Receiver {
         {
             None
         } else {
-            self.views.lock().unwrap().current.clone()
+            self.views.lock().unwrap().current
         }
     }
 }
