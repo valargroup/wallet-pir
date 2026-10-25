@@ -413,7 +413,7 @@ impl pir_pipeline::publisher::Publication for Export {
             .in_epoch(self.epoch, || -> Result<(), Error> {
                 let mut authority = self.distribution.authority.lock().unwrap();
                 let now = now_ms();
-                self.distribution.objects.retain_publication(
+                self.distribution.objects.retain_replacement(
                     candidate.objects,
                     now.saturating_add(self.distribution.retention_ms),
                     now,
