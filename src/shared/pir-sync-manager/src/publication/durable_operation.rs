@@ -100,7 +100,7 @@ mod tests {
             let mut partial = cache.begin_partial(object).unwrap();
             let mut file = partial.take_file().unwrap();
             std::io::Write::write_all(&mut file, bytes).unwrap();
-            partial.promote(file).unwrap();
+            partial.promote_verified(file).unwrap();
         }
         let (release, blocked) = mpsc::channel::<()>();
         let collecting = cache.clone();
@@ -131,14 +131,14 @@ mod tests {
                 ..
             }
         ));
-        assert!(cache.verified_cached(&stale).unwrap().is_none());
+        assert!(cache.open_verified(&stale).unwrap().is_none());
         // ...and only then fetches, so what it promotes survives.
         let fetched = pir_publication::ObjectReference::for_bytes(b"fetched");
         let mut partial = cache.begin_partial(&fetched).unwrap();
         let mut file = partial.take_file().unwrap();
         std::io::Write::write_all(&mut file, b"fetched").unwrap();
-        partial.promote(file).unwrap();
-        assert!(cache.verified_cached(&fetched).unwrap().is_some());
-        assert!(cache.verified_cached(&kept).unwrap().is_some());
+        partial.promote_verified(file).unwrap();
+        assert!(cache.open_verified(&fetched).unwrap().is_some());
+        assert!(cache.open_verified(&kept).unwrap().is_some());
     }
 }

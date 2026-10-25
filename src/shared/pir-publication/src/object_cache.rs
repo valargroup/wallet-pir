@@ -159,12 +159,6 @@ impl ObjectCache {
         }
         Ok(self.directory.join(&object.sha256))
     }
-    /// The promoted file for `object` after checking its integrity, or `None`
-    /// when absent. Settled, unchanged files reuse process-local evidence; a
-    /// changed file is hashed again and altered bytes are an error.
-    pub fn verified_cached(&self, object: &ObjectReference) -> io::Result<Option<PathBuf>> {
-        Ok(self.open_verified(object)?.map(|file| file.path))
-    }
     /// Open and verify an object, reusing only settled integrity evidence for
     /// the same reference and unchanged physical file. Clones share evidence;
     /// reopening the cache after a restart deliberately starts without it.
@@ -215,8 +209,8 @@ impl ObjectCache {
             Err(error) => Err(error.into()),
         }
     }
-    /// Start a new partial file for `object`. Dropping the partial before
-    /// [`PartialObject::promote`] removes it.
+    /// Start a new partial file for `object`. Dropping an unfinished partial
+    /// removes it.
     pub fn begin_partial(&self, object: &ObjectReference) -> io::Result<PartialObject> {
         let target_path = self.object_path(object)?;
         let partial_path = self.directory.join(format!(
@@ -267,8 +261,8 @@ pub struct PartialObject {
     file: Option<fs::File>,
 }
 impl PartialObject {
-    /// The open partial file. The caller checks the complete body according to its
-    /// product policy; promotion itself establishes no digest or authority.
+    /// Return the one writable handle, consumed by a checked promotion method.
+    /// The product explicitly selects length-only receipt or full verification.
     pub fn take_file(&mut self) -> io::Result<fs::File> {
         self.file
             .take()
@@ -307,7 +301,7 @@ impl PartialObject {
     /// sync file contents, mark it read-only, rename, then sync the directory.
     /// An error before the rename removes the partial and leaves no object; an
     /// error after it leaves a promoted file that the next use re-verifies.
-    pub fn promote(mut self, written: fs::File) -> io::Result<PathBuf> {
+    fn promote(mut self, written: fs::File) -> io::Result<PathBuf> {
         if !written.metadata()?.permissions().readonly() {
             written.set_permissions(fs::Permissions::from_mode(0o444))?;
         }
@@ -461,7 +455,7 @@ mod tests {
         let mut partial = cache.begin_partial(&object).unwrap();
         partial.take_file().unwrap().write_all(b"complete").unwrap();
         drop(partial);
-        assert_eq!(cache.verified_cached(&object).unwrap(), None);
+        assert!(cache.open_verified(&object).unwrap().is_none());
         assert_eq!(fs::read_dir(cache.directory()).unwrap().count(), 0);
     }
 
@@ -480,7 +474,10 @@ mod tests {
 
         let reopened = ObjectCache::open(dir.path().join("objects")).unwrap();
         assert_eq!(
-            reopened.verified_cached(&object).unwrap(),
+            reopened
+                .open_verified(&object)
+                .unwrap()
+                .map(|file| file.path().to_path_buf()),
             Some(promoted.clone())
         );
         assert_eq!(fs::read_dir(reopened.directory()).unwrap().count(), 1);
@@ -488,7 +485,7 @@ mod tests {
         // A promoted object altered after promotion is refused, never served.
         fs::set_permissions(&promoted, fs::Permissions::from_mode(0o644)).unwrap();
         fs::write(&promoted, b"promoteD").unwrap();
-        assert!(reopened.verified_cached(&object).is_err());
+        assert!(reopened.open_verified(&object).is_err());
     }
 
     #[test]
@@ -512,7 +509,7 @@ mod tests {
             vec![object.sha256.clone()],
             "the partial was removed"
         );
-        assert!(cache.verified_cached(&object).is_err());
+        assert!(cache.open_verified(&object).is_err());
     }
 
     #[test]
@@ -525,7 +522,7 @@ mod tests {
             bytes: 1,
         };
         assert!(cache.object_path(&escape).is_err());
-        assert!(cache.verified_cached(&escape).is_err());
+        assert!(cache.open_verified(&escape).is_err());
         assert!(cache.begin_partial(&escape).is_err());
     }
 

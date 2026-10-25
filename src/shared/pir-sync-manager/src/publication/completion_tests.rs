@@ -133,7 +133,7 @@ fn store(cache: &ObjectCache, bytes: &[u8]) -> ObjectReference {
     let mut partial = cache.begin_partial(&object).unwrap();
     let mut file = partial.take_file().unwrap();
     std::io::Write::write_all(&mut file, bytes).unwrap();
-    partial.promote(file).unwrap();
+    partial.promote_verified(file).unwrap();
     object
 }
 
@@ -278,8 +278,8 @@ async fn a_pass_cancelled_during_peer_release_completes_on_the_next_pass() {
         lifecycle.retained_views.collectable_beyond(),
         Some(objects(&[&kept]))
     );
-    assert!(cache.verified_cached(&stale).unwrap().is_none());
-    assert!(cache.verified_cached(&kept).unwrap().is_some());
+    assert!(cache.open_verified(&stale).unwrap().is_none());
+    assert!(cache.open_verified(&kept).unwrap().is_some());
 
     // The next pass finishes the completion before observing anything.
     release_gate.add_permits(1);
@@ -291,7 +291,7 @@ async fn a_pass_cancelled_during_peer_release_completes_on_the_next_pass() {
         1,
         "the adapter receives the view exactly once"
     );
-    assert!(cache.verified_cached(&kept).unwrap().is_some());
+    assert!(cache.open_verified(&kept).unwrap().is_some());
 }
 
 /// A view a peer holds keeps its objects through any number of
@@ -325,11 +325,11 @@ async fn held_views_survive_refreshes_until_their_deadline_passes() {
             .commit(ViewIdentity([refresh; 32]), ())
             .await
             .unwrap();
-        assert!(cache.verified_cached(&held).unwrap().is_some());
-        assert!(cache.verified_cached(&material).unwrap().is_some());
-        assert!(cache.verified_cached(&inventory).unwrap().is_some());
+        assert!(cache.open_verified(&held).unwrap().is_some());
+        assert!(cache.open_verified(&material).unwrap().is_some());
+        assert!(cache.open_verified(&inventory).unwrap().is_some());
         for earlier in &superseded {
-            assert!(cache.verified_cached(earlier).unwrap().is_none());
+            assert!(cache.open_verified(earlier).unwrap().is_none());
         }
         superseded.push(inventory);
     }
@@ -341,8 +341,8 @@ async fn held_views_survive_refreshes_until_their_deadline_passes() {
     let last = store(&cache, b"last inventory");
     lifecycle.adapter.retained = objects(&[&last, &material]);
     lifecycle.commit(ViewIdentity([99; 32]), ()).await.unwrap();
-    assert!(cache.verified_cached(&held).unwrap().is_none());
-    assert!(cache.verified_cached(&material).unwrap().is_some());
+    assert!(cache.open_verified(&held).unwrap().is_none());
+    assert!(cache.open_verified(&material).unwrap().is_some());
     assert_eq!(
         lifecycle.retained_views.collectable_beyond(),
         Some(objects(&[&last, &material]))
