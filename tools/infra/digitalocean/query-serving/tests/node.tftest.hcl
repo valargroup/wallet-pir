@@ -55,11 +55,34 @@ run "refuse_missing_ssh_access" {
 }
 run "refuse_small_data_volume" {
   command = plan
-  variables { data_volume_gib = 128 }
+  variables { data_volume_gib = 256 }
   expect_failures = [var.data_volume_gib]
 }
 run "preserve_existing_public_endpoint" {
   command = plan
   variables { hostname = "wallet-pir.valargroup.dev" }
   expect_failures = [var.hostname]
+}
+
+run "replacement_node_uses_its_own_name_volume_and_capacity" {
+  command = apply
+  # A fresh state: the module ignores later bootstrap changes on an existing node.
+  state_key = "replacement"
+  variables {
+    size            = "g5-16vcpu-96gb-80gb"
+    data_volume_gib = 512
+    hostname        = "wallet-pir-query-02.valargroup.dev"
+  }
+  assert {
+    condition     = digitalocean_droplet.query.name == "wallet-pir-query-02" && digitalocean_droplet.query.size == "g5-16vcpu-96gb-80gb" && digitalocean_volume.data.size == 512
+    error_message = "The replacement node must use its own name and the 96 GB size with a 512 GiB volume."
+  }
+  assert {
+    condition     = digitalocean_volume.data.name == "wallet-pir-query-02-data" && strcontains(digitalocean_droplet.query.user_data, "scsi-0DO_Volume_wallet-pir-query-02-data")
+    error_message = "The replacement node must mount only its own volume."
+  }
+  assert {
+    condition     = cloudflare_dns_record.query.name == "wallet-pir-query-02.valargroup.dev"
+    error_message = "The replacement node gets its own candidate hostname."
+  }
 }

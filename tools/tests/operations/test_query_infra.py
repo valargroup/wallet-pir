@@ -1,26 +1,30 @@
-"""Only the approved additive candidate may pass initial provisioning review."""
+"""Only an approved query node's additive creation may pass provisioning review."""
 import copy
 from pathlib import Path
 import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'lib'))
-from wallet_pir_ops.query_infra import HOSTNAME, PREFIX, RESOURCES, SIZE, initial_plan
+from wallet_pir_ops.query_infra import NODES, RESOURCES, initial_plan, prefix
 
 PROJECT = '00000000-0000-0000-0000-000000000001'
 
 
-def plan():
+PREFIX = prefix('01')
+
+
+def plan(node='01'):
+    name = 'wallet-pir-query-' + node
     values = {
-        'digitalocean_droplet.query': {'size': SIZE, 'region': 'ams3', 'name': 'wallet-pir-query-01'},
-        'digitalocean_volume.data': {'size': 1024, 'name': 'wallet-pir-query-01-data', 'region': 'ams3'},
+        'digitalocean_droplet.query': {'size': NODES[node]['size'], 'region': 'ams3', 'name': name},
+        'digitalocean_volume.data': {'size': NODES[node]['volume_gib'], 'name': name + '-data', 'region': 'ams3'},
         'digitalocean_project_resources.query': {'project': PROJECT},
-        'cloudflare_dns_record.query': {'name': HOSTNAME, 'type': 'A', 'proxied': False},
+        'cloudflare_dns_record.query': {'name': name + '.valargroup.dev', 'type': 'A', 'proxied': False},
     }
     return {'complete': True, 'resource_changes': [
-        {'mode': 'managed', 'address': PREFIX + name,
-         'change': {'actions': ['create'], 'after': values.get(name, {})}}
-        for name in sorted(RESOURCES)]}
+        {'mode': 'managed', 'address': prefix(node) + resource,
+         'change': {'actions': ['create'], 'after': values.get(resource, {})}}
+        for resource in sorted(RESOURCES)]}
 
 
 class ProvisionPlan(unittest.TestCase):
@@ -72,6 +76,31 @@ class ProvisionPlan(unittest.TestCase):
                                              'change': {'actions': ['no-op']}, **extra})
             with self.subTest(extra=extra), self.assertRaises(ValueError):
                 initial_plan(value, PROJECT)
+
+    def test_the_replacement_node_has_its_own_smaller_capacity_and_name(self):
+        self.assertEqual(len(initial_plan(plan('02'), PROJECT, '02')), 6)
+        self.assertTrue(all(address.startswith('module.query_serving_02[0].')
+                            for address in initial_plan(plan('02'), PROJECT, '02')))
+        # Each node's plan is refused under the other node's identity.
+        for value, node in ((plan('01'), '02'), (plan('02'), '01')):
+            with self.subTest(node=node), self.assertRaises(ValueError):
+                initial_plan(value, PROJECT, node)
+        for field, wrong in (('size', NODES['01']['size']), ('name', 'wallet-pir-query-01')):
+            value = plan('02')
+            for resource in value['resource_changes']:
+                if resource['address'].endswith('digitalocean_droplet.query'):
+                    resource['change']['after'][field] = wrong
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                initial_plan(value, PROJECT, '02')
+
+    def test_adding_the_second_node_cannot_touch_the_first(self):
+        value = plan('02')
+        value['resource_changes'].append({'mode': 'managed', 'address': PREFIX + 'digitalocean_droplet.query',
+                                         'change': {'actions': ['no-op']}})
+        initial_plan(value, PROJECT, '02')
+        value['resource_changes'][-1]['change']['actions'] = ['update']
+        with self.assertRaisesRegex(ValueError, 'unrelated'):
+            initial_plan(value, PROJECT, '02')
 
 
 if __name__ == '__main__':

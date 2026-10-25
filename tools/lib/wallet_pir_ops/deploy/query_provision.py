@@ -1,9 +1,11 @@
-"""Provision only the initial query candidate, retaining the installed fleet source.
+"""Provision one approved query node, retaining the installed fleet source.
 
 Run on the coordinator through its encrypted runtime credential loader. A fresh
-saved plan must create exactly the approved six resources. The transaction adds
-only the query module, its root declaration and its enabled setting; existing
-Terraform files, inputs, backend and resource addresses remain in place.
+saved plan must create exactly the approved node's six resources. The first node
+adds the query module, its root declaration and its enabled setting. A later
+node replaces that module and declaration with reviewed source and adds its own
+enabled setting. Other Terraform files, inputs, backend and resource addresses
+remain in place.
 """
 import json
 import os
@@ -13,7 +15,7 @@ import tempfile
 
 from .. import durable
 from ..hostlock import PinnedHostLock
-from ..query_infra import initial_plan
+from ..query_infra import NODES, initial_plan
 from ..terraform import Terraform, clean_environment, file_sha256
 
 CANONICAL = Path('/opt/enhance-pir/infra/production')
@@ -22,6 +24,9 @@ PRODUCTION_VARIABLES = Path('/etc/enhance-pir/production.tfvars')
 AUTOSCALE_STATE = Path('/srv/enhance-pir/autoscale/state.json')
 MODULE_FILES = {'main.tf', 'variables.tf', 'outputs.tf', 'versions.tf', 'cloud-init.yaml.tftpl'}
 ENABLED = 'query_serving_enabled = true\n'
+# Each node's enabled setting and the file that holds it.
+SETTINGS = {'01': ('query-serving.auto.tfvars', ENABLED),
+            '02': ('query-serving-02.auto.tfvars', 'query_serving_02_enabled = true\n')}
 
 
 def inputs(root):
@@ -67,8 +72,11 @@ def prepare(request, *, canonical=None, terraform=None):
     """Validate the saved plan and bind every source/input byte before installation."""
     canonical = CANONICAL if canonical is None else Path(canonical)
     if set(request) != {'machine_id', 'source_sha', 'staged_root', 'saved_plan', 'saved_plan_sha256',
-                        'project_id', 'baseline', 'operator_variables_sha256', 'desired_groups'}:
+                        'project_id', 'baseline', 'operator_variables_sha256', 'desired_groups', 'node'}:
         raise ValueError('unexpected query provisioning request fields')
+    if request['node'] not in NODES:
+        raise ValueError('unknown query node')
+    first = request['node'] == '01'
     if not isinstance(request['source_sha'], str) or not re.fullmatch('[0-9a-f]{40}', request['source_sha']):
         raise ValueError('query extension needs an exact source revision')
     source = Path(request['staged_root']).resolve()
@@ -88,18 +96,21 @@ def prepare(request, *, canonical=None, terraform=None):
     for name in MODULE_FILES:
         if not (module / name).is_file() or (module / name).is_symlink():
             raise ValueError('query module source is incomplete or redirected')
-    for destination in (canonical / 'query-serving.tf', canonical / 'query-serving.auto.tfvars',
-                        canonical.parent / 'query-serving'):
+    declared = (canonical / 'query-serving.tf', canonical.parent / 'query-serving')
+    if not first and any(not path.exists() or path.is_symlink() for path in declared):
+        raise ValueError('a later query node needs the installed query module')
+    enabled = canonical / SETTINGS[request['node']][0]
+    for destination in (*(declared if first else ()), enabled):
         if destination.exists() or destination.is_symlink():
             raise ValueError('query source already exists; inspect the recorded transaction')
     tf = terraform or Terraform(source, env=dict(os.environ))
     document = tf.show_json(saved)
-    addresses = initial_plan(document, request['project_id'])
+    addresses = initial_plan(document, request['project_id'], request['node'])
     if group_count(document['variables']['enhance_group_count']['value']) != group_count(request['desired_groups']):
         raise ValueError('saved plan differs from current autoscaling inputs')
     hashes = {'query-serving.tf': file_sha256(source / 'query-serving.tf'),
               **{'query-serving/' + name: file_sha256(module / name) for name in sorted(MODULE_FILES)}}
-    return {'request_sha256': durable.digest(request), 'source_sha': request['source_sha'],
+    return {'request_sha256': durable.digest(request), 'source_sha': request['source_sha'], 'node': request['node'],
             'saved_plan_sha256': request['saved_plan_sha256'], 'source_files': hashes,
             'creates': addresses, 'existing_fleet_actions': 0, 'baseline': request['baseline'],
             'operator_variables_sha256': request['operator_variables_sha256'],
@@ -131,6 +142,11 @@ def provision(request, expected, receipt, *, canonical=None, terraform_factory=T
         durable.atomic_json(receipt, record, mode=0o600)
         try:
             # Complete the new module before making its root declaration visible.
+            # A later node keeps the replaced module beside it for inspection.
+            if plan['node'] != '01':
+                record['previous_module'] = str(canonical.parent / ('.query-serving-before-' + plan['node']))
+                durable.atomic_json(receipt, record, mode=0o600)
+                os.rename(canonical.parent / 'query-serving', record['previous_module'])
             with tempfile.TemporaryDirectory(prefix='.query-module-', dir=canonical.parent) as temporary:
                 staged = Path(temporary) / 'query-serving'
                 staged.mkdir()
@@ -150,7 +166,8 @@ def provision(request, expected, receipt, *, canonical=None, terraform_factory=T
             if file_sha256(source / 'query-serving.tf') != plan['source_files']['query-serving.tf']:
                 raise ValueError('query declaration changed during installation')
             durable.atomic_text(canonical / 'query-serving.tf', declaration, mode=0o644)
-            durable.atomic_text(canonical / 'query-serving.auto.tfvars', ENABLED, mode=0o600)
+            name, setting = SETTINGS[plan['node']]
+            durable.atomic_text(canonical / name, setting, mode=0o600)
             installed = terraform_factory(canonical, env=environment(), lock=held)
             installed.run(['init', '-input=false', '-lockfile=readonly'])
             record['phase'] = 'applying'
@@ -160,8 +177,9 @@ def provision(request, expected, receipt, *, canonical=None, terraform_factory=T
             previous, current = identities(before), identities(after)
             if before['lineage'] != after['lineage'] or any(current.get(k) != v for k, v in previous.items()):
                 raise ValueError('existing fleet resource identities changed')
+            output = 'query_serving_node' + ('' if plan['node'] == '01' else '_' + plan['node'])
             record.update(phase='committed', serial_after=after['serial'],
-                          node=installed.output_json()['query_serving_node']['value'])
+                          node=installed.output_json()[output]['value'])
             durable.atomic_json(receipt, record, mode=0o600)
         except BaseException:
             record['phase'] = 'needs-reconcile'

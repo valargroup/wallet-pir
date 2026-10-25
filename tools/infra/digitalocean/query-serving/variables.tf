@@ -28,8 +28,8 @@ variable "data_volume_gib" {
   type    = number
   default = 1024
   validation {
-    condition     = var.data_volume_gib >= 1024 && floor(var.data_volume_gib) == var.data_volume_gib
-    error_message = "The full-history candidate needs an integer volume size of at least 1024 GiB."
+    condition     = var.data_volume_gib >= 512 && floor(var.data_volume_gib) == var.data_volume_gib
+    error_message = "The full-history node needs an integer volume size of at least 512 GiB."
   }
 }
 variable "cloudflare_zone_id" {

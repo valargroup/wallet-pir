@@ -19,6 +19,16 @@ volume. The service has `MemoryHigh=144G`, `MemoryMax=160G` and no swap allowanc
 leaving 32 GiB outside its hard limit for the OS, TLS proxy and operating tools.
 These are limits, not evidence that the current full datasets fit.
 
+The replacement node `wallet-pir-query-02` has 16 vCPUs, 96 GiB RAM and a
+512 GiB volume. Its inventory sets `limits` of `MemoryHigh=72G` and
+`MemoryMax=80G`, and cache budgets of 48 GiB for history, 20 GiB for detail
+and 8 GiB for Enhance, so the three caches together stay below the memory
+limit. On 2026-10-25 the complete active sets were 39.1 GiB of history and
+15.0 GiB of detail tables, growing by about 3.9 and 2.3 GiB a year. The
+first node measured 57.7 GiB resident at steady state, about half of it
+memory-mapped preprocessing that the kernel can reclaim under pressure.
+The unit leaves Rayon's thread count to the host's CPU count.
+
 The [inventory settings example](../tools/deploy/query-server/query-node.example.json)
 carries the settings installed on `wallet-pir-query-01` on 2026-10-24. All four
 products synchronize from the coordinator publisher, `https://enhance-pir.valargroup.dev`,
@@ -114,10 +124,20 @@ wallet paths to loopback; management and private APIs stay inaccessible publicly
    regular fleet operation must know about the new node. If the guard refuses,
    stop; do not target resources to evade a fleet change. Retain the transaction
    receipt and saved plan privately.
-5. Verify cloud-init completion, actual 192 GiB/24 CPU capacity, volume identity,
+5. Verify cloud-init completion, the node's actual RAM and CPU capacity, volume identity,
    mount, free space and TLS before staging the application. Obtain the new host's
    SSH pins through the trusted provisioning channel; never use unverified
    `ssh-keyscan` output as trust.
+
+To add `wallet-pir-query-02` beside an installed first node, stage the
+maintained root with the reviewed `query-serving.tf` and module, save the plan
+with `-var=query_serving_02_enabled=true`, review it with
+`wallet-pir-query-plan.py --node 02`, and set `"node": "02"` in the
+`query-node-*` request. The transaction refuses a second node without the
+installed module, replaces the module and declaration with the reviewed source,
+keeps the previous module beside it for inspection and adds
+`query-serving-02.auto.tfvars`. Its plan may create only the second node's six
+resources; the first node and the rest of the fleet must stay unchanged.
 
 The wrapper's default still operates the installed legacy Terraform root. Its
 `--root` option allows a pinned staging tree while retaining the same credential,

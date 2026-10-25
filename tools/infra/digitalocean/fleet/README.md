@@ -118,3 +118,7 @@ loopback or the VPC interface; public routing remains owned by Caddy.
 [query node procedure](../../../../docs/query-node.md) for the approved 192 GiB
 capacity, saved-plan guard, branch staging and application deployment.
 Receiver support is still required before all-products acceptance.
+
+`query_serving_02_enabled` (default false) adds `wallet-pir-query-02`, the
+96 GB (`g5-16vcpu-96gb-80gb`) replacement with its own 512 GiB volume and
+hostname, beside the first node. Retiring the first node is a separate step.
