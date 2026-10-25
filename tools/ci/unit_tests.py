@@ -60,33 +60,38 @@ def execute(programs, jobs, *, budget=False, test_threads=1):
                 package=program['package'], executable=Path(program['executable']).name,
                 seconds=round(time.monotonic() - started, 3), passed=passed)), flush=True)
 
+    def run_concurrent(selected, workers):
+        if not selected:
+            return
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [pool.submit(invoke, program) for program in selected]
+            failures = []
+            try:
+                for future in as_completed(futures):
+                    try:
+                        future.result()
+                    except Exception as error:
+                        if budget and os.environ.get('WALLET_PIR_ENFORCE_BUDGET') == '0':
+                            failures.append(error)
+                        else:
+                            raise
+            except BaseException:
+                if budget:
+                    from test_budget import stop
+                    stop()
+                for future in futures:
+                    future.cancel()
+                raise
+            if failures:
+                raise RuntimeError(f'{len(failures)} diagnostic test programs failed') from failures[0]
+
     # Encrypted HTTP fixtures retain their own concurrency. Keep their working
     # sets apart from other Rust programs before overlapping ordinary units.
-    for program in programs:
-        if program.get('exclusive'):
-            invoke(program)
-    with ThreadPoolExecutor(max_workers=jobs) as pool:
-        futures = [pool.submit(invoke, program) for program in programs
-                   if not program.get('exclusive')]
-        failures = []
-        try:
-            for future in as_completed(futures):
-                try:
-                    future.result()
-                except Exception as error:
-                    if budget and os.environ.get('WALLET_PIR_ENFORCE_BUDGET') == '0':
-                        failures.append(error)
-                    else:
-                        raise
-        except BaseException:
-            if budget:
-                from test_budget import stop
-                stop()
-            for future in futures:
-                future.cancel()
-            raise
-        if failures:
-            raise RuntimeError(f'{len(failures)} diagnostic test programs failed') from failures[0]
+    serial = [program for program in programs if program.get('exclusive')]
+    ordinary = [program for program in programs if not program.get('exclusive')]
+    for program in serial:
+        invoke(program)
+    run_concurrent(ordinary, jobs)
 
 
 

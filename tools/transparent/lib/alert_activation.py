@@ -484,6 +484,8 @@ class Activator:
                 self.apply(journal, index, new=True)
             journal.set_status('committed')
         except BaseException as error:
+            from wallet_pir_ops.deploy.deployment_alerts import failed
+            failed()
             journal.event('failure', error='%s: %s' % (type(error).__name__, error))
             if journal.touched():
                 self.out('deploy failed (%s); restoring %d touched component(s)' % (error, len(journal.touched())))

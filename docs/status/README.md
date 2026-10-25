@@ -15,9 +15,9 @@ The two packages have separate responsibilities:
   workers. Its diagnostic commands run through `pir-publisher status`.
 - `pir-query-server` serves prepared datasets through Status routers and
   workers. Its `status` module owns role configuration, the generation
-  controller, HTTP routes, admission, telemetry and publisher synchronization.
-  `status-query-server` holds only the private router-worker messages, with no
-  HTTP stack; the root mounts the public routes. `status-shared` defines generations, the wire contract
+  controller, HTTP routes, admission, telemetry, publisher synchronization
+  and the private router-worker messages. The root mounts the public routes.
+  `status-shared` defines generations, the wire contract
   and probe client, and encodes datasets without reading the chain.
 
 The publisher depends on query-server; query-server never depends on the

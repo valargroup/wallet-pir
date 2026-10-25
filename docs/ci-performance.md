@@ -37,11 +37,14 @@ only an enforced passing run establishes compliance with the selected budget.
 Native tests compile shared crates and product libraries once, on a feature set
 that does not change with the diff. The publisher and query hosts stay on that
 same command. Transparent publication tests use that
-command. History and detail reach the query host through the publisher
-library's dev-dependency; the publisher host binary does not enable them,
-because that links the same library again. Fast diagnostic binaries leave `transparent-tools/query-host`
-off for the same reason. The in-process Enhance hint graph compiles on a
-second command and does not take the hosts with it. Chain-node fixtures stay in qualification so they do not rebuild the shared graph.
+command. History and detail reach the query host as explicit features of that
+command; the publisher host binary does not enable them,
+because that links the same library again. The query host's dev-dependency does
+not force those roles. Fast diagnostic binaries leave `transparent-tools/query-host`
+off for the same reason. The in-process Enhance hint target stays on a second
+command with the query host's Enhance and Status roles only, so one rustc does
+not build the Transparent stack beside them.
+The chain reader stays on that command with its Enhance and Transparent targets. Receiver, status, and RocksDB chain-node targets stay in qualification so they do not rebuild the shared graph.
 Executables
 then run with at most three programs active and one case per program. The fast
 compile leaves out binaries that declare no unit tests; qualification still
@@ -157,28 +160,34 @@ and stale ancestry cannot leave unchecked changes behind.
 Rust feedback compiles the selected unit tests, CLI test binaries and named fast
 integration targets together in one `release-fast` Cargo invocation. That command
 also names the stable fast dev-dependency roots, including the publisher and
-query hosts, so a smaller affected set does
-not drop chain `testing` or reqwest `blocking` and rebuild a second copy of the
-dependency graph. The hosts stay on this command for every diff. Taking them
-off for an Enhance change and putting them back afterwards changes feature
-unification and rebuilds the closure. Transparent publication tests are part of this command, and
-the publisher host is not relinked with history and detail. A second
-invocation adds the in-process Enhance hint graph. Its features must not unify
-into the stable graph, but it names the same roots with the stable features, so
-every shared crate resolves exactly as before and only the hosts and the
-harnesses that depend on them compile again. Chain-node fixtures stay in qualification. The reader's receiver and status RPC targets stay in full
-qualification; those features are not part of the closure, and enabling them
-rebuilds every cached consumer. Only the affected packages' programs run. Campaign
+query hosts, the chain reader, its RPC transport, and the pipeline, so a
+smaller affected set does not drop chain `testing-node` or reqwest `blocking`
+and rebuild a second copy of the dependency graph. The hosts and the reader
+stay on this command for every diff. Taking them off for one change and putting
+them back afterwards changes feature unification and rebuilds the closure.
+Transparent publication tests are part of this command, and
+the publisher host is not relinked with history and detail. History and detail
+are explicit features of the query host on this command. The in-process
+Enhance hint target and the query host's Enhance and Status roles stay on a
+second command that names the same roots without history and detail, so the
+two harnesses are not one rustc and shared crates are not compiled again.
+Publisher chain-node fixtures stay
+in qualification. The reader's receiver, status, and RocksDB targets stay in
+full qualification; the reader's Enhance and Transparent targets stay on the
+stable command. Only the affected packages' programs run. Campaign
 targets are excluded from that build. Local and CI checks then execute at most
 three Cargo-reported test programs concurrently. The publisher library builds
 full archive runtimes on every core of a 4-core hosted runner, so it runs alone
 there before the pool; beside it, the encrypted HTTP smokes miss the 30-second
 case deadline. The 8-core fast runner keeps that library in the pool with four
-build threads. The query host's Status unit program runs alone first: one
-generation prepare is a 96 MiB database, and overlapping that prepare with the
-publisher crosses the 30-second case deadline. Below eight CPUs, counting any
-cgroup quota, the Enhance and Receiver runtime libraries also run alone, because single cases overran the
-30-second deadline beside each other. On those hosts Rust test programs also
+build threads. The query host's Status cases share one process and finish
+before the pool, reusing prepared databases across publication identities.
+Splitting these cases duplicates large native allocations and can exhaust the
+runner's memory ceiling. The Enhance publication library also runs alone.
+Below eight
+CPUs, counting any cgroup quota, the Enhance and Receiver runtime libraries
+also run alone, because single cases overran the 30-second deadline beside
+each other. On those hosts Rust test programs also
 start only after the helper checks finish; compilation still overlaps them. The expensive Enhance encrypted HTTP lifecycle belongs to full qualification;
 it is excluded from fast compilation and execution. Independent hint and
 damaged-artifact checks remain in the bounded pool. Each worker verifies its
@@ -289,7 +298,7 @@ Whole-repository **CI full** runs nightly at 04:17 UTC and on explicit dispatch.
 **Qualify services** is dispatch-only and pins its main revision. It retains
 full service suites and exact-SHA artifact checks; a green fast gate cannot
 replace it. Hosted cache priming runs after main dependency/build-configuration
-changes, nightly at 03:37 UTC or on request, without
+changes, every two hours (minute 37) or on request, without
 launching qualification or holding the main result open. Dependency/toolchain
 validation and cold preparation belong before landing an upgrade. Unexpected
 missing prerequisites must fail visibly rather than skip required tests.
@@ -332,6 +341,12 @@ The deployment goal is under ten minutes for all services, including qualificati
 artifact preparation, rollout and query verification. These reductions do not by
 themselves establish that end-to-end timing; record a complete run before claiming it.
 
+Status sync cases share one prepared database per snapshot and run in one
+exclusive process. Publication identities reuse those allocations. Their
+HTTP peers, writable caches, authority checks and failure controls remain
+independent. Running three Status processes multiplies the large native
+working set and can kill the runner at its memory ceiling.
+
 ## Warm runners
 
 The shared CI host is **wallet-pir-ci-01** (`164.90.197.110`), DigitalOcean droplet
@@ -364,10 +379,20 @@ caps remain enforced. `OOMPolicy=kill`, `KillMode=control-group`, and
 `Restart=always` clean up the entire service group and reconnect the runner after
 an out-of-memory failure. Service stops allow 30 seconds before forced cleanup.
 Both services set `CARGO_BUILD_JOBS=4`. That variable is hashed into the
-persistent target identity, so the fast compile step overrides it to one
-after setup. Two concurrent release-fast rustc processes still exceed the
+persistent target identity, so on main's runner the fast compile step overrides
+it to one after setup, using the same main-runner condition as the job's
+`runs-on`. Hosted PR runners (4 CPUs, 16 GB) keep four. Two concurrent release-fast rustc processes still exceed the
 fast 6 GiB cap and the OOM kill drops the runner; one stays inside the cap
-and reuses the existing target. A build cannot occupy the fast service's queue, but both services
+and reuses the existing target. Before that compile, main deletes incremental
+sessions in the warm target. A killed rustc can leave a session that the next
+compile of the same crate grows past 6 GiB. Fingerprints and finished artifacts
+stay, so an unchanged crate is not rebuilt. The fast query host uses non-incremental `release-fast` opt-level 1 and 256
+codegen units. One large codegen unit of that crate runs out of memory sooner than many
+smaller ones. Stable rustc no longer accepts a per-crate codegen thread cap, so the unit
+count is what keeps a from-scratch rustc inside 6 GiB.
+History and detail compile on the stable command; Enhance and Status compile
+on the hint command, without history and detail. Deploy binaries stay on the
+fat-LTO release profile. A build cannot occupy the fast service's queue, but both services
 share the host CPU and disk, so latency must also be measured under contention.
 The single build slot serializes CPU release builds, while full tests and lint
 use independent hosted Ubuntu runners with their own lane/scope caches. Initial
@@ -507,7 +532,12 @@ routine limits remain unchanged.
 Main uses persistent targets; the separate
 [Prime hosted Cargo caches](../.github/workflows/ci-cache.yml) workflow can prepare
 one successful main fast snapshot for hosted PRs. It compiles fast units only
-when the exact key is missing, runs no tests and is not a gate. Full qualification
+when main holds no snapshot for the current lockfile saved in the last 20
+hours, runs no tests and is not a gate. Only main and PR fast checks save
+hosted workspace snapshots, and only main saves other lanes: PRs can read only
+main's entries, and branch or shard entries would evict them from the 10 GB
+repository cache. A PR that restores nothing prints a "Cold Cargo cache"
+warning. Full qualification
 retains persistent build lanes. A missing cache never relaxes validation or the
 180-second warm feedback target.
 
@@ -629,7 +659,7 @@ features and output file names (basenames only), so `cargo check` (`.rmeta`) and
 any command reported it not fresh. Units no command needed are not counted. Cargo commands outside
 `stage.py` (for example `make` helper targets) are not attributed.
 `fingerprint_inventory` in `CI_CACHE_REPORT` compares fingerprint directories at
-restore and job end by content; it is an inventory, not attribution.
+restore and job end by name, size and mtime; it is an inventory, not attribution.
 
 `CI_STAGE_REPORT` sums leaf stage wall time: `compile_stage_seconds` covers whole
 compile/lint Cargo commands, including resolution, downloads, build scripts and
@@ -663,8 +693,10 @@ it never clears a current target to make a check appear healthy.
 For long remote validation, start a tracked hub job running
 `python3 tools/ci/launch.py --receipt <outside-checkout-attempt.json> -- <command>`.
 It requires a clean checkout, chooses the pinned Rust toolchain, checks native
-prerequisites, sets `umask 022`, and writes the commit, configuration digest,
-measured duration and exit status atomically. A changed source/configuration
+prerequisites by running them (protoc from `PROTOC` when set, else `PATH`, which
+it passes to the command as `PROTOC`) and that its Python imports the test suites'
+third-party modules, sets `umask 022`, and writes the commit, configuration digest,
+protoc path and version, measured duration and exit status atomically. A changed source/configuration
 invalidates success. Use `--no-rust` for operations-only commands. Each attempt
 needs a new receipt path. Inspect the tracked job with short SSH checks; do not
 run validation through an inspection connection.

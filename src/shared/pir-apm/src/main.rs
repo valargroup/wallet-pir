@@ -26,7 +26,7 @@ use std::{
 use alerts::{AlertEngine, AlertInput, AlertTransition};
 use anyhow::{Context, Result};
 use axum::{routing::get, Router};
-use clap::{Parser, ValueEnum};
+use clap::{Parser, Subcommand, ValueEnum};
 use config::Config;
 use dashboard::{DashboardData, SharedDashboard};
 use metrics::RollingMetrics;
@@ -37,6 +37,8 @@ use tokio::sync::RwLock;
 #[derive(Debug, Parser)]
 #[command(about = "Local PIR metrics dashboard and alerting sidecar")]
 struct Cli {
+    #[command(subcommand)]
+    command: Option<Command>,
     /// Queue labeled firing/recovery through the running service durable worker.
     #[arg(long)]
     enqueue_test_alert: bool,
@@ -49,6 +51,31 @@ struct Cli {
     force_alert: Option<ForcedAlert>,
 }
 
+#[derive(Debug, Subcommand)]
+enum Command {
+    /// Control the fleet-wide notification window; no service is changed.
+    Deployment {
+        #[arg(long)]
+        state: std::path::PathBuf,
+        #[arg(long)]
+        id: String,
+        #[command(subcommand)]
+        operation: DeploymentOperation,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum DeploymentOperation {
+    Begin {
+        #[arg(required = true)]
+        services: Vec<String>,
+    },
+    Finish {
+        #[arg(long)]
+        failed: bool,
+    },
+}
+
 #[derive(Clone, Debug, ValueEnum)]
 enum ForcedAlert {
     #[value(name = "high_latency")]
@@ -58,6 +85,23 @@ enum ForcedAlert {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    if let Some(Command::Deployment {
+        state,
+        id,
+        operation,
+    }) = cli.command
+    {
+        let mut store = pir_apm::incidents::Store::open(&state)?;
+        let now = pir_apm::incidents::unix_time();
+        let deployment = match operation {
+            DeploymentOperation::Begin { services } => {
+                store.begin_deployment(&id, services, now)?
+            }
+            DeploymentOperation::Finish { failed } => store.finish_deployment(&id, failed, now)?,
+        };
+        println!("{}", serde_json::to_string(&deployment)?);
+        return Ok(());
+    }
     let config = Config::from_env()?;
     if cli.enqueue_test_alert {
         let path = std::env::var("PIR_APM_STATE_PATH").context("PIR_APM_STATE_PATH required")?;

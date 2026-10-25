@@ -10,10 +10,10 @@ autobins = false
 [features]
 default = []
 # The copied query-host entrypoint selects its diagnostic subcommands with this feature.
-enhance = ["dep:enhance-publisher", "dep:enhance-query-server", "dep:enhance-shared", "dep:pir-query-server", "pir-query-server/enhance"]
+enhance = ["dep:enhance-publisher", "dep:enhance-shared", "dep:pir-query-server", "pir-query-server/enhance"]
 native-reinspiring = ["enhance-publisher?/native-reinspiring"]
 # The Enhance hint cache records whether this build includes CUDA.
-cuda = ["enhance-query-server?/cuda", "enhance-shared?/cuda"]
+cuda = ["enhance-shared?/cuda"]
 # Larger hint oracles. Ordinary correctness leaves this off.
 qualification-tests = []
 # The copied query-host entrypoint the process tests start.
@@ -34,7 +34,6 @@ enhance-tests = [
     "pir-publisher/enhance",
     "query-host",
     "enhance-publisher/fault-injection",
-    "dep:enhance-query-server",
     "enhance-shared/client",
     "dep:zakura-server-chain",
     "zakura-server-chain/enhance",
@@ -109,7 +108,6 @@ status-publisher = { path = "../../src/status/status-publisher", optional = true
 enhance-publisher = { path = "../../src/enhance/enhance-publisher", optional = true }
 transparent-publisher = { path = "../../src/transparent/transparent-publisher", optional = true }
 transparent-tools = { path = "../transparent", optional = true }
-enhance-query-server = { path = "../../src/enhance/enhance-query-server", optional = true }
 enhance-shared = { path = "../../src/enhance/enhance-shared", optional = true }
 pir-query-server = { path = "../../src/pir-query-server", optional = true }
 transparent-shared = { path = "../../src/transparent/transparent-shared", optional = true }
@@ -223,11 +221,6 @@ path = "tests/event_codec_bounds.rs"
 required-features = ["transparent-tests"]
 
 [[test]]
-name = "service_round_trip"
-path = "tests/service_round_trip.rs"
-required-features = ["transparent-tests"]
-
-[[test]]
 name = "shard_filters"
 path = "tests/shard_filters.rs"
 required-features = ["transparent-tests"]
@@ -255,4 +248,9 @@ required-features = ["wallet-recovery-tests"]
 [[test]]
 name = "publication_renewal"
 path = "tests/publication_renewal.rs"
+required-features = ["enhance-tests"]
+
+[[test]]
+name = "reorg_recovery"
+path = "tests/reorg_recovery.rs"
 required-features = ["enhance-tests"]

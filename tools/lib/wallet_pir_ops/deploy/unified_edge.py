@@ -289,6 +289,8 @@ class UnifiedEdge:
                 journal.set_status('committed')
                 self.persist(journal)
             except Exception as failure:
+                from .deployment_alerts import failed
+                failed()
                 if preserve_on_failure:
                     journal.set_status('verification-failed', error=str(failure))
                     self.persist(journal)

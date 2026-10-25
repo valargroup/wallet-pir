@@ -1,4 +1,4 @@
-//! Enhance private evaluation messages between ingress, routers and workers.
+//! Private Enhance evaluation messages exchanged by ingress, routers and workers.
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

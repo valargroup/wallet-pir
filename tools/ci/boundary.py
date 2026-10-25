@@ -103,13 +103,13 @@ PURE = {
     'receiver-pir-server',
     'pir-observability', 'pir-control', 'pir-runtime',
     'transparent-shared', 'pir-query-server',
-    'enhance-shared', 'enhance-query-server', 'status-query-server', 'status-shared', 'pir-serving',
+    'enhance-shared', 'status-shared', 'pir-serving',
     'pir-publication',
 }
 # Serving libraries and the chain reading, ingestion and application packages
 # they must never reach. Each product's applications compose its serving library;
 # the shared raw PIR runtime they call is held to the same rule.
-SERVING = {'enhance-shared', 'enhance-query-server', 'status-query-server', 'status-shared', 'transparent-shared',
+SERVING = {'enhance-shared', 'status-shared', 'transparent-shared',
            'pir-runtime', 'pir-serving', 'pir-cuda'}
 INGESTION = {
     'pir-publisher', 'pir-pipeline', 'pir-node-rpc', 'zakura-server-chain', 'enhance-publisher',
@@ -202,13 +202,13 @@ TRANSPORT = {'tokio', 'tokio-stream', 'tokio-util', 'axum', 'axum-core', 'hyper'
 HOST_FEATURES = {'pir-observability': {'http'}, 'pir-control': {'admission'}}
 RUNTIME_FREE = {
     'pir-publication', 'pir-runtime', 'pir-serving', 'pir-cuda', 'receiver-store', 'status-shared',
-    'enhance-shared', 'enhance-publisher', 'enhance-query-server', 'status-publisher',
-    'status-query-server', 'transparent-publisher', 'transparent-shared',
+    'enhance-shared', 'enhance-publisher', 'status-publisher',
+    'transparent-publisher', 'transparent-shared',
     'receiver-indexer', 'receiver-pir-server',
 }
 # Temporary exceptions; remove each as its product's transport moves to the hosts.
 RUNTIME_PENDING = {
-    'enhance-shared', 'enhance-publisher', 'enhance-query-server', 'status-publisher',
+    'enhance-shared', 'enhance-publisher', 'status-publisher',
     'transparent-publisher', 'transparent-shared',
     'receiver-indexer', 'receiver-pir-server',
 }
@@ -328,7 +328,7 @@ def manifests(root=ROOT):
 
 
 # Serving libraries; `pir-query-server` is their only executable entrypoint.
-SERVING_LIBRARIES = ('enhance-query-server', 'status-query-server', 'receiver-pir-server',
+SERVING_LIBRARIES = ('receiver-pir-server',
                      'enhance-publisher', 'status-publisher', 'transparent-publisher')
 
 
@@ -814,7 +814,7 @@ def main(argv=None):
         problems += common_family_violations(metadata['packages'], patches)
         problems += resolved_violations(metadata, workspace_unified=True)
         problems += resolved_violations(standalone_metadata(RECEIVER))
-        for name in ('enhance-query-server', 'status-query-server', 'pir-query-server'):
+        for name in ('enhance-shared', 'pir-query-server'):
             problems += cpu_graph_violations(standalone_metadata({name}))
         problems += database_reader_violations(standalone_metadata(set(DATABASE_FREE)))
         for name in sorted(SERVING | PIPELINE_FOUNDATIONS | {PIPELINE, SYNC_MANAGER, PUBLICATION}):

@@ -80,6 +80,15 @@ Waiting for a peer to load is deferred coordination; it does not start an
 independent retry timer. Router and ingress maintenance renew peer promises
 while loading or waiting.
 
+Expected recovery waits proven by a well-formed publisher response (withdrawal,
+absent or aged source authority, or authority that moved during a pass) refuse
+serving like any failure, but poll every second for up to five minutes and then
+every five seconds. Genuine failures, including publisher refusals, keep the
+manager's exponential backoff. Requests renew authority on demand, so serving
+resumes when a node or publisher edge returns without waiting for a pass. The
+publisher publishes each committed prefix once; work reserved again for that
+prefix while it prepared is skipped.
+
 The publisher supplies authority only after a real canonical node observation.
 Its five-second lifetime is never extended by an unchanged HTTP response or a
 local timer. Processes persist publication/recovery floors before serving.
@@ -178,9 +187,9 @@ work by the number of queried domains. See [wallet integration](integration.md).
 ## Package boundaries
 
 `enhance-publisher` owns chain reading, ingestion, journals, local preparation,
-publication and recovery. `pir-query-server` owns synchronization and all
-Enhance serving roles in its `enhance` module; `enhance-query-server` keeps the
-private evaluation messages; the root mounts the public routes. Neither has a publisher or
+publication and recovery. `pir-query-server` owns synchronization, all
+Enhance serving roles and the private evaluation messages in its `enhance`
+module; the root mounts the public routes. Neither has a publisher or
 chain-reader dependency. Shared transport
 lives in `pir-sync-manager` and scheduling in `pir_query_server::synchronization`;
 Enhance policy stays in Enhance.

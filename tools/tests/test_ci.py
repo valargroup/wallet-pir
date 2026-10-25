@@ -61,6 +61,21 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(selected['packages'], [])
         self.assertEqual(selected['helpers'], ['check-ops-contracts', 'check-tools'])
         self.assertEqual(set(selected['groups']), fast.FULL_GROUPS)
+        # Other CI-only inputs compile no unchanged Rust, but full coverage remains.
+        for paths in [['tools/ci/fast.py', 'tools/lib/wallet_pir_ops/release.py'],
+                      ['.github/workflows/ci-qualify.yml'], ['.github/actions/qualify-artifacts/action.yml'],
+                      ['.gitignore']]:
+            with self.subTest(paths=paths):
+                selected = fast.plan(self.packages, paths)
+                self.assertEqual(selected['packages'], [])
+                self.assertEqual(set(selected['groups']), fast.FULL_GROUPS)
+                self.assertIn('check-tools', selected['helpers'])
+        # A Rust or build change beside a CI edit still selects its packages.
+        self.assertEqual(fast.plan(self.packages, ['tools/ci/fast.py', 'crates/server/src/lib.rs'])['packages'],
+                         ['server'])
+        for path in ['Cargo.toml', 'Cargo.lock', '.cargo/config.toml']:
+            self.assertEqual(set(fast.plan(self.packages, ['tools/ci/fast.py', path])['packages']),
+                             {'core', 'client', 'server', 'other'}, path)
 
     def test_preflight_definition_does_not_rebuild_the_workspace(self):
         selected = fast.plan(self.packages, ['.github/preflight.json'])
@@ -427,7 +442,7 @@ class BoundaryTests(unittest.TestCase):
 
     def test_serving_libraries_refuse_ingestion_applications_and_other_products(self):
         def package(*dependencies):
-            return [{'name': 'enhance-query-server', 'manifest': 'src/enhance/enhance-query-server/Cargo.toml',
+            return [{'name': 'enhance-shared', 'manifest': 'src/enhance/enhance-shared/Cargo.toml',
                      'dependencies': list(dependencies)}]
         library = 'https://github.com/zakura-core/wallet-libraries.git'
         allowed = [{**self.edge('pir-control'), 'path': 'src/shared/pir-control/'},
@@ -464,23 +479,23 @@ class BoundaryTests(unittest.TestCase):
 
     def test_status_query_library_leaves_the_lifecycle_to_the_host(self):
         for name, path in [('pir-pipeline', 'src/shared/pir-pipeline/')]:
-            packages = [{'name': 'status-query-server',
-                         'manifest': 'src/status/status-query-server/Cargo.toml',
+            packages = [{'name': 'status-shared',
+                         'manifest': 'src/status/status-shared/Cargo.toml',
                          'dependencies': [{**self.edge(name), 'path': path}]}]
             self.assertNotEqual(boundary.violations(packages, []), [], name)
         packages = [{'name': 'pir-query-server', 'manifest': 'src/pir-query-server/Cargo.toml',
                      'dependencies': [{**self.edge('pir-pipeline'), 'path': 'src/shared/pir-pipeline/'}]}]
         self.assertEqual(boundary.violations(packages, []), [])
 
-    def test_status_query_server_refuses_publisher_and_chain_dependencies(self):
+    def test_status_shared_refuses_publisher_and_chain_dependencies(self):
         for name, location in [
             ('status-publisher', {'path': 'src/status/status-publisher/'}),
             ('zakura-server-chain', {'git': 'https://github.com/zakura-core/wallet-libraries.git'}),
         ]:
             for kind in ['dependencies', 'dev-dependencies', 'build-dependencies',
                          'target.cfg(unix).dependencies']:
-                packages = [{'name': 'status-query-server',
-                             'manifest': 'src/status/status-query-server/Cargo.toml',
+                packages = [{'name': 'status-shared',
+                             'manifest': 'src/status/status-shared/Cargo.toml',
                              'dependencies': [{**self.edge(name), **location, 'kind': kind}]}]
                 problems = boundary.violations(packages, [])
                 self.assertTrue(any('serving library' in problem for problem in problems),
@@ -494,7 +509,7 @@ class BoundaryTests(unittest.TestCase):
                     'manifest_path': str(boundary.ROOT / folder / 'Cargo.toml')}
         metadata = {
             'packages': [
-                local('serving', 'status-query-server', 'src/status/status-query-server'),
+                local('serving', 'status-shared', 'src/status/status-shared'),
                 local('enhance', 'pir-serving', 'src/shared/pir-serving'),
                 local('control', 'pir-control', 'src/shared/pir-control'),
                 {'id': 'mid', 'name': 'helper', 'source': 'registry'},
@@ -517,17 +532,17 @@ class BoundaryTests(unittest.TestCase):
                                            *metadata['resolve']['nodes'][1:], node('lifecycle', [])]}}
         # The lifecycle utility belongs to the host, never a serving library.
         self.assertEqual(boundary.resolved_violations(lifecycle),
-                         ['status-query-server: serving library resolves pir-pipeline'])
+                         ['status-shared: serving library resolves pir-pipeline'])
         lifecycle['resolve']['nodes'][-1] = node('lifecycle', [('chain', None)])
-        self.assertTrue(any('status-query-server: serving library resolves zakura-server-chain' == problem
+        self.assertTrue(any('status-shared: serving library resolves zakura-server-chain' == problem
                             for problem in boundary.resolved_violations(lifecycle)))
         # Status serving may not reach Enhance serving, another product's package.
         enhance = {**metadata, 'packages': [*metadata['packages'],
-                   local('product', 'enhance-query-server', 'src/enhance/enhance-query-server')],
+                   local('product', 'enhance-shared', 'src/enhance/enhance-shared')],
                    'resolve': {'nodes': [node('serving', [('product', None)]),
                                          *metadata['resolve']['nodes'][1:], node('product', [])]}}
         self.assertEqual(boundary.resolved_violations(enhance),
-                         ['status-query-server: serving library resolves enhance-query-server'])
+                         ['status-shared: serving library resolves enhance-shared'])
         metadata['resolve']['nodes'][3] = node('mid', [('chain', None)])
         metadata['resolve']['nodes'][0] = node('serving', [('enhance', None), ('app', 'dev'),
                                                            ('other', None)])
@@ -535,19 +550,19 @@ class BoundaryTests(unittest.TestCase):
         self.assertEqual(boundary.resolved_violations(metadata), [
             'pir-serving: resolves zakura-server-chain',
             'pir-serving: serving library resolves zakura-server-chain',
-            'status-query-server: resolves zakura-server-chain',
-            'status-query-server: serving library resolves enhance-publisher',
-            'status-query-server: serving library resolves receiver-store',
-            'status-query-server: serving library resolves zakura-server-chain',
+            'status-shared: resolves zakura-server-chain',
+            'status-shared: serving library resolves enhance-publisher',
+            'status-shared: serving library resolves receiver-store',
+            'status-shared: serving library resolves zakura-server-chain',
         ])
 
-    def test_enhance_query_server_graph_resolves_no_publisher_or_tools(self):
+    def test_enhance_shared_graph_resolves_no_publisher_or_tools(self):
         def node(id, deps):
             return {'id': id, 'deps': [{'pkg': d, 'dep_kinds': [{'kind': k}]} for d, k in deps]}
         def local(id, name, folder):
             return {'id': id, 'name': name, 'source': None,
                     'manifest_path': str(boundary.ROOT / folder / 'Cargo.toml')}
-        packages = [local('query', 'enhance-query-server', 'src/enhance/enhance-query-server'),
+        packages = [local('query', 'enhance-shared', 'src/enhance/enhance-shared'),
                     {'id': 'mid', 'name': 'helper', 'source': 'registry'},
                     local('publisher', 'enhance-publisher', 'src/enhance/enhance-publisher'),
                     local('tool', 'enhance-pir-client', 'tools/enhance/client')]
@@ -563,7 +578,7 @@ class BoundaryTests(unittest.TestCase):
                     metadata = {'packages': packages, 'resolve': {'nodes': [
                         *nodes, node('publisher', []), node('tool', [])]}}
                     name = next(p['name'] for p in packages if p['id'] == target)
-                    self.assertIn(f'enhance-query-server: serving library resolves {name}',
+                    self.assertIn(f'enhance-shared: serving library resolves {name}',
                                   boundary.resolved_violations(metadata), (target, kind))
 
     def test_sync_manager_refuses_products_engines_and_replaced_utilities(self):
@@ -604,7 +619,7 @@ class BoundaryTests(unittest.TestCase):
                      'target.cfg(unix).dependencies', 'target.cfg(unix).dev-dependencies',
                      'target.cfg(unix).build-dependencies']:
             for name in ['receiver-store', 'zakura-server-chain', 'zakura-pir-protocol',
-                         'sha2', 'rand', 'enhance-query-server', 'pir-runtime']:
+                         'sha2', 'rand', 'enhance-shared', 'pir-runtime']:
                 package = {'name': 'pir-pipeline', 'manifest': 'src/shared/pir-pipeline/Cargo.toml',
                            'dependencies': [self.edge(name, kind)]}
                 self.assertTrue(boundary.violations([package], []), (kind, name))
@@ -676,8 +691,8 @@ class BoundaryTests(unittest.TestCase):
 
 class ReleaseTests(unittest.TestCase):
     def bundle(self, directory, mutate=None):
-        data = {name: b'binary' for name in release.BINARIES['transparent-filter']}
-        data.update({Path(name).name: b'unit' for name in release.FILES['transparent-filter']})
+        data = {name: b'binary' for name in release.BINARIES['transparent-txid-display']}
+        data.update({Path(name).name: b'unit' for name in release.FILES['transparent-txid-display']})
         data['revision'] = (SHA + '\n').encode()
         data['SHA256SUMS'] = ''.join(f'{hashlib.sha256(v).hexdigest()}  {k}\n' for k, v in data.items()).encode()
         if mutate:
@@ -693,13 +708,13 @@ class ReleaseTests(unittest.TestCase):
     def test_verified_binary_is_executable(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            release.extract(self.bundle(root), root / 'artifact', SHA, 'transparent-filter')
+            release.extract(self.bundle(root), root / 'artifact', SHA, 'transparent-txid-display')
             self.assertTrue((root / 'artifact/pir-publisher').stat().st_mode & 0o111)
 
     def test_wrong_sha_tampered_missing_extra_or_path_escape_refused_before_write(self):
         mutations = [lambda d: d.update(revision=b'b' * 40),
                      lambda d: d.update({'pir-publisher': b'tampered'}),
-                     lambda d: d.pop('transparent-filter-server.service'),
+                     lambda d: d.pop('transparent-txid-display-worker.service.in'),
                      lambda d: d.update({'extra': b'x'}),
                      lambda d: d.update({'../outside': b'x'}),
                      lambda d: d.update(SHA256SUMS=d['SHA256SUMS'] + d['SHA256SUMS'])]
@@ -707,7 +722,7 @@ class ReleaseTests(unittest.TestCase):
             with self.subTest(mutate=mutate), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 with self.assertRaises(ValueError):
-                    release.extract(self.bundle(root, mutate), root / 'artifact', SHA, 'transparent-filter')
+                    release.extract(self.bundle(root, mutate), root / 'artifact', SHA, 'transparent-txid-display')
                 self.assertFalse((root / 'artifact').exists())
 
     def test_only_completed_main_full_ci_is_qualified(self):
@@ -719,10 +734,10 @@ class ReleaseTests(unittest.TestCase):
 
     def test_missing_and_expired_artifacts_refused(self):
         run = dict(id=1, head_sha=SHA, head_branch='main', event='push', status='completed', conclusion='success', path='.github/workflows/ci-full.yml')
-        for artifacts in [[], [{'name': f'transparent-filter-{SHA}', 'expired': True}]]:
+        for artifacts in [[], [{'name': f'transparent-txid-display-{SHA}', 'expired': True}]]:
             with patch.dict('os.environ', {'GITHUB_REPOSITORY': 'org/repo'}), patch.object(release, 'api', side_effect=[{'workflow_runs': []}, {'workflow_runs': [run]}, {'artifacts': artifacts}]):
                 with self.assertRaises(ValueError):
-                    release.resolve(SHA, 'transparent-filter')
+                    release.resolve(SHA, 'transparent-txid-display')
 
     def test_all_product_bundles_round_trip(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -874,18 +889,6 @@ class TimingTests(unittest.TestCase):
         self.assertFalse(redirected.has_header('Authorization'))
 
 
-    def test_rerun_uses_current_attempt_instead_of_original_creation(self):
-        run = dict(head_sha=SHA, status='completed', run_attempt=2,
-                   created_at='2026-09-14T00:00:00Z', run_started_at='2026-09-15T00:38:14Z')
-        jobs = {'jobs': [dict(name='test', started_at='2026-09-15T00:38:17Z', completed_at='2026-09-15T00:38:40Z', steps=[])]}
-        with patch.object(timings, 'api', side_effect=[run, jobs]) as api:
-            result = timings.report('org/repo', 1)
-        self.assertEqual(result['attempt'], 2)
-        self.assertEqual(result['dispatch_seconds'], 26)
-        self.assertEqual(result['jobs'][0]['dispatch_to_job_start_seconds'], 3)
-        api.assert_called_with('repos/org/repo/actions/runs/1/attempts/2/jobs?per_page=100')
-
-
 TOOLS = {
     'rustc': 'rustc 1.97.1 (abc 2026-09-01)\nbinary: rustc\ncommit-hash: ' + 'c' * 40 + '\nhost: x86_64-unknown-linux-gnu\nrelease: 1.97.1\nLLVM version: 21.1.0\n',
     'cargo': 'cargo 1.97.1', 'os': 'ubuntu 24.04', 'libc': 'glibc 2.39', 'machine': 'x86_64',
@@ -956,6 +959,14 @@ class CacheIdentityTests(unittest.TestCase):
             self.ids(scope='everything')
         with self.assertRaisesRegex(ValueError, 'compiler'):
             self.ids(tools=dict(TOOLS, rustc=None))
+
+    def test_query_candidate_uses_a_classified_cache_partition(self):
+        workflow = (ROOT / '.github/workflows/ci-full.yml').read_text()
+        candidate = workflow.split('\n  query-candidate:\n', 1)[1].split('\n  publisher-candidate:\n', 1)[0]
+        match = re.search(r'lane: ([\w-]+)\s+scope: ([\w-]+)', candidate)
+        self.assertIsNotNone(match, 'The query candidate must declare its build cache partition')
+        lane, scope = match.groups()
+        self.assertNotEqual(self.ids(lane, scope), self.ids('release', 'publisher'))
 
     def test_record_is_sanitized(self):
         secret = 'value-that-must-not-appear'

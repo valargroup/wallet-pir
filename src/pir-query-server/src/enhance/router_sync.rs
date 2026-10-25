@@ -1,7 +1,10 @@
 //! Consumer-owned packing activation and exact worker handover.
+use super::evaluation::Evaluate;
 use crate::enhance::{
     peers::WorkerEndpoint,
-    synchronization::{Authority, Client, Config as SourceConfig, Error, Guard, Lease, Safety},
+    synchronization::{
+        Authority, Client, Config as SourceConfig, Deferral, Error, Guard, Lease, Pacing, Safety,
+    },
     worker_sync::{Readiness, ReadinessRequest, Release, PIN_LIFETIME},
 };
 use crate::synchronization::SyncTask;
@@ -12,7 +15,6 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use enhance_query_server::worker::Evaluate;
 use enhance_shared::{
     protocol::{self, digest, Manifest, QueryBinding},
     publication::{Object, METADATA_LIMIT},
@@ -246,6 +248,7 @@ impl PackingRouter {
     pub fn synchronizer(&self) -> Result<Synchronizer, Error> {
         Ok(Synchronizer {
             router: self.clone(),
+            pacing: Pacing::default(),
             client: Client::new(
                 &self.root,
                 &self.config.source,
@@ -535,6 +538,7 @@ pub struct Synchronizer {
     router: PackingRouter,
     client: Client,
     _ownership: tokio::sync::OwnedSemaphorePermit,
+    pacing: Pacing,
 }
 impl Synchronizer {
     async fn advance(&mut self) -> Result<(), Error> {
@@ -711,10 +715,7 @@ impl Synchronizer {
         let Some(peers) = self.router.peers(&manifest).await? else {
             return Ok(());
         };
-        let lease = self.client.authority(&manifest).await?;
-        if !lease.continues(&observed) {
-            return Err("router publication withdrawn while loading".into());
-        }
+        let lease = self.client.renew(&manifest, &observed).await?;
         let guard = self.router.authority.install(manifest.clone(), lease)?;
         guard.check()?;
         let loaded = Arc::new(Loaded {
@@ -759,18 +760,20 @@ impl Synchronizer {
     }
 }
 impl SyncTask for Synchronizer {
-    type Report = ();
+    type Report = Option<Deferral>;
     type Error = Error;
-    async fn synchronize(&mut self) -> Result<(), Error> {
-        self.poll_once().await
+    async fn synchronize(&mut self) -> Result<Option<Deferral>, Error> {
+        let result = self.poll_once().await;
+        self.pacing.finish("router", result)
     }
     async fn wait_until(&mut self, deadline: tokio::time::Instant) {
+        let deadline = self.pacing.deadline(deadline);
         while tokio::time::Instant::now() < deadline {
             tokio::time::sleep_until(deadline.min(tokio::time::Instant::now() + MAINTENANCE)).await;
             self.router.maintain().await;
         }
     }
-    fn report(&self, result: &Result<(), Error>) {
+    fn report(&self, result: &Result<Option<Deferral>, Error>) {
         if let Err(error) = result {
             tracing::warn!(%error, "Enhance router synchronization deferred");
         }
@@ -779,6 +782,37 @@ impl SyncTask for Synchronizer {
     fn terminal(&self, error: &Error) -> bool {
         pir_sync_manager::is_incompatible(error.as_ref())
     }
+}
+
+/// Snapshot only: collecting diagnostics never expires a pin or releases material.
+fn handover_observation(inner: &Inner, now: Instant) -> serde_json::Value {
+    let retained = inner
+        .retained
+        .iter()
+        .map(|(id, view)| {
+            serde_json::json!({
+                "manifest_sha256":id,"generation":view.manifest.generation,
+                // Other references include requests and synchronization maintenance.
+                "additional_references":Arc::strong_count(view).saturating_sub(1),
+            })
+        })
+        .collect::<Vec<_>>();
+    let pins = inner
+        .pins
+        .iter()
+        .filter(|(_, deadline)| **deadline > now)
+        .map(|((holder, id), deadline)| {
+            serde_json::json!({"holder":holder,"manifest_sha256":id,
+            "expires_in_ms":deadline.saturating_duration_since(now).as_millis() as u64})
+        })
+        .collect::<Vec<_>>();
+    let retired = inner.retired.iter().filter(|view|view.view.strong_count()>0)
+        .map(|view|serde_json::json!({"generation":view.manifest.generation,
+            "manifest_sha256":digest(&view.manifest),"remaining_references":view.view.strong_count()}))
+        .collect::<Vec<_>>();
+    serde_json::json!({"retained_limit":protocol::RETAINED_GENERATIONS-1,
+        "retention_slots_full":inner.retained.len()>=protocol::RETAINED_GENERATIONS-1,
+        "retained":retained,"pins":pins,"retired":retired})
 }
 
 impl PackingRouter {
@@ -835,6 +869,7 @@ impl PackingRouter {
         "generation": inner.active.as_ref().map(|view| view.manifest.generation),
         "domain_workers": domain_workers,
         "packing_charged_bytes": self.budget.charged_bytes(),
+        "handover": handover_observation(&inner, now),
         "ready": ready})
     }
     /// Router metrics; `memory` adds this process's memory observation.
@@ -1194,6 +1229,35 @@ async fn release_pin(
 #[cfg(test)]
 mod observation_tests {
     use super::*;
+    #[test]
+    fn handover_snapshot_reports_live_pin_owners_and_expiry_without_mutation() {
+        let now = Instant::now();
+        let mut inner = Inner::default();
+        inner
+            .pins
+            .insert(("expired-holder".into(), "ab".repeat(32)), now);
+        inner.pins.insert(
+            ("live-holder".into(), "cd".repeat(32)),
+            now + Duration::from_secs(7),
+        );
+        let report = handover_observation(&inner, now);
+        assert_eq!(report["retained_limit"], 4);
+        assert_eq!(report["retention_slots_full"], false);
+        assert_eq!(report["pins"].as_array().unwrap().len(), 1);
+        assert_eq!(report["pins"][0]["holder"], "live-holder");
+        assert_eq!(report["pins"][0]["expires_in_ms"], 7000);
+        assert_eq!(
+            inner.pins.len(),
+            2,
+            "health observation must not collect expired pins"
+        );
+        assert!(
+            handover_observation(&inner, now + Duration::from_secs(8))["pins"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+    }
     #[test]
     fn eligibility_requires_an_unexpired_promise_for_the_active_view() {
         let now = Instant::now();

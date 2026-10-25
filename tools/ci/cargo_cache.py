@@ -19,13 +19,14 @@ Unit attribution comes from Cargo itself: in CI, stage.py adds
 --message-format=json to each Cargo build/check/clippy/test command it runs and
 logs only package name, version, source kind and the `fresh` flag of every
 compiler-artifact message. The fingerprint inventory (restored and remaining
-unit directories compared by content) is reported separately; it is not
-attribution, because restored units a job never needed stay unchanged.
+unit directories compared by name, size and mtime) is reported separately; it
+is not attribution, because restored units a job never needed stay unchanged.
 
 Records are sanitized: names, versions and digests, never environment values,
 tokens or absolute paths.
 """
 import argparse
+import datetime
 import hashlib
 import json
 import os
@@ -50,6 +51,9 @@ except ImportError:  # Python < 3.11 (Ubuntu 22.04 CUDA container)
 
 SCHEMA = 1
 PREFIX = 'v1-wallet-pir'
+# Main snapshots younger than this are reused by the primer; older ones are
+# rebuilt so PR fallbacks track main's workspace crates within a day.
+FRESH_SNAPSHOT_SECONDS = 20 * 3600
 # What each lane/scope compiles. Kept here rather than read from workflow text;
 # unknown pairs fail so that a new job chooses its partition explicitly.
 SCOPES = {
@@ -62,6 +66,7 @@ SCOPES = {
     ('full-test', 'receiver'): ('dev,release-fast', 'clippy CPU features'),
     ('release', 'q48'): ('release', 'enhance-pir-client'),
     ('release', 'publisher'): ('release,release-fast', 'pir-publisher/transparent-history,transparent-detail; transparent regression, history rate and txid rate acceptance tools'),
+    ('release', 'query-server'): ('release', 'pir-query-server/enhance,status,transparent-history,transparent-detail,native-reinspiring'),
     ('release-native', 'native'): ('release', 'enhance-pir-client,native-reinspiring,pir-query-server/enhance,native-reinspiring'),
     ('cuda-test', 'cuda'): ('dev,release-fast', 'explicit CUDA checks, lint and driver-free tests'),
     ('native-cuda', 'cuda'): ('release', 'enhance-pir-client,native-reinspiring,pir-query-server/enhance,native-reinspiring,cuda'),
@@ -320,6 +325,33 @@ def cache_refs(key, env):
     return sorted({entry['ref'] for entry in data.get('actions_caches', []) if entry.get('key') == key})
 
 
+def fresh_main_snapshot(prefix, env, max_age=FRESH_SNAPSHOT_SECONDS, now=None):
+    """Newest main entry under `prefix` saved within `max_age`, else None.
+
+    The primer runs often so an evicted snapshot is rebuilt within hours; a
+    fresh one is reused rather than recompiled for every main commit.
+    """
+    repo = env.get('GITHUB_REPOSITORY')
+    if not repo:
+        return None
+    data = api(f'repos/{repo}/actions/caches?per_page=100&ref=refs/heads/main&key='
+               + urllib.parse.quote(prefix), env)
+    if data is None:
+        return None
+    now = time.time() if now is None else now
+    entries = [(created, entry['key']) for entry in data.get('actions_caches', [])
+               if entry.get('ref') == 'refs/heads/main' and entry.get('key', '').startswith(prefix)
+               for created in [timestamp(entry.get('created_at'))] if created and now - created < max_age]
+    return max(entries)[1] if entries else None
+
+
+def timestamp(value):
+    try:
+        return datetime.datetime.fromisoformat(value.replace('Z', '+00:00')).timestamp()
+    except (AttributeError, ValueError):
+        return None
+
+
 def restore_status(mode, cache_hit, refs, ref, default_ref='refs/heads/main', existed=None, populated=False):
     """Which state this job starts from. Never inferred from timing."""
     if mode == 'persistent':
@@ -339,7 +371,12 @@ def restore_status(mode, cache_hit, refs, ref, default_ref='refs/heads/main', ex
 
 
 def snapshot(target):
-    """Content digest of every Cargo unit fingerprint directory in a target."""
+    """Identity of every Cargo unit fingerprint directory in a target.
+
+    Name, size and mtime distinguish a Cargo rewrite without reading fingerprint
+    bytes. The fast target holds thousands of those files, and hashing their
+    contents held the post-validation report for most of its step.
+    """
     target = Path(target)
     units = {}
     for directory in [*target.glob('*/.fingerprint/*'), *target.glob('*/*/.fingerprint/*')]:
@@ -348,8 +385,12 @@ def snapshot(target):
                 continue
             content = hashlib.sha256()
             for entry in sorted(directory.iterdir()):
-                if entry.is_file():
-                    content.update(entry.name.encode() + b'\0' + entry.read_bytes() + b'\0')
+                if not entry.is_file():
+                    continue
+                stat = entry.stat()
+                content.update(entry.name.encode() + b'\0')
+                content.update(str(stat.st_size).encode() + b'\0')
+                content.update(str(stat.st_mtime_ns).encode() + b'\0')
         except OSError:
             continue
         units[directory.relative_to(target).as_posix()] = content.hexdigest()[:16]
@@ -357,7 +398,7 @@ def snapshot(target):
 
 
 def inventory(before, after):
-    """Fingerprint directories at restore and job end, compared by content.
+    """Fingerprint directories at restore and job end, compared by identity.
 
     This is an inventory, not attribution: a unit Cargo rebuilt to identical
     fingerprints counts as unchanged, and restored units the job never needed
@@ -486,6 +527,10 @@ def prepare(args, env):
             partition = record['compatibility'] if args.lane == 'fast' else record['identity']
             workspace_prefix = f'v2-wallet-pir-workspace-{partition}-'
             key = f'{workspace_prefix}{record["lock"]}-{tree}'
+            if args.lookup_only:
+                # A recent main snapshot for this lockfile already serves PRs;
+                # look it up exactly so the primer neither compiles nor saves.
+                key = fresh_main_snapshot(f'{workspace_prefix}{record["lock"]}-', env) or key
     directory = state_dir(env)
     directory.mkdir(parents=True, exist_ok=True)
     stages = directory / 'stages.jsonl'
@@ -514,6 +559,10 @@ def restored(args, env):
                                      state['ref'], existed=state['existed'], populated=bool(state['before']))
     path.write_text(json.dumps(state))
     print(f"CI_CACHE_RESTORE {json.dumps({'lane': args.lane, 'status': state['status'], 'restored_units': len(state['before'])})}", flush=True)
+    if state['status'] == 'miss' and state['mode'] == 'restore':
+        # Usually main's snapshot was evicted; the primer rebuilds it within two hours.
+        print(f'::warning title=Cold Cargo cache::No {args.lane} snapshot from main or this ref; '
+              'this job compiles from scratch. Dispatch "Prime hosted Cargo caches" on main to restore it.', flush=True)
 
 
 def require_warm(lane, env):

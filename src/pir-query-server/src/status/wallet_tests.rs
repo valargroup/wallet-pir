@@ -1,7 +1,7 @@
 //! Independent wallet client over real Status router and worker listeners.
 use super::Controller;
+use super::Role;
 use super::Service;
-use status_query_server::distributed::Role;
 use status_shared::fixture;
 use status_shared::{
     now_ms,

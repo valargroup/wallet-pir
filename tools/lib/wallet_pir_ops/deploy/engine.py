@@ -210,8 +210,8 @@ class Deployer:
         try:
             if role.mode == 'exec-drop-in':
                 fragment = state['fragment_text']
-                kept[units.MANAGED_DROP_IN] = units.managed_drop_in(prefix, release, tail)
                 previous = next((text for path, text in unit_files(state) if path == managed), None)
+                kept[units.MANAGED_DROP_IN] = units.managed_drop_in(prefix, release, tail, previous)
                 if previous != kept[units.MANAGED_DROP_IN]:
                     plan.changes.insert(0, {'op': 'write', 'path': managed, 'previous': previous,
                                             'new': kept[units.MANAGED_DROP_IN]})
@@ -428,16 +428,18 @@ class Deployer:
                 value = value.get(part) if isinstance(value, dict) else None
             if type(value) is not type(expected_value) or value != expected_value:
                 return False, 'health %s is %r, expected %r' % (field, value, expected_value)
+        guard = self.service.roles[record['role']].product_guard()
         ready = verify.get('ready')
         if ready:
             value = document.get(ready['field']) if isinstance(document, dict) else None
             if ('equals' in ready and value != ready['equals']) or (ready.get('nonempty') and not value):
-                return False, 'health %s is %r' % (ready['field'], value)
+                restored_ready = getattr(guard, 'restored_ready', None)
+                if restored_ready is None or not restored_ready(record, expected, document):
+                    return False, 'health %s is %r' % (ready['field'], value)
         if verify.get('ready_url'):
             status, _ = self.ex.http_get(record['host'], verify['ready_url'])
             if not 200 <= status < 300:
                 return False, 'ready answered %s' % status
-        guard = self.service.roles[record['role']].product_guard()
         if guard is not None:
             return guard.ready(self, record, expected, document)
         return True, 'ready'
@@ -642,7 +644,7 @@ class Deployer:
         if check is None and not skip_exact_check:
             raise DeployError('inventory has no %s.exact_check; configure one or pass --skip-exact-check '
                               'and run the exact-answer check by hand' % self.service.name)
-        self.check_identities([self.inventory.lock.get('host'), check and check['host']])
+        self.check_identities([self.inventory.lock.get('host'), *descriptors.exact_check_hosts(check)])
         with self.lock_factory() as lock:
             self.lock = lock
             try:
@@ -694,6 +696,8 @@ class Deployer:
                 self.run_exact_check(check, journal, sha)
             journal.set_status('committed')
         except BaseException as error:
+            from .deployment_alerts import failed
+            failed()
             journal.event('failure', error='%s: %s' % (type(error).__name__, error))
             if self.hold_on_failure and journal.touched():
                 journal.set_status('held')

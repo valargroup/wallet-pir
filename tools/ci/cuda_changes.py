@@ -18,7 +18,7 @@ BACKEND = 'src/shared/pir-cuda/'
 CONTRACTS = (
     'src/enhance/enhance-shared/src/matvec',
     'src/enhance/enhance-shared/src/runtime',
-    'src/enhance/enhance-query-server/src/worker',
+    'src/pir-query-server/src/enhance/evaluation.rs',
     'src/pir-query-server/src/enhance/worker',
     'src/shared/pir-runtime/src/evaluation.rs',
     'src/pir-query-server/tests/operator.rs',
@@ -42,7 +42,6 @@ WORKFLOWS = {'.github/workflows/ci.yml', '.github/workflows/ci-full.yml',
              '.github/workflows/ci-qualify.yml', '.github/workflows/ci-matrix-audit.yml'}
 FORWARDERS = {
     'src/enhance/enhance-shared/Cargo.toml',
-    'src/enhance/enhance-query-server/Cargo.toml',
     'tools/pir-e2e-tests/Cargo.toml',
     'src/pir-query-server/Cargo.toml',
 }

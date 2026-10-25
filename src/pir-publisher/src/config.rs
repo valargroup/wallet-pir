@@ -34,8 +34,6 @@ pub struct Config {
     pub status: Option<Product<status_publisher::service::Config>>,
     #[cfg(feature = "transparent-history")]
     pub transparent_history: Option<Product<transparent_publisher::service::HistoryConfig>>,
-    #[cfg(feature = "transparent-history")]
-    pub transparent_filters: Option<Product<transparent_publisher::service::FilterConfig>>,
     #[cfg(feature = "transparent-detail")]
     pub transaction_details: Option<Product<transparent_publisher::service::DetailConfig>>,
     #[cfg(feature = "receiver")]
@@ -133,14 +131,6 @@ impl Config {
         register!(
             transparent_history,
             transparent_publisher::service::history,
-            chain,
-            crate::publisher::PublisherEngine
-        );
-        #[cfg(feature = "transparent-history")]
-        register!(
-            transparent_filters,
-            transparent_publisher::service::filters,
-            validation::active(&self.transparent_history, "transparent_history")?,
             chain,
             crate::publisher::PublisherEngine
         );

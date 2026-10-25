@@ -121,7 +121,7 @@ class PrLabelTests(unittest.TestCase):
                 self.assertLessEqual(len(selected), 3)
 
     def test_large_area_wins_and_old_component_labels_do_not_accumulate(self):
-        files = [{'filename': 'src/status/status-query-server/src/lib.rs', 'changes': 80},
+        files = [{'filename': 'src/pir-query-server/src/status/peers.rs', 'changes': 80},
                  {'filename': 'src/pir-query-server/src/transparent/mod.rs', 'changes': 10},
                  {'filename': 'docs/enhance/README.md', 'changes': 1}]
         selected = pr_labels.select(files, ['product:receiver', 'area:publisher'], self.rules)

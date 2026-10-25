@@ -32,7 +32,7 @@ DEFINITIONS = {
     'phases.post_seconds': 'post steps, including hosted cache save',
     'phases.report_seconds': 'reporting steps',
     'cache_records.CI_CARGO_ARTIFACTS': 'units in compiler-artifact messages of executed Cargo build/check/clippy/test commands; compiled if any reported fresh=false',
-    'cache_records.CI_CACHE_REPORT.fingerprint_inventory': 'fingerprint directories at restore vs job end by content; inventory only, not what Cargo compiled',
+    'cache_records.CI_CACHE_REPORT.fingerprint_inventory': 'fingerprint directories at restore vs job end by name, size and mtime; inventory only, not what Cargo compiled',
     'cache_records.CI_STAGE_REPORT.compile_stage_seconds': 'whole compile/lint Cargo commands, including resolution, downloads, build scripts and linking; null if none ran',
 }
 SETUP = ('Set up job', 'Run actions/checkout', 'Run ./.github/actions/rust-setup', 'Run dtolnay/',

@@ -6,12 +6,11 @@ Status, Transparent history, and transaction details. The host crate is
 reserves listeners and owns process shutdown. The host owns Status roles
 directly: role configuration, HTTP routes, admission, telemetry, the generation
 controller and publisher synchronization live in `pir_query_server::status`.
-`status-shared` supplies generation material and the wire protocol, and
-`status-query-server` supplies only the private router-worker messages; the
+`status-shared` supplies generation material and the wire protocol. The
+private router-worker messages live in `pir_query_server::status`, and the
 root owns the public route mounts of every product. Enhance roles,
-synchronization and HTTP surfaces live in `pir_query_server::enhance` in the
-same way, over `enhance-shared` material and `enhance-query-server` evaluation
-messages. Transparent roles, publication managers, activation, validation,
+synchronization, HTTP surfaces and private evaluation messages live in
+`pir_query_server::enhance`, over `enhance-shared` material. Transparent roles, publication managers, activation, validation,
 archive forwarding and HTTP surfaces live in `pir_query_server::transparent`
 over `transparent-shared` material. A Transparent provider selects its own
 holdings (the whole recent tier within its cache budget); fleet planning, file
@@ -30,26 +29,20 @@ public operations once and mounts them at both prefixes through
 | Enhance | `/enhance/v1/<op>` | `/v1/enhance/<op>` | `init`, `session/:id`, `sessions/:generation/:shard`, `query` |
 | Status | `/status/v1/<op>` | `/v1/status/<op>` | `init`, `session/:id`, `query` |
 | Transparent | `/transparent/v1/<op>` | `/v2/<op>` | `shards`, `shards/init`, `shards/:id/revisions/...`, `filters/shards[/:id/filter]`, `txid/...` |
-| Transparent filters | `/transparent/v1/filters/<op>` | `/v1/filters/<op>` | `info`, `chain`, `digests`, `range` |
 | Receiver | `/receiver/v1/<op>` | `/v1/receiver/<op>` | see the Receiver docs |
 
-The two Transparent alias groups share the canonical namespace; their suffixes
-are disjoint (`filters/shards...` versus `filters/{info,chain,digests,range}`)
-and route construction panics if they ever overlap. An alias serves only its own
-group, so `/v2/filters/info` and `/v1/filters/shards` stay unrouted. Health,
-readiness, metrics, `/control/*`, `/internal/*`, `/evaluate`, `/v1/provider-*`
-and publisher status are never mounted under a canonical prefix and stay on
-their private paths. Peer-to-peer calls between roles, deploy probes and the
-`pir-apm` quality probes keep the legacy paths that deployed binaries already
-serve.
+Health, readiness, metrics, `/control/*`, `/internal/*`, `/evaluate`,
+`/v1/provider-*` and publisher status are never mounted under a canonical
+prefix and stay on their private paths. Peer-to-peer calls between roles,
+deploy probes and the `pir-apm` quality probes keep the legacy paths that
+deployed binaries already serve.
 
 `https://wallet-pir.valargroup.dev` is the unified base for the canonical paths.
 It is a second site on the coordinator's Caddy
 ([`tools/deploy/coordinator/Caddyfile`](../tools/deploy/coordinator/Caddyfile),
 rendered by `wallet_pir_ops.deploy.coordinator_edge`, DNS in
-`tools/infra/digitalocean/fleet/shared.tf`). Enhance, Status and Transparent
-compact-filter operations reach the coordinator's loopback services. History
-shard maps, shard filters, Transparent queries and Receiver cross to `transparent-pir` and
+`tools/infra/digitalocean/fleet/shared.tf`). Enhance and Status reach the
+coordinator's loopback services. History shard maps, shard filters, Transparent queries and Receiver cross to `transparent-pir` and
 `receiver-pir` over verified HTTPS, naming each origin as Host and SNI. The edge
 translates canonical paths to existing backend aliases where needed. Recovery
 metadata and encrypted History queries share the query server's active publication. It
@@ -148,7 +141,11 @@ optional `max_objects` (default 6) and `requests` (default 4). A `combined`
 Enhance role runs a query ingress, packing router and worker for the worker's
 `shards` in one process, calling each other directly instead of over private
 HTTP, so it names no routers or workers and needs no bearer token between
-them. It takes the worker's `synchronization`, `sealed_shards` and `matvec`, the
+them. Its `shards` must name every shard the publication covers: wallets
+learn all of them from `init` and query them at this one origin, so a host
+owning fewer refuses the publication by name in its log and `/internal/health`
+(`ingress.blocked`), and stops before it has served any generation rather than
+idling unready. Hosts that split shards run the distributed roles. It takes the worker's `synchronization`, `sealed_shards` and `matvec`, the
 ingress's `requests` and `uploads`, the router's `max_objects` and
 `packing_requests` (the router's `requests`), an absolute `data_dir` holding
 `worker`, `router` and `ingress` state directories and the private
@@ -280,3 +277,9 @@ other products continue; a confirmed publisher incompatibility, or a panicked
 product task, stops the whole host. The products' private health routes
 (Enhance `GET /internal/health`, Status `GET /control/health`, Transparent
 `GET /v1/ready`) are unchanged for deployment checks.
+
+## Dedicated query infrastructure
+
+See [the unified query node](query-node.md) for the opt-in 192 GiB candidate,
+HTTPS publication synchronization, volume and RAM limits, locked Terraform and
+transactional deployment. Receiver integration remains an all-products gate.

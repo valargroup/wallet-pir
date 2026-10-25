@@ -413,6 +413,15 @@ and publisher, verifies readiness, and runs all four encrypted-answer probes
 before resuming load and committing. The wallet routes remain unchanged and
 unmatched requests remain 404. Every effect is journaled on the coordinator.
 
+Deployment leaves History completion records to the publisher. Native startup
+validates the active publication's existing `history-restore.json` and its
+authority before serving, then verifies bodies in the background. If no record
+exists, startup performs full preparation. Deployment does not pin or rescan
+History artifacts before stopping the predecessor; readiness and all four
+encrypted-answer probes still gate completion. Recovery of older transactions
+that already prepared a pinned record retains their recorded install and
+rollback behavior.
+
 `publisher-cutover-status` reports the transaction and observed identities.
 `publisher-cutover-restart` repeats cooperative shutdown, readiness and exact
 checks without replacing the rollback baseline. `publisher-cutover-rollback`
@@ -444,14 +453,9 @@ The two Transparent features select separate configuration sections and owners.
 
 Long-running services use `pir-publisher --config FILE`. Existing history and
 display settings live under `transparent_history.settings` and
-`transaction_details.settings`. The optional `transparent_filters` section,
-compiled by `transparent-history`, runs filter ingestion from the root chain
-follower and the HTTP service with its own state and listener. It extends the
-existing filter store with the same transparent extraction History uses and
-needs no historical event journal. Use the packaged
-`tools/transparent/deploy/transparent-filters.example.json` when installing the
-filter unit; install its reviewed configuration as
-`/etc/wallet-pir/transparent-filters.json` before starting it.
+`transaction_details.settings`. The former per-block `transparent_filters`
+section is removed, and a configuration that still names it is refused; delete
+it, and the filter unit that ran it, before upgrading.
 
 Maintenance uses root subcommands:
 
@@ -474,3 +478,15 @@ For a stopped-checker repair, `publisher-cutover/3` may pin an existing disk-cap
 A `publisher-cutover/3` request may set `preserve_serving: true` for a publisher-only update. Its serving release keeps its own exact source and binary pins; every serving role must already match the requested binary and configuration. Any required serving change refuses the update. The publisher and wallet probes still run, and the discovery edge route is journaled normally.
 
 If the connection was lost while stopping the predecessor, `publisher-cutover-continue` can finish that exact stopped-checker transaction. It requires the recorded stop intent, unchanged publisher configuration and inputs, unchanged serving processes, and the original staged executable. It refuses a running publisher or any other interrupted phase; ordinary verification recovery still uses `publisher-cutover-verify`.
+
+If restoration reached its recorded publisher start and both serving roles passed
+their restored identity checks, but an older Status diagnostic client fails on
+expired sessions, use `publisher-cutover-repair-probe-plan` and then
+`publisher-cutover-repair-probe-verify --expect-plan-sha256 <digest>` with the same
+request and checksum. This recovery selects only the staged publisher executable
+as the Status probe client and updates only its digest literal in the harness.
+It keeps the original harness logic, independent oracle,
+load and deadlines, records the client digest, and repeats all four exact-answer
+checks without restarting any service. It refuses pending effects, changed
+restored files or process identities, a changed probe executable, and a stale
+plan. The stopped checker and its incident latch remain unchanged.

@@ -249,13 +249,51 @@ mod tests {
         .is_err());
     }
 
+    /// A combined host must own every shard the publication covers, because
+    /// wallets query all of them at this one origin. One owning fewer refuses
+    /// the publication by name, and while it has never served a generation
+    /// that refusal stops the role instead of leaving it unready.
+    #[test]
+    fn owning_fewer_shards_than_the_publication_covers_is_refused_by_name() {
+        use crate::enhance::ingress_sync::CoverageMismatch;
+        use crate::synchronization::SyncTask;
+        use enhance_shared::protocol::{Geometry, Lifecycle};
+        let root = tempfile::tempdir().unwrap();
+        let role = combined(root.path());
+        let mut manifest = crate::enhance::synchronization::test_manifest();
+        assert!(role.ingress.coverage_mismatch(&manifest).is_none());
+        // Enough records for two shards; sessions and unit identities are
+        // not consulted by the coverage check.
+        let geometry = Geometry::default();
+        let span = geometry.max_shard_rows * enhance_shared::RECORDS_PER_ROW as u64;
+        manifest.coverage = Lifecycle::default().coverage(span + 1, geometry).unwrap();
+        assert_eq!(manifest.coverage.shards.len(), 2);
+        let mismatch = role.ingress.coverage_mismatch(&manifest).unwrap();
+        assert_eq!(
+            mismatch,
+            CoverageMismatch {
+                owned: [0].into(),
+                published: [0, 1].into(),
+            }
+        );
+        let text = mismatch.to_string();
+        assert!(text.contains("owns shards {0}"), "{text}");
+        assert!(text.contains("covers {0, 1}"), "{text}");
+        assert!(text.contains("distributed roles"), "{text}");
+        let synchronizer = role.ingress.synchronizer().unwrap();
+        let error: crate::enhance::synchronization::Error = Box::new(mismatch);
+        assert!(synchronizer.terminal(&error));
+        let other: crate::enhance::synchronization::Error = "deferred".into();
+        assert!(!synchronizer.terminal(&other));
+    }
+
     /// A direct evaluation the worker refuses before accepting it is typed as
     /// nonacceptance, so only then may another replica be tried.
     #[tokio::test]
     async fn local_refusals_before_admission_are_typed_as_not_accepted() {
         let root = tempfile::tempdir().unwrap();
         let role = combined(root.path());
-        let request = enhance_query_server::worker::Evaluate {
+        let request = crate::enhance::evaluation::Evaluate {
             binding: Some(vec![0; enhance_shared::protocol::HEADER_BYTES]),
             generation: 1,
             shard_id: 0,

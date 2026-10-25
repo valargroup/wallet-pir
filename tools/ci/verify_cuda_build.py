@@ -20,7 +20,7 @@ import subprocess
 # Feature names Cargo must report for the packaged binary and its evaluator.
 REQUIRED = {
     'pir-query-server': frozenset({'enhance', 'cuda', 'native-reinspiring'}),
-    'enhance_query_server': frozenset({'cuda', 'native-reinspiring'}),
+    'enhance_shared': frozenset({'cuda', 'native-reinspiring'}),
     'pir_cuda': frozenset({'cuda'}),
 }
 

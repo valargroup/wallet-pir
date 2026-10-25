@@ -7,6 +7,7 @@ its recovery journal on the coordinator before every effect. Reconciliation roll
 an interrupted cutover back; it never guesses whether to continue activation.
 """
 import hashlib
+import copy
 import json
 from pathlib import Path
 import re
@@ -160,6 +161,43 @@ def stable_unit(state):
             'need_daemon_reload', 'fragment_path', 'fragment_text', 'drop_ins', 'exe_sha256', 'unit_file_state')}
 
 
+def configuration_preserves_products(candidate, installed):
+    """Allow only the root chain conversion, retaining every other setting.
+
+    All four previous node sources must agree. The shared follower retains the
+    fastest configured interval, bounded by Status and History's previous
+    1000 ms cadence. The
+    transaction still saves the original bytes for rollback.
+    """
+    if candidate == installed:
+        return True
+    if 'chain' in installed or not isinstance(candidate.get('chain'), dict):
+        return False
+    converted = copy.deepcopy(installed)
+    sources = []
+    polls = [1000]
+    fields = [('enhance', 'zakura_rpc_url', 'zakura_cookie', 'poll_seconds', 1000),
+              ('status', 'rpc_url', 'cookie', None, 1),
+              ('transparent_history', 'rpc_url', 'rpc_cookie', None, 1),
+              ('transaction_details', 'rpc_url', 'rpc_cookie', 'poll_ms', 1)]
+    for product, url_key, cookie_key, poll_key, scale in fields:
+        settings = converted.get(product, {}).get('settings', {})
+        url, cookie = settings.pop(url_key, None), settings.pop(cookie_key, None)
+        if not isinstance(url, str) or not url or not isinstance(cookie, str) or not cookie:
+            return False
+        sources.append((url, cookie))
+        if poll_key in settings:
+            poll = settings.pop(poll_key)
+            if type(poll) is not int or poll <= 0:
+                return False
+            polls.append(poll * scale)
+    if len(set(sources)) != 1:
+        return False
+    url, cookie = sources[0]
+    converted['chain'] = {'rpc_url': url, 'rpc_cookie': cookie, 'poll_ms': min(polls, default=1000)}
+    return candidate == converted
+
+
 class Cutover:
     def __init__(self, request, inventory, executor, state_dir, *, clock=time.monotonic, sleep=time.sleep):
         self.request, self.inventory, self.ex = request, inventory, executor
@@ -223,7 +261,7 @@ class Cutover:
         override = status_https_override(unified, unified['exe_sha256'])
         config = self.request['configuration']
         installed = json.loads(self.read(CONFIG))
-        require(config == installed,
+        require(configuration_preserves_products(config, installed),
                 'publisher updates must preserve every product setting')
         executables = {}
         for name, state in states.items():
@@ -396,7 +434,8 @@ class Cutover:
             self.sleep(3)
 
     def exact(self, journal):
-        for product, check in self.request['checks'].items():
+        from .publisher_probe_repair import checks_for
+        for product, check in checks_for(self, journal).items():
             code, output = self.ex.run(check['host'], check['argv'], check['timeout'])
             require(code == 0, product + ' independent encrypted-answer probe failed: ' + output[-1000:])
             journal.setdefault('checks', {})[product] = {'passed': True, 'output': output[-2000:]}
@@ -426,8 +465,6 @@ class Cutover:
             code, output = self.ex.run(self.host, [plan['binary'], '--config', staged_config, '--check'], 60)
             require(code == 0, 'staged publisher refuses its configuration: ' + output[-1000:])
             self.serving.stage(journal, serving_binary)
-            from .publisher_restore import HistoryRestore
-            HistoryRestore(self).prepare(journal, plan['binary'], staged_config)
             self.unchanged_during_staging(plan)
             self.resources()
             self.save(journal, 'installing')
@@ -650,14 +687,14 @@ class Cutover:
 
 
 def register(commands):
-    for operation in ('plan', 'preflight', 'deploy', 'status', 'reconcile', 'rollback', 'restart', 'verify', 'continue', 'repair-sandbox-plan', 'repair-sandbox', 'repair-release-plan', 'repair-release'):
+    for operation in ('plan', 'preflight', 'deploy', 'status', 'reconcile', 'rollback', 'restart', 'verify', 'continue', 'repair-sandbox-plan', 'repair-sandbox', 'repair-release-plan', 'repair-release', 'repair-probe-plan', 'repair-probe-verify'):
         command = commands.add_parser('publisher-cutover-' + operation, allow_abbrev=False)
         command.add_argument('--request', required=True)
         command.add_argument('--request-sha256', required=True)
         command.add_argument('--serving-binary')
         if operation in ('preflight', 'deploy', 'repair-release-plan', 'repair-release'):
             command.add_argument('--archive', required=True)
-        if operation in ('deploy', 'repair-sandbox', 'repair-release'):
+        if operation in ('deploy', 'repair-sandbox', 'repair-release', 'repair-probe-verify'):
             command.add_argument('--expect-plan-sha256', required=True)
 
 
@@ -668,6 +705,9 @@ def dispatch(args, executor=None, **_options):
     executor = executor or SSHExecutor(inventory)
     target = Cutover(request, inventory, executor, args.state_dir)
     target.serving.binary = getattr(args, 'serving_binary', None)
+    if operation in ('repair-probe-plan', 'repair-probe-verify'):
+        from .publisher_probe_repair import dispatch as repair_probe
+        return repair_probe(target, args)
     if operation in ('repair-sandbox-plan', 'repair-sandbox'):
         from .publisher_sandbox import dispatch as repair_sandbox
         return repair_sandbox(target, args)
@@ -704,6 +744,8 @@ def dispatch(args, executor=None, **_options):
         try:
             return target.deploy(binary, args.expect_plan_sha256, args.serving_binary)
         except Exception:
+            from .deployment_alerts import failed
+            failed()
             latest = target.latest()
             if latest and latest['request'] == request and latest['phase'] not in FINAL:
                 target.rollback()

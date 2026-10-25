@@ -1,14 +1,9 @@
-//! Range filters, shard publication assembly, the publication controller and
-//! the filter service's HTTP surface.
+//! Range filters, shard publication assembly and the publication controller.
 
 pub mod config;
 pub mod controller;
 pub mod distribution;
-pub mod metrics;
 pub mod publication;
-pub mod service;
 pub mod shard_filters;
 pub mod store;
 mod validator;
-
-pub mod filter_service;

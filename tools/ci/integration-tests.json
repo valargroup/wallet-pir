@@ -30,9 +30,9 @@
   },
   "status-publisher": {
     "fast": ["object_access_http"],
-    "full": []
+    "full": ["live_lookup"]
   },
-  "status-query-server": {
+  "status-shared": {
     "fast": [],
     "full": [
       "status_wallet"
@@ -97,13 +97,13 @@
       "publication_binding_http",
       "cache_recovery_http",
       "rpc",
-      "service_round_trip",
       "shard_filters",
       "transparent_host_processes",
       "transparent_provider_installation",
       "unified_http_sync_campaign",
       "wallet_revision_reuse",
-      "publication_renewal"
+      "publication_renewal",
+      "reorg_recovery"
     ]
   },
   "zakura-server-chain": {

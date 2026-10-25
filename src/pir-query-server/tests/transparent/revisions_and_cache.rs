@@ -336,11 +336,22 @@ async fn a_failed_current_history_artifact_withdraws_typed_readiness() {
     );
     let state = ServiceState::build(set, ServiceConfig::default()).unwrap();
     assert!(state.serves_current_artifacts(), "no check ran yet");
-    let typed = state.clone();
-    artifact_validation::assert_current_withdrawn(router(state), move || {
-        typed.serves_current_artifacts()
-    })
-    .await;
+    use pir_query_server::transparent::history::live::{LiveService, Publication};
+    let live = LiveService::new(
+        state.clone(),
+        Publication {
+            directory: dir.path().into(),
+            assignment: None,
+            map_sha256: "current".into(),
+            runtimes: None,
+        },
+        ServiceConfig::default(),
+        options,
+        dir.path().join("active.json"),
+    )
+    .unwrap();
+    live.start_serving();
+    artifact_validation::assert_current_withdrawn(router(state), move || live.ready()).await;
 }
 
 /// Retention is bounded. Keeping every revision a growing tail ever had would

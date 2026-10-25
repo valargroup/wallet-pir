@@ -3,11 +3,12 @@
 //! The host checks publisher compatibility before opening role state, starts
 //! synchronization, then serves the supplied listeners. Dropping the role
 //! future aborts owned synchronization and wallet-listener tasks. Generation
-//! material, the wire protocol and peer messages stay in `status-shared` and
-//! `status-query-server`.
+//! material and the wire protocol stay in `status-shared`. The private
+//! router-worker messages live in [`peers`].
 mod admission;
 pub mod config;
 mod controller;
+mod peers;
 mod routes;
 mod serving;
 mod state;
@@ -28,8 +29,8 @@ pub const PUBLIC_ROUTES: pir_control::public_routes::PublicMount =
 
 pub use config::RoleConfig;
 pub use controller::Controller;
+pub use peers::Role;
 pub use state::{Service, PER_CLIENT_CONCURRENCY};
-pub use status_query_server::distributed::Role;
 use status_shared::publication::{attempt_limit, Failure, PREFIX};
 
 fn source(config: &RoleConfig) -> Result<pir_sync_manager::HttpsSource, Failure> {
@@ -76,10 +77,9 @@ pub async fn serve_role_on(
         async move { service.ready().await }
     });
     let task = sync::synchronization(service.clone(), &config)?;
-    // The worker and router each poll the publisher. Their combined delay must
-    // leave room for preparation inside Status's twenty-second freshness limit.
-    let mut manager = crate::synchronization::SyncManager::new(task)
-        .with_success_interval(std::time::Duration::from_secs(1));
+    // Handover polling accelerates as the original source observation ages;
+    // preparation and both roles share its twenty-second freshness budget.
+    let mut manager = sync::manager(task);
     if let Err(error) = manager.poll_once().await {
         if pir_sync_manager::is_incompatible(error.as_ref()) {
             return Err(error);

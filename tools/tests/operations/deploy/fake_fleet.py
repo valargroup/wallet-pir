@@ -261,6 +261,9 @@ class FakeFleet(Executor):
     def run(self, host, argv, timeout):
         self.runs.append((host, list(argv)))
         if argv[:2] == ['python3', '-c']:
+            from wallet_pir_ops.deploy.deployment_alerts import CONTROL
+            if argv[2] == CONTROL:
+                return 0, json.dumps({'outcome': None})
             from tools.enhance.lib.deploy_prerequisites import PROGRAM
             if argv[2] == PROGRAM:
                 value = json.loads(argv[3])

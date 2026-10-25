@@ -245,6 +245,34 @@ fn domain_topology(data: &DashboardData) -> String {
             out.push_str("<p class=\"notice\">Domain placement is stale or unavailable. Showing the last successful assignment.</p>");
         }
         out.push_str(&format!(
+            "<p class=\"summary\">Serving generation {} · Publisher generation {} · {}</p>",
+            placement
+                .revision
+                .map_or_else(|| "unknown".into(), |n| n.to_string()),
+            placement
+                .published_revision
+                .map_or_else(|| "unknown".into(), |n| n.to_string()),
+            if !fresh {
+                "observation unavailable"
+            } else if placement.revision != placement.published_revision {
+                "publication handover pending"
+            } else {
+                "latest publication observed"
+            },
+        ));
+        for (name, router) in &data.packing_routers {
+            if let Some(report) = router.placement.as_ref().and_then(|p| p.handover.as_ref()) {
+                let available = router.sample.error.is_none()
+                    && router
+                        .sample
+                        .success
+                        .is_some_and(|at| at.elapsed().is_ok_and(|age| age.as_secs() <= 45));
+                out.push_str(&format!("<details><summary>{} · retained generations and pins{}</summary><pre>{}</pre></details>", escape(name),
+                    if available { "" } else { " (last observation; unavailable)" },
+                    escape(&serde_json::to_string_pretty(report).unwrap_or_default())));
+            }
+        }
+        out.push_str(&format!(
             "<p class=\"summary\">Placement revision {} · Last sample: {}</p>",
             placement
                 .revision
@@ -655,6 +683,34 @@ mod tests {
 mod domain_tests {
     use super::*;
     #[test]
+    fn handover_is_distinct_from_missing_observations_and_diagnostics_are_escaped() {
+        let mut data = super::super::tests::sample();
+        data.placement = Some(crate::placement::Placement {
+            revision: Some(4),
+            published_revision: Some(5),
+            domains: BTreeMap::new(),
+        });
+        data.placement_error = false;
+        data.placement_success = Some(SystemTime::now());
+        let html = domain_topology(&data);
+        assert!(html.contains(
+            "Serving generation 4 · Publisher generation 5 · publication handover pending"
+        ));
+        data.placement_error = true;
+        assert!(domain_topology(&data).contains("observation unavailable"));
+        let mut router =
+            crate::packing_fleet::inventory(r#"[{"name":"router","url":"http://10.0.0.1:8093"}]"#)
+                .unwrap();
+        let report = serde_json::json!({"generation":4,"active":"ab".repeat(32),"ready":true,"domain_workers":{"0":{"http://10.0.0.2:8091":true}},"handover":{"holder":"<script>"}});
+        router.get_mut("router").unwrap().placement =
+            crate::placement::Report::parse(&report.to_string());
+        data.packing_routers = router;
+        let html = domain_topology(&data);
+        assert!(html.contains("&lt;script&gt;"));
+        assert!(!html.contains("<script>"));
+        assert!(html.contains("last observation; unavailable"));
+    }
+    #[test]
     fn each_domain_contains_only_its_assigned_routers_and_workers() {
         let mut data = super::super::tests::sample();
         data.packing_enabled = true;
@@ -668,6 +724,7 @@ mod domain_tests {
         data.fleet = crate::fleet::inventory(r#"{"groups":[{"name":"legacy-group","replicas":[{"name":"worker-a","url":"http://10.0.1.1:8091"},{"name":"worker-b","url":"http://10.0.1.2:8091"}]}]}"#).unwrap();
         data.placement = Some(crate::placement::Placement {
             revision: Some(4),
+            published_revision: Some(4),
             domains: BTreeMap::from([
                 (0, vec!["worker-a".into()]),
                 (2, vec!["worker-b".into(), "unknown-worker".into()]),

@@ -22,9 +22,7 @@ members = [
     "src/shared/pir-chain",
     # Protocol libraries, clients and stores.
     "src/enhance/enhance-shared",
-    "src/enhance/enhance-query-server",
     "src/status/status-shared",
-    "src/status/status-query-server",
     "src/status/status-publisher",
     "src/transparent/transparent-shared",
     # Services and operational dashboard.
@@ -96,3 +94,14 @@ inherits = "release"
 lto = false
 codegen-units = 16
 incremental = true
+
+# The fast runner caps the job at 6 GiB and deletes incremental sessions before
+# this compile. A from-scratch rustc of this host runs out of memory when a
+# few large codegen units are optimized together. Many small units keep that
+# rustc inside the cap. Stable rustc has no flag for a per-crate codegen
+# thread cap. Dependencies stay fully optimized, and deploy binaries stay on
+# the fat-LTO release profile above. There is no incremental session to poison.
+[profile.release-fast.package.pir-query-server]
+opt-level = 1
+codegen-units = 256
+incremental = false

@@ -51,7 +51,6 @@
       "transparent:pir-publisher:lib:pir_publisher",
       "transparent:pir-publisher:test:lifecycle",
       "transparent:pir-e2e-tests:test:event_codec_bounds",
-      "transparent:pir-e2e-tests:test:service_round_trip",
       "transparent:pir-e2e-tests:test:shard_filters",
       "transparent:pir-e2e-tests:test:transparent_host_processes",
       "transparent:pir-e2e-tests:test:transparent_provider_installation",
@@ -124,20 +123,18 @@
       "native:pir-monitor:bin:pir-monitor",
       "native:status-publisher:doc:status_publisher",
       "native:status-publisher:lib:status_publisher",
+      "native:status-publisher:test:live_lookup",
       "native:status-publisher:test:object_access_http",
       "native:status-shared:doc:status_shared",
       "native:status-shared:lib:status_shared",
-      "native:status-query-server:doc:status_query_server",
-      "native:status-query-server:lib:status_query_server"
+      "native:status-shared:test:status_wallet"
     ]
   },
-  "enhance-query-server-units": {
+  "enhance-shared-units": {
     "family": "enhance",
     "targets": [
       "native:enhance-shared:doc:enhance_shared",
-      "native:enhance-shared:lib:enhance_shared",
-      "native:enhance-query-server:doc:enhance_query_server",
-      "native:enhance-query-server:lib:enhance_query_server"
+      "native:enhance-shared:lib:enhance_shared"
     ]
   },
   "enhance-publisher-contracts": {
@@ -148,7 +145,6 @@
       "native:pir-e2e-tests:test:ci_hint",
       "native:pir-e2e-tests:test:encrypted_lifecycle",
       "native:pir-e2e-tests:test:publication_binding_http",
-      "native:status-query-server:test:status_wallet",
       "native:native-certificate:bin:native_certificate",
       "native:pir-publisher:lib:pir_publisher",
       "native:pir-publisher:doc:pir_publisher",
@@ -177,7 +173,8 @@
       "native:pir-e2e-tests:test:enhance_wallet_native",
       "native:pir-e2e-tests:test:note_recovery",
       "native:pir-e2e-tests:test:cache_recovery_http",
-      "native:pir-e2e-tests:test:rpc"
+      "native:pir-e2e-tests:test:rpc",
+      "native:pir-e2e-tests:test:reorg_recovery"
     ]
   },
   "enhance-reference": {
@@ -187,7 +184,6 @@
       "reference:pir-e2e-tests:test:encrypted_lifecycle",
       "reference:enhance-shared:lib:enhance_shared",
       "reference:status-shared:lib:status_shared",
-      "reference:status-query-server:lib:status_query_server",
       "reference:pir-query-server:lib:pir_query_server",
       "reference:pir-e2e-tests:test:publication_renewal"
     ]
@@ -197,7 +193,6 @@
     "targets": [
       "cuda:enhance-pir-load-test:check:all",
       "cuda:enhance-shared:check:enhance_shared",
-      "cuda:enhance-query-server:check:enhance_query_server",
       "cuda:pir-query-server:check:pir_query_server",
       "cuda:pir-cuda:check:pir_cuda"
     ]

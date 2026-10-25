@@ -999,6 +999,11 @@ mod tests {
         }
         let candidate = config.publication_root.join("candidate-superseded");
         candidate_inputs(&source.directory, &candidate);
+        // Establish the earlier verified set explicitly even when this case
+        // runs independently of the successful publication scenario.
+        *authority.0.prepared_set.lock().unwrap() = Some(
+            transparent_shared::history::shardset::ShardSet::open(&source.directory, 0).unwrap(),
+        );
         for name in runtime_files(&candidate).keys() {
             std::fs::remove_file(candidate.join(name)).unwrap();
         }
@@ -1057,7 +1062,7 @@ mod tests {
         .unwrap_err();
         assert!(error.to_string().contains("did not verify"), "{error}");
 
-        // A runtime that cannot be written is reported, not fatal.
+        // A runtime that cannot be written is reported and prevents activation.
         let unwritable = config.publication_root.join("candidate-unwritable");
         // Permission failure is independent of archive size. Publish a real
         // recent-only candidate so this negative case does not rebuild the
@@ -1082,7 +1087,7 @@ mod tests {
             }
         }
         std::fs::set_permissions(&unwritable, std::fs::Permissions::from_mode(0o555)).unwrap();
-        let report = prepare_runtimes(
+        let error = prepare_runtimes(
             &config,
             &authority,
             &unwritable,
@@ -1090,8 +1095,13 @@ mod tests {
             &mut Default::default(),
         )
         .await
-        .unwrap();
+        .unwrap_err();
         std::fs::set_permissions(&unwritable, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(
+            error.to_string().contains("runtime preparation failed"),
+            "{error}"
+        );
+        let report = authority.0.status.read().unwrap()["runtime_preparation"].clone();
         assert!(
             !report["failures"].as_array().unwrap().is_empty(),
             "{report}"

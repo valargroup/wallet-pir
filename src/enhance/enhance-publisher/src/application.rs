@@ -182,6 +182,7 @@ impl pir_pipeline::publisher::Publisher for PublicationWorkflow {
         &mut self,
     ) -> std::result::Result<pir_pipeline::Input<Self::Publication<'_>>, String> {
         match self.pending.borrow_and_update().clone() {
+            Some(work) if self.publisher.published(&work) => Ok(Input::Unchanged),
             Some(work) => self
                 .publisher
                 .publication(work)

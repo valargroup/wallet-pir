@@ -82,8 +82,9 @@ class Coordinator(FakeFleet):
 
     def run(self, host, argv, timeout):
         if argv[:2] == ['python3', '-c']:
+            from wallet_pir_ops.deploy.deployment_alerts import CONTROL
             from tools.enhance.lib.deploy_prerequisites import PROGRAM
-            if argv[2] == PROGRAM:
+            if argv[2] in (PROGRAM, CONTROL):
                 return super().run(host, argv, timeout)
         self.runs.append((host, argv))
         if argv[:2] == ['stat', '-c']:
@@ -91,6 +92,10 @@ class Coordinator(FakeFleet):
         if '--check' in argv:
             configuration = json.loads(self.read(host, argv[argv.index('--config') + 1]))
             expected = {'management_listen', *publisher.PRODUCTS} if argv[0].endswith('/pir-publisher') else {'management_listen', 'enhance'}
+            if (not argv[0].endswith('/pir-publisher')
+                    and configuration.get('enhance', {}).get('settings', {}).get('role')
+                    in ('query-ingress', 'combined')):
+                expected.add('public_listen')
             if self.refuse_configuration or set(configuration) - {'chain'} != expected:
                 return 1, 'unknown product configuration'
         elif self.fail_probe and argv[0].startswith('/bin/check-'):

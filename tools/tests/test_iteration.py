@@ -297,8 +297,11 @@ class IntegrityTests(unittest.TestCase):
                    created_at='2026-09-14T00:00:00Z', run_started_at='2026-09-14T00:10:00Z')
         jobs = {'jobs': [dict(name='old', started_at='2026-09-14T00:00:05Z', completed_at='2026-09-14T00:01:00Z', steps=[]),
                          dict(name='new', started_at='2026-09-14T00:10:03Z', completed_at='2026-09-14T00:10:30Z', steps=[])]}
-        with patch.object(timings, 'api', side_effect=[run, jobs]):
+        with patch.object(timings, 'api', side_effect=[run, jobs]) as api:
             result = timings.report('org/repo', 1)
+        # Jobs come from the current attempt, timed from its start, not the original creation.
+        api.assert_called_with('repos/org/repo/actions/runs/1/attempts/2/jobs?per_page=100')
+        self.assertEqual(result['attempt'], 2)
         self.assertTrue(result['jobs'][0]['reused_from_previous_attempt'])
         self.assertIsNone(result['jobs'][0]['dispatch_to_job_start_seconds'])
         self.assertEqual(result['jobs'][1]['dispatch_to_job_start_seconds'], 3)

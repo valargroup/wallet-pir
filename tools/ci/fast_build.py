@@ -3,18 +3,23 @@
 Cargo unifies features for every package named in one command. Shared crates,
 product libraries, and the publisher and query hosts stay on one command with
 a fixed feature set, so a warm cache still hits. Transparent publication tests
-live in those libraries. Enabling history and detail on the host binary links
-the publisher again and is not part of this command. The query host's own
-Transparent `ci_smoke` names `pir-query-server/transparent-history`, which the
-host's own dev-dependency already unifies in. Moving the hosts onto
+live in those libraries. Enabling history and detail on the publisher binary
+links that library again and is not part of this command. The query host's own
+Transparent `ci_smoke` names `pir-query-server/transparent-history`. Detail is
+pinned beside it on the same command. The host's dev-dependency does not force
+those roles on, so the second command can leave them off. Moving the hosts onto
 another command changes that unification and rebuilds the closure. The
-in-process Enhance hint graph stays on a second command and never joins the
-first. Chain-node fixtures stay in qualification: they pull the wallet client
-and node stack into every crate on their command. Campaign targets are never
+in-process Enhance hint target stays on that second command with the query
+host's Enhance and Status roles only. Transparent history and detail stay on
+the first command, so one rustc does not build both stacks. Receiver, status,
+and RocksDB chain-node targets stay in qualification.
+The Enhance and Transparent reader targets stay on this command: dropping
+`testing-node` rebuilds every consumer. Campaign targets are never
 selected. Test programs retain their package directory and Cargo environment.
-Enhance publication fixtures run alone, as do the filter library, the query
-host's Status unit cases and the Enhance and Receiver runtime libraries on fewer
-than eight cores, counting any cgroup CPU quota. The remaining programs share a pool of at most three processes.
+The Enhance and Receiver runtime libraries run alone below eight cores,
+counting any cgroup CPU quota. Status stays in one process so its cases share
+prepared material instead of copying a multi-gigabyte fixture across lanes.
+The remaining programs share a pool of at most three processes.
 """
 import json
 import os
@@ -69,14 +74,21 @@ def publisher_runs_alone(name, kinds):
 
 
 def status_runs_alone(name, kinds, names):
-    """Status sync cases each prepare a generation on every core.
-
-    One generation prepare is a 96 MiB database; sharing those cores with the
-    pool, or with the publisher, pushes a single case past its budget, so the
-    query host's Status unit program runs alone.
-    """
+    """One shared Status fixture runs before the ordinary test pool."""
     return (name == 'pir-query-server' and 'lib' in kinds
             and any(case.startswith('status::') for case in names))
+
+
+def isolate_status_fixture(parts, package, kinds, discovered):
+    """Mark Status partitions exclusive without marking the host's other roles."""
+    for part in parts:
+        args = part['args']
+        cases = args[args.index('--exact') + 1:] if '--exact' in args else None
+        selected = list(discovered) if cases is None else cases
+        status_only = cases is None or all(case.startswith('status::') for case in cases)
+        if status_only and status_runs_alone(package, kinds, selected):
+            part['exclusive'] = True
+    return parts
 
 
 # Unit cases that build full runtimes on every core, each near the case budget.
@@ -97,24 +109,30 @@ def runtime_runs_alone(name, kinds):
 # Receiver and Status libraries stay named here: adding them only on a diff
 # that touches them changes feature unification and rebuilds wallet-libraries
 # crates, which leaves the fast job on the plain three-minute budget.
+# The chain reader, its RPC transport, and the pipeline stay named for the same
+# reason. Their fast reader targets require `testing-node`. Naming those
+# packages only on a diff that touches them, then dropping them on the next
+# diff, rebuilds every consumer of the cached graph. Receiver, status, and
+# RocksDB reader targets are not fast targets and stay out of this set.
 # Only affected packages are executed.
 FAST_FEATURE_ROOTS = frozenset({
     'enhance-pir-client',
     'enhance-pir-load-test',
     'enhance-shared',
     'enhance-publisher',
-    'enhance-query-server',
     'pir-e2e-tests',
     'pir-monitor',
+    'pir-node-rpc',
+    'pir-pipeline',
     'pir-publisher',
     'pir-query-server',
     'receiver-indexer',
     'receiver-pir-server',
     'status-publisher',
-    'status-query-server',
     'transparent-publisher',
     'transparent-shared',
     'transparent-tools',
+    'zakura-server-chain',
 })
 
 
@@ -136,10 +154,11 @@ HOST_PACKAGES = frozenset({'pir-publisher', 'pir-query-server', 'pir-e2e-tests'}
 
 # Fixture features pull one product's wallet client and chain test node into
 # every crate on their command. Fast leaves the chain node in qualification.
-# The second command is only the in-process Enhance hint graph.
-# Query-host roles the stable command reaches through publisher dev-dependencies.
-HINT_HOST_ROLES = ('pir-query-server/status', 'pir-query-server/transparent-detail',
-                   'pir-query-server/transparent-history')
+# History and detail stay on the stable command. Enhance and Status stay on
+# the hint command. One rustc of both stacks does not fit in the fast runner.
+TRANSPARENT_QUERY_ROLES = ('pir-query-server/transparent-detail',
+                           'pir-query-server/transparent-history')
+HINT_HOST_ROLES = ('pir-query-server/enhance', 'pir-query-server/status')
 
 PRODUCT_HOST_FEATURES = {
     'enhance': 'pir-e2e-tests/enhance-fast',
@@ -201,10 +220,11 @@ def host_features_for(products, package_names):
 
     Transparent fast tests do not use `transparent-tests`: that feature enables
     publisher fixtures and compiles the same libraries again. History and detail
-    stay on the publisher library's dev-dependency edge. Turning them on for the
-    host binary links that library a second time. Status `status-tests` enables
-    the chain node for fixture campaigns that fast does not run; qualification
-    enables it. The Enhance hint target uses `enhance-fast`, not `enhance-tests`.
+    are explicit features of the stable command, not of this one, and not of the
+    host dev-dependency. Turning them on for the publisher binary links that
+    library a second time. Status `status-tests` enables the chain node for
+    fixture campaigns that fast does not run; qualification enables it. The
+    Enhance hint target uses `enhance-fast`, not `enhance-tests`.
     """
     features = set()
     if 'pir-e2e-tests' in package_names and 'enhance' in products:
@@ -294,24 +314,27 @@ def bounded_programs(program, names):
     Each process retains immutable fixture reuse across dozens of cases. Keep
     the small-runner publisher protection and real HTTP integrations intact.
     """
-    # Status roles, hosted by the query server, pay for one process-local
-    # generation per group. Two groups let those prepares overlap. Every other
-    # suite keeps about forty-eight cases so immutable fixtures stay together.
-    group = 31 if program.get('package') == 'pir-query-server' else 48
+    group = 48
+    status = {name for name in names if name.startswith('status::')}
+    if (program.get('package') == 'pir-query-server' and status
+            and not program['integration'] and not program['exclusive']):
+        remaining = sorted(names - status)
+        partitions = [remaining, sorted(status)] if remaining else [sorted(status)]
+        return [dict(program, args=[*program['args'], '--exact', *cases],
+                     case_count=len(cases)) for cases in partitions if cases]
     if program['integration'] or program['exclusive'] or len(names) <= group:
         return [program]
     lanes = min(3, (len(names) + group - 1) // group)
+    # Two receiver-indexer lanes are about a minute of wall and finish the
+    # pool. A list that is already split can use the third process on the
+    # 8-core runner; smaller hosts keep the wider groups.
+    if (program.get('package') == 'receiver-indexer' and lanes > 1
+            and available_cpus() >= 8):
+        lanes = 3
     ordered = sorted(names)
     distribution = [name for name in ordered
                     if name.startswith('history::controller::distribution_tests::')]
-    status = [name for name in ordered if name.startswith('status::')]
-    if program.get('package') == 'pir-query-server' and status and len(status) < len(names):
-        # Every Status case prepares on every core, so never run more than the
-        # two Status groups at once; the host's other roles share one process.
-        status_lanes = min(2, (len(status) + group - 1) // group)
-        remaining = sorted(names - set(status))
-        partitions = [remaining, *[status[index::status_lanes] for index in range(status_lanes)]]
-    elif program.get('package') == 'transparent-publisher' and distribution:
+    if program.get('package') == 'transparent-publisher' and distribution:
         # These cases share expensive immutable native producer bytes. Keep
         # them in one process; each consumer still has its own files and HTTP.
         remaining = sorted(names - set(distribution))
@@ -392,9 +415,9 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
     compile_integrations = {(name, target) for name in compile_packages
                             for target in registry.get(name, {}).get('fast', [])
                             if integration_allowed(name, target)}
-    # ci_hint enables enhance-fast. That feature stays on its own command.
-    # Putting it on the stable command, or taking the hosts off that command
-    # when the diff is Enhance, rebuilds every root in the closure.
+    # ci_hint enables enhance-fast. That feature stays on its own command so
+    # the stable command can keep a feature set that does not change with the
+    # diff. History and detail are not on this command.
     hint_identity = ('pir-e2e-tests', 'ci_hint')
     compile_hint = hint_identity in compile_integrations
     if compile_hint:
@@ -418,7 +441,7 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
         name = package['name']
         group = stable
         group['names'].add(name)
-        # No product fixture feature is legal on this command. An Enhance diff
+        # Chain-node fixture features stay off this command. An Enhance diff
         # and a Transparent diff must compile the same roots and features.
         allowed = frozenset()
         classified = {f for entry in slow.get(name, {}).values() if isinstance(entry, dict)
@@ -453,6 +476,10 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
             continue
         if feature_serves(feature, frozenset()) or feature_serves(feature, products):
             stable['features'].add(feature)
+    # History and detail are constant on this command. The dev-dependency does
+    # not enable them, and ci_smoke only names history.
+    if 'pir-query-server' in stable['names']:
+        stable['features'].update(TRANSPARENT_QUERY_ROLES)
     commands = []
     command = _compile_command(stable, options)
     if command:
@@ -460,25 +487,19 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
     if compile_hint:
         # Ungated extra features (the native correctness profile) stay visible
         # to this target. Fast feedback passes none, so the oracle stays on the
-        # reference profile.
+        # reference profile. History and detail stay off: this rustc is Enhance
+        # and Status only.
         features = set(host_features_for(frozenset({'enhance'}), {'pir-e2e-tests'}))
         features.update(feature for feature in additional_features
-                        if feature_serves(feature, frozenset()))
-        # The same feature also enables the query host's Enhance role. Its
-        # library and operator tests that are compiled only in that role stay
-        # here, so the stable command can keep building the host without it.
-        # Both commands write one host binary, and operator tests from both
-        # run it. Building it here with the roles the stable command unifies
-        # in as well keeps it a superset of every compiled operator test.
+                        if feature_serves(feature, frozenset())
+                        and feature not in TRANSPARENT_QUERY_ROLES)
         features.update(HINT_HOST_ROLES)
+        features.update(stable['features'] - set(TRANSPARENT_QUERY_ROLES))
         # Naming only the two hosts drops leaf features the stable roots
-        # unify in (serde `rc`, zeroize `derive`, ...) and rebuilt about a
-        # hundred shared crates. Naming the stable roots with their features
-        # resolves every other crate exactly as the stable command did, so
-        # only the hosts and their dependents' harnesses compile again; those
-        # repeat the stable cases and are not run twice.
+        # unify in and rebuilds shared crates. Naming the same roots with the
+        # stable features, minus the Transparent roles, resolves those crates
+        # as the stable command did. Only the query-host harness compiles again.
         hint_packages = sorted(stable['names'] | {'pir-e2e-tests', 'pir-query-server'})
-        features.update(stable['features'])
         commands.append(['cargo', 'test', '--locked', '--profile', 'release-fast', '--no-run', *options,
                          *[arg for name in hint_packages for arg in ('-p', name)], '--lib',
                          '--test', 'ci_hint', '--test', 'operator',
@@ -530,8 +551,8 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
             actual_units.add(identity)
             discovered_units[name].update(names)
         exclusions = [] if integration else list(slow.get(name, {}))
-        # The hint command builds the query host with every role, so its unit
-        # program repeats the stable command's cases. Run only its new cases.
+        # A later command that rebuilds the same harness repeats its cases.
+        # Run only the new ones.
         unit = None if integration else (name, target['name'], tuple(target['kind']))
         repeated = set() if unit is None else names & covered_units.get(unit, set())
         if unit is not None:
@@ -545,19 +566,21 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
                              integration=integration,
                              # Its real reference packing and independent oracle
                              # must not compete with the runtime's matrix fixtures.
+                             # Only the shared Status fixture stays exclusive;
+                             # the host's other roles join the ordinary pool.
                              exclusive=publisher_runs_alone(name, target['kind'])
-                             or status_runs_alone(name, target['kind'], names)
                              or runtime_runs_alone(name, target['kind'])
                              or identity == ('pir-e2e-tests', 'ci_hint')
                              or (name == 'enhance-publisher' and 'lib' in target['kind']),
                              case_count=len(names),
                              args=[arg for case in exclusions for arg in ('--skip', case)])
         if repeated:
-            programs.extend(dict(part, args=[*part['args'], '--exact', *sorted(names)])
-                            if '--exact' not in part['args'] else part
-                            for part in bounded_programs(program, names))
-            continue
-        programs.extend(bounded_programs(program, names))
+            parts = [dict(part, args=[*part['args'], '--exact', *sorted(names)])
+                     if '--exact' not in part['args'] else part
+                     for part in bounded_programs(program, names)]
+        else:
+            parts = bounded_programs(program, names)
+        programs.extend(isolate_status_fixture(parts, name, target['kind'], names))
     if actual_integrations != expected_integrations or expected_units - actual_units:
         raise ValueError(f'fast test executables mismatch: missing_units={sorted(expected_units-actual_units)}, '
                          f'missing_integrations={sorted(expected_integrations-actual_integrations)}, '

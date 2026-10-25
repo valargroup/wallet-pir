@@ -1,6 +1,8 @@
 """Keep Enhance's installed service identity and prepare only new cache roots."""
 from dataclasses import replace
 import json
+from pathlib import PurePosixPath
+import re
 
 from wallet_pir_ops.role_config import set_service
 from wallet_pir_ops.deploy import units
@@ -130,6 +132,33 @@ class Guard:
 
     def ready(self, deployer, record, expected, document):
         return True, 'ready'
+
+    def restored_ready(self, record, expected, document):
+        """The restored legacy CUDA worker reports holdings instead of `ready`.
+
+        Only its recorded executable and restoration phase may use that older
+        contract. Autonomous query hosts always need their normal readiness.
+        """
+        previous = record.get('previous', {})
+        if (record.get('phase') not in ('restoring', 'restore-failed')
+                or record.get('role') != 'worker'
+                or expected != previous.get('exe_sha256')
+                or PurePosixPath(previous.get('exec_binary', '')).name != 'enhance-pir-server'
+                or not isinstance(document, dict) or 'ready' in document
+                or document.get('binary_sha256') != expected
+                or document.get('protocol') != 'ironwood-enhance-pir-v9-native-two-mask-m29'
+                or document.get('matvec') != {'matvec_backend': 'cuda', 'cuda_device': 0}):
+            return False
+        published = document.get('published')
+        digests = document.get('published_manifest_digests')
+        resident = document.get('resident_database_bytes')
+        return (isinstance(published, list) and bool(published)
+                and all(type(shard) is int and shard >= 0 for shard in published)
+                and len(set(published)) == len(published)
+                and isinstance(digests, dict) and set(digests) == {str(shard) for shard in published}
+                and all(isinstance(digest, str) and re.fullmatch('[a-f0-9]{64}', digest)
+                        for digest in digests.values())
+                and type(resident) is int and resident > 0)
 
     def before_restore(self, deployer, journal, record):
         # The predecessor's directories and ownership were never changed.

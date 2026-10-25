@@ -1281,6 +1281,8 @@ class Poc:
         try:
             self.reload_caddy()
         except BaseException:
+            from wallet_pir_ops.deploy.deployment_alerts import failed
+            failed()
             self.restore(transaction)
             raise
 

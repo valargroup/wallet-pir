@@ -38,7 +38,8 @@ from transparent_pir_sample import make_filter, supported  # noqa: E402
 BLOOM_PROBABILITY = 1e-6
 PROFILE_NAME = "zcash-transparent-basic-v1"
 
-# Envelope framing, from docs/transparent/filter-envelope.md. Computed rather
+# Envelope framing, from the range envelope last documented at
+# https://github.com/valargroup/wallet-pir/blob/002e82e3/docs/transparent/filter-envelope.md. Computed rather
 # than measured so the accounting is auditable against the specification.
 ENVELOPE_HEADER = 4 + 2 + 32 + 1 + len(PROFILE_NAME) + 8 + 32
 

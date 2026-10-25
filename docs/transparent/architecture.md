@@ -412,7 +412,7 @@ still serve it.
 The helpers are wallet-libraries' `zakura/pir-native` crate (`zakura-pir-native`), which Enhance and Status use too; it
 defines both profiles (`P8`, `P16`) and its golden test pins the 16-bit bytes. Its one
 Cargo feature, `test-server`, adds a test fixture only, so depending on it cannot switch the q48 Enhance binaries, which only
-`enhance-query-server/native-reinspiring` does. `wallet-libraries/zakura/transparent-native` re-exports
+`enhance-shared/native-reinspiring` does. `wallet-libraries/zakura/transparent-native` re-exports
 it and adds Transparent's per-geometry seeds, `NativeScheme`, `TableProfile` and
 `profile_for`, which picks the profile from the table name.
 

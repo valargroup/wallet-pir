@@ -159,6 +159,23 @@ it, the managed files' digests, the latest transaction and the next command.
 
 ## Fleet configuration and lifecycle
 
+Deploy, restart, rollback and deployment-verification commands pause normal Slack
+notifications through the running `pir-apm` sidecar. A single fleet-wide window
+starts under the production lock; APM sends the service names and keeps collecting
+metrics and evaluating incidents. Existing readiness and exact-answer validation
+run once as before. Success sends “Deployment finished”; failure sends “Deployment
+failed” and restores normal notifications before automatic rollback. Events that
+recover inside the window are not replayed; fresh, still-failing observations are
+announced after it ends.
+
+The deadline is fixed at one hour and survives runner or monitor restarts. APM
+expires it itself and sends an expiry warning; retries never extend it. The
+running sidecar must support `pir-apm deployment` and have active alerting with
+`PIR_APM_STATE_PATH`. Failure to open the window refuses the deployment before
+service changes. Read-only inspection and preparation commands do not pause alerts.
+The sidecar update that first introduces this feature uses the previously
+installed deploy tool, before adopting the updated operations package.
+
 The inventory owns operator choices: hosts, units, connection settings and artifact
 variants. Descriptors own role order, templates and readiness checks. Dynamic
 membership, publication assignments and their persisted revisions remain owned by

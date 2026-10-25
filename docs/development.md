@@ -22,7 +22,10 @@ make check-full   # comprehensive local validation, not the default inner loop
 Prerequisites: Rust 1.97.1 with rustfmt/clippy, Python 3.11+, Git, Clang/libclang,
 protoc, jq, shellcheck, Node and make. Linux additionally needs the standard C/C++
 build tools, pkg-config and OpenSSL development headers. macOS uses Xcode Command
-Line Tools. `make doctor NETWORK=1` checks authenticated GitHub/dependency access;
+Line Tools. `make doctor` runs the protoc that builds will use (`PROTOC` when set,
+else the first on `PATH`) and imports the Python test suites' third-party modules
+(`cryptography`); when a Homebrew protoc fails to load its libraries, set
+`PROTOC` to a working one or repair it. `make doctor NETWORK=1` checks authenticated GitHub/dependency access;
 it suppresses subprocess output and never prints tokens. Missing dependencies are
 fixed explicitly, not by interactive repair in a test command.
 
@@ -45,8 +48,11 @@ lists each permitted edge and `tools/ci/chain_graph.py` checks its fresh
 consumers. Fast feedback resolves those consumers and applies the graph rules.
 The standalone tool also type-checks each one; that compile stays out of the
 fast job. Fast feedback runs the Enhance and Transparent reader RPC targets.
-Receiver, status and RocksDB reader targets stay in full qualification so a
-fast compile does not toggle those features and rebuild every consumer.
+Those targets stay named on every fast compile, including `testing-node`,
+the RPC transport, and the pipeline. A diff that does not touch the reader
+must not drop them: that toggles feature unification and rebuilds every
+consumer. Receiver, status and RocksDB reader targets stay in full
+qualification so a fast compile does not toggle those features either.
 Each `zakura-server-chain` consumer selects its product (`transparent`, `enhance`,
 `status` or `receiver`) with default features disabled. Test dependencies add
 `testing` alongside that same product; fixture support alone does not enable an
@@ -56,15 +62,20 @@ Fast Rust checks run every library unit test, and every binary that declares one
 in `release-fast`, plus classified bounded integration targets. The compile names
 a stable dev-dependency closure so a smaller affected set reuses the warm
 dependency graph; only affected packages run. Transparent publication tests
-stay in that closure. The query host still receives history and detail through
-the publisher library's dev-dependency. The publisher host binary does not:
-those features link the same library again.
-Publisher fixtures stay off this
-command. The publisher and query hosts stay on that command for every diff. The
-in-process Enhance hint graph stays on a separate command and does not join
-it; moving the hosts onto that command rebuilds the closure. Chain-node
-fixtures for Enhance and Status stay in qualification. A binary with no
-unit tests is left out of that compile; qualification still builds every binary.
+stay in that closure. History and detail reach the query host as explicit
+features of that command. The publisher host binary does not enable them:
+those features link the same library again. The query host's dev-dependency
+does not force those roles, so the Enhance and Status harness can leave them
+off. Publisher fixtures stay off this command. The publisher and query hosts
+stay on that command for every diff. The in-process Enhance hint target stays
+on a second command with the query host's Enhance and Status roles only. That
+command names the same roots and the stable features other than history and
+detail, so shared crates stay warm and one rustc does not build both stacks.
+The stable feature set does not change with the diff. Moving the hosts onto
+another command rebuilds the closure. Publisher chain-node fixtures stay in
+qualification, as do the reader's receiver, status, and RocksDB targets. A
+binary with no unit tests is left out of that compile; qualification still
+builds every binary.
 There are no named slow-unit exclusions.
 Required CLI features are enabled for binary unit targets. Ordinary cache,
 identity and fault matrices exercise one native column instance with the real
@@ -77,6 +88,10 @@ scenario is first decoded against producer bytes, and every later check still
 sends it over HTTP and compares the complete answer. Large unit executables
 use up to three disjoint groups of exact discovered case names inside the same
 three-process limit; each group keeps fixture reuse and serial case deadlines.
+Status cases stay together in one exclusive process and share prepared material
+across publication identities. Splitting those cases copies their large native
+fixtures and can exhaust the runner's memory limit. Adjacent Receiver witness
+reorg checks share one history through provisional and completed witnesses.
 HTTP integrations and the small-runner publisher protection remain intact.
 
 `make check-correctness` runs that complete bounded unit/integration population

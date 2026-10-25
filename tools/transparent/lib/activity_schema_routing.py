@@ -70,10 +70,12 @@ def warm_active(status, digest, *, continuous=False):
 
 def guard_coordinator(text):
     """Replace only the known transparent handlers, preserving other services."""
-    required = ['handle @transparent_publication {', 'handle @legacy_transparent_filters {']
+    required = ['handle @transparent_publication {']
     # The unified wallet host's canonical filter routes are guarded with the
     # Enhance host's, so maintenance closes every public filter path at once.
-    optional = ['handle_path /v1/filters/parents/* {', 'handle_path /transparent/v1/filters/parents/* {',
+    # Per-block filter routes remain optional only for hosts that still carry them.
+    optional = ['handle @legacy_transparent_filters {',
+                'handle_path /v1/filters/parents/* {', 'handle_path /transparent/v1/filters/parents/* {',
                 'handle @transparent_queries {', 'handle /transparent/v1/filters/parents/* {',
                 'handle /transparent/v1/filters/* {', 'handle @history_metadata {']
     for marker in required + optional:

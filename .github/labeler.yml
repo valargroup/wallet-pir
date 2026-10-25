@@ -105,8 +105,6 @@
           "any-glob-to-any-file": [
             "src/pir-query-server/**",
             "src/enhance/enhance-shared/**",
-            "src/enhance/enhance-query-server/**",
-            "src/status/status-query-server/**",
             "src/receiver/receiver-pir-server/**",
             "tools/deploy/query-server/**",
             "docs/query-server.md",

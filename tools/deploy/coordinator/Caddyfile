@@ -22,15 +22,6 @@ ENHANCE_PUBLIC_HOST {
 		header Cache-Control "public, max-age=300"
 		file_server
 	}
-	# Public transparent activity filters. Only the wallet-facing paths are
-	# routed: the filter service's own /metrics, /ready and /v1/health are not
-	# under these prefixes and stay unreachable from the internet. Requests here
-	# carry chain range information only. `/transparent/v1/filters/*` is the
-	# canonical path; `/v1/filters/*` remains its legacy alias.
-	@legacy_transparent_filters path /v1/filters/* /transparent/v1/filters/*
-	handle @legacy_transparent_filters {
-		reverse_proxy 127.0.0.1:8090
-	}
 	# Unauthenticated, aggregate-only dashboard served by the pir-apm sidecar.
 	handle_path /apm* {
 		reverse_proxy 127.0.0.1:3002
@@ -80,12 +71,12 @@ ENHANCE_PUBLIC_HOST {
 }
 
 # The unified wallet entry point. Only canonical product prefixes are served
-# here; legacy aliases (`/v1/enhance`, `/v1/status`, `/v1/filters`, `/v2`,
-# `/v1/receiver`) stay on the product hosts above and on their own hosts, which
-# remain in service for released wallets. Enhance, Status and Transparent
-# filters reach the same loopback services as the Enhance host. Transparent
-# queries and Receiver cross to their own public origins over verified HTTPS,
-# naming each origin as Host and SNI; nothing here proxies back to this host.
+# here; legacy aliases (`/v1/enhance`, `/v1/status`, `/v2`, `/v1/receiver`)
+# stay on the product hosts above and on their own hosts, which remain in
+# service for released wallets. Enhance and Status reach the same loopback
+# services as the Enhance host. Transparent and Receiver cross to their own
+# public origins over verified HTTPS, naming each origin as Host and SNI;
+# nothing here proxies back to this host.
 wallet-pir.valargroup.dev {
 	tls {
 		issuer acme {
@@ -108,10 +99,6 @@ wallet-pir.valargroup.dev {
 				tls_server_name transparent-pir.valargroup.dev
 			}
 		}
-	}
-	handle /transparent/v1/filters/* {
-		uri replace /transparent/v1 /v1 1
-		reverse_proxy 127.0.0.1:8090
 	}
 	handle /transparent/v1/* {
 		uri replace /transparent/v1 /v2 1

@@ -82,16 +82,31 @@ jobs:
       - name: Require an existing warm build cache on main
         if: github.event_name == 'push' && steps.affected.outputs.rust == 'true'
         run: umask 022 && python3 tools/ci/cargo_cache.py require-warm --lane fast
+      - name: Drop incremental sessions from the warm target
+        # A rustc killed by this runner's 6 GiB cap leaves a session the next
+        # link can grow past the cap. Fingerprints and finished artifacts stay.
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && !inputs.hosted && steps.affected.outputs.rust == 'true'
+        run: python3 tools/ci/runner_storage.py --drop-incremental-target "$CARGO_TARGET_DIR"
       - name: Run affected fast checks
         env:
           BASE: ${{ env.FAST_BASE }}
           # Job count is not part of compiler output, but cargo_cache hashes
           # every CARGO_BUILD_* variable into the persistent target identity.
           # Keep four on the setup step so this relink reuses the warm cache.
-          # Two rustc processes still cross the fast runner's 6 GiB cgroup, so
-          # the compile step uses one.
-          CARGO_BUILD_JOBS: '1'
+          # Two rustc processes still cross main's 6 GiB fast-runner cgroup, so
+          # the compile on that runner uses one. The same condition selects the
+          # runner: a push, PR, or hosted dispatch must not guess from
+          # runner.environment, which left four rustc processes on the cgroup.
+          # Hosted runners (16 GB) keep all four.
+          CARGO_BUILD_JOBS: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && !inputs.hosted && '1' || '4' }}
         run: umask 022 && TMPDIR="$RUNNER_TEMP" python3 tools/ci/fast.py --committed-only --base "$BASE" --unit-jobs 3
+      - name: Check main feedback timing after validation
+        # The clock is job start through validation. Cache and stage reports
+        # below are not part of that measurement.
+        if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: umask 022 && python3 tools/ci/timings.py --run "$GITHUB_RUN_ID" --check-fast-seconds 180
       - name: Report Cargo cache reuse
         if: always() && steps.affected.outputs.rust == 'true'
         continue-on-error: true
@@ -103,12 +118,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: umask 022 && python3 tools/ci/timings.py --run "$GITHUB_RUN_ID"
-
-      - name: Check main feedback timing after validation
-        if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: umask 022 && python3 tools/ci/timings.py --run "$GITHUB_RUN_ID" --check-fast-seconds 180
 
   select-cuda:
     name: Select CUDA changes

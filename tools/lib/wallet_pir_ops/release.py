@@ -13,6 +13,7 @@ import tarfile
 
 from .paths import ROOT
 BINARIES = {
+    'pir-query-server': ['pir-query-server'],
     'pir-publisher': ['pir-publisher'],
     'wallet-pir-ops': [],
     # pir-apm is the Enhance/Status/Transparent dashboard and alerting sidecar;
@@ -23,7 +24,6 @@ BINARIES = {
     'enhance-pir-native': ['pir-publisher', 'pir-query-server', 'enhance-pir-cli', 'enhance-pir-load-test'],
     # GPU hosts run this query server, not the publisher. The clients are diagnostics.
     'enhance-pir-native-cuda': ['pir-query-server', 'enhance-pir-cli', 'enhance-pir-load-test'],
-    'transparent-filter': ['pir-publisher'],
     # Transparent history and txid display processes run pir-query-server
     # (features `transparent-history,transparent-detail`) with `--config`; the
     # admin tools come from transparent-tools.
@@ -42,6 +42,10 @@ BINARIES = {
     'receiver-pir': ['receiver-directory', 'receiver-probe'],
 }
 FILES = {
+    'pir-query-server': ['tools/deploy/query-server/pir-query-server.service',
+                         'tools/deploy/query-server/query-server.example.json',
+                         'tools/deploy/query-server/query-node.example.json',
+                         'tools/deploy/query-server/services.toml'],
     'pir-publisher': ['tools/deploy/publisher/pir-publisher.service',
                       'tools/deploy/publisher/publisher.example.json',
                       'tools/deploy/publisher/services.toml'],
@@ -53,8 +57,6 @@ FILES = {
         'tools/pir-e2e-tests/tests/fixtures/ironwood-canonical-record-0.hex',
         'tools/pir-e2e-tests/tests/fixtures/ironwood-canonical-record-1.hex',
         'tools/enhance/deploy/workers.example.json'],
-    'transparent-filter': ['tools/transparent/deploy/transparent-filter-server.service',
-                           'tools/transparent/deploy/transparent-filters.example.json'],
     'transparent-shard': [],
     'transparent-publisher': [],
     'transparent-txid-display': ['tools/txid/deploy/transparent-txid-display-worker.service.in',
@@ -75,7 +77,7 @@ FILES['enhance-pir-native-cuda'] = FILES['enhance-pir-native'] + [
 ]
 # The operations package needs no compiled binary: full CI assembles and tests
 # it in its own job, so publishing it never waits on Rust compilation.
-ON_REQUEST = ('pir-publisher', 'enhance-pir-native', 'enhance-pir-native-cuda', 'status-pir', 'wallet-pir-ops')
+ON_REQUEST = ('pir-publisher', 'pir-query-server', 'enhance-pir-native', 'enhance-pir-native-cuda', 'status-pir', 'wallet-pir-ops')
 # Build-time protocol identity recorded in candidate.json and re-checked on extract.
 PROTOCOLS = {
     'pir-publisher': 'wallet-pir-publisher-v1',
