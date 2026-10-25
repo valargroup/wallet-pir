@@ -55,8 +55,11 @@ class FakeFleet(Executor):
         self.identity_override = {}   # (host, unit) -> binary_sha256 the health reports
         self.health_shapes = {}       # (host, unit) -> f(ready, exe sha256) giving its own health body
         self.self_check_fails = set()
-        # Executable digest to its `--contract-info` report; absent digests refuse the flag.
+        # Executable digest to its `--contract-info` report, or None for a
+        # release older than the flag. Others report contract 1.0.0.
         self.contract_reports = {}
+        # Publisher origin to its discovery answer; others advertise 1.0.0.
+        self.discovery = {}
         self.exact_result = (0, 'exact answers ok')  # or an exception the transport raises
         self.endpoints = {}
         self.held = set()
@@ -248,7 +251,17 @@ class FakeFleet(Executor):
         else:
             raise AssertionError('unexpected systemctl %s' % (args,))
 
+    @staticmethod
+    def default_contract(path):
+        return json.dumps({'schema': 'wallet-pir-contract-info/1', 'executable': path.rsplit('/', 1)[-1],
+                           'contract_version': '1.0.0', 'contract_major': 1,
+                           'products': ['enhance', 'status', 'transparent_history', 'transaction_details', 'receiver'],
+                           'backends': ['cuda']})
+
     def http_get(self, host, url, timeout=5):
+        if url.endswith('/.well-known/pir-service-discovery') and (host, url) not in self.endpoints:
+            origin = url[:-len('/.well-known/pir-service-discovery')]
+            return self.discovery.get(origin, (200, json.dumps({'service': 'pir-publisher', 'version': '1.0.0'})))
         unit = self.endpoints[(host, url)]
         state = self.host(host).units[unit]
         if state['active'] != 'active':
@@ -289,7 +302,7 @@ class FakeFleet(Executor):
             return (1, 'illegal instruction') if sha256(data) in self.self_check_fails else (0, 'Usage: ...')
         if data is not None and argv[1:] == ['--contract-info']:
             # Releases built before the flag existed refuse it, as clap does.
-            report = self.contract_reports.get(sha256(data))
+            report = self.contract_reports.get(sha256(data), self.default_contract(argv[0]))
             return (2, "error: unexpected argument '--contract-info' found") if report is None else (0, report)
         if data is not None and self.product_check is not None:
             return self.product_check(host, list(argv))

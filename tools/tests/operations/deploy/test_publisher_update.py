@@ -199,6 +199,26 @@ class PublisherTests(PublisherFixture, unittest.TestCase):
         self.target.rollback()
         self.assertEqual(self.ex.probe_unit('coordinator', publisher.UNIT)['exe_sha256'], self.old_publisher)
 
+    def test_contract_major_change_or_unknown_never_stops_the_fleet(self):
+        new = self.request['release']['binary_sha256']
+        major_two = json.dumps({'schema': 'wallet-pir-contract-info/1', 'executable': 'pir-publisher',
+                                'contract_version': '2.0.0', 'contract_major': 2,
+                                'products': [], 'backends': []})
+        cases = ((major_two, {}, 'differs from the running major 1; use fleet-release'),
+                 (None, {}, 'reports no contract identity'),
+                 (self.ex.default_contract('pir-publisher'),
+                  {'http://127.0.0.1:18080': (200, '{"service": "pir-publisher", "version": "0.9.0"}')},
+                  'running publisher contract major is unknown'))
+        for report, discovery, refusal in cases:
+            with self.subTest(refusal=refusal):
+                self.ex.contract_reports[new] = report
+                self.ex.discovery = discovery
+                with self.assertRaisesRegex(DeployError, refusal):
+                    self.deploy()
+                self.assertFalse(any(a[0] == 'stop' for a in self.ex.effects))
+                self.target.rollback()
+                self.assertEqual(self.ex.probe_unit('coordinator', publisher.UNIT)['exe_sha256'], self.old_publisher)
+
     def test_lost_stop_reply_restores_the_unified_owner(self):
         self.ex.crash_on = ('stop', publisher.UNIT)
         with self.assertRaises(RemoteError):

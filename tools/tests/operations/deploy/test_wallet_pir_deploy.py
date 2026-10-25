@@ -361,6 +361,18 @@ class DeployTests(Fleet):
         self.assertIn(('worker-01', [deployer.release_binary(NEW_SHA), 'check-backend',
                                    '--matvec-backend', 'cuda', '--cuda-device', '0']), self.fake.runs)
 
+    def test_cuda_worker_cannot_bypass_the_publisher_contract_guard(self):
+        deployer = self.enhance_fleet()
+        deployer.targets = [dataclasses.replace(deployer.targets[0],
+                            artifact_kind='enhance-pir-native-cuda')]
+        self.assertTrue(deployer.targets[0].settings)
+        self.fake.discovery['https://publisher.example:443'] = (
+            200, json.dumps({'service': 'pir-publisher', 'version': '2.1.0'}))
+        with self.assertRaisesRegex(DeployError, 'worker@worker-01: candidate contract major 1, publisher '
+                                                 'https://publisher.example:443 advertises 2; use fleet-release'):
+            deployer.deploy(NEW_SHA, self.binary)
+        self.assertEqual(self.restarts(), [])
+
     def test_cuda_probe_preserves_only_the_units_explicit_library_path(self):
         deployer = self.enhance_fleet()
         deployer.targets = [dataclasses.replace(deployer.targets[0],
@@ -567,13 +579,31 @@ class DeployTests(Fleet):
         self.assertIsNone(elapsed['clocks']['source_to_accepted'])
         self.assertTrue(elapsed['targets'])
 
-    def test_a_release_without_contract_info_stays_deployable_as_unknown(self):
+    def test_a_consumer_release_without_contract_info_is_refused_as_unknown(self):
         deployer = self.enhance_fleet()
-        deployer.deploy(NEW_SHA, self.binary, retire_historical=True)
-        staged = [event for event in Journal.load(self.state, 'enhance').data['events']
-                  if event['message'] == 'staged']
-        self.assertTrue(staged)
-        self.assertTrue(all(event['contract'] == 'unknown' for event in staged))
+        self.fake.contract_reports[NEW_SHA] = None
+        with self.assertRaisesRegex(DeployError, 'compatibility with https://publisher.example:443 is unknown'):
+            deployer.deploy(NEW_SHA, self.binary, retire_historical=True)
+        self.assertEqual(self.restarts(), [])
+        journal = Journal.load(self.state, 'enhance')
+        self.assertEqual(journal.status, 'failed')
+        self.assertTrue(all(event['contract'] == 'unknown' for event in journal.data['events']
+                            if event['message'] == 'staged'))
+
+    def test_a_contract_major_change_is_refused_outside_fleet_release(self):
+        for publisher_answer, report in (
+                ((200, json.dumps({'service': 'pir-publisher', 'version': '2.0.0'})), self.report()),
+                ((200, json.dumps({'service': 'pir-publisher', 'version': '1.0.0'})),
+                 self.report(contract_version='2.0.0', contract_major=2)),
+                ((503, 'starting'), self.report())):
+            with self.subTest(publisher=publisher_answer, report=report):
+                self.setUp()
+                deployer = self.enhance_fleet()
+                self.fake.contract_reports[NEW_SHA] = report
+                self.fake.discovery['https://publisher.example:443'] = publisher_answer
+                with self.assertRaisesRegex(DeployError, 'use fleet-release'):
+                    deployer.deploy(NEW_SHA, self.binary, retire_historical=True)
+                self.assertEqual(self.restarts(), [])
 
     def test_malformed_or_foreign_contract_info_refuses_before_any_restart(self):
         for report in (self.report(executable='pir-publisher'), self.report(contract_major=2), 'not json'):
