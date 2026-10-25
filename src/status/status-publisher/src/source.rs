@@ -6,10 +6,11 @@ use super::{
 use crate::zakura::{ZakuraClient, ZakuraError};
 use status_shared::protocol::{Error as StatusError, Hash};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs::{self, File, OpenOptions},
     io::Read,
     path::{Path, PathBuf},
+    sync::Arc,
     time::Instant,
 };
 
@@ -61,7 +62,7 @@ const CHECKPOINT_MAGIC: &[u8; 8] = b"STSOBS01";
 const MAX_CHECKPOINT_TXIDS: usize = 4_000_000;
 
 pub struct Observation {
-    pub snapshot: Snapshot,
+    pub snapshot: Arc<Snapshot>,
     pub observed_ms: u64,
     pub collect_ms: f64,
     pub blocks: usize,
@@ -80,6 +81,16 @@ pub struct RollingWindow {
     forks: Vec<ForkRecord>,
     dir: Option<PathBuf>,
     _lock: Option<File>,
+    snapshot: Option<CachedSnapshot>,
+}
+
+/// Only immutable index bytes are reused. Every observation still reads the
+/// complete mempool and checks the canonical anchor before issuing a new time.
+struct CachedSnapshot {
+    blocks: Vec<Block>,
+    forks: Vec<ForkRecord>,
+    mempool: BTreeSet<Hash>,
+    snapshot: Arc<Snapshot>,
 }
 
 impl RollingWindow {
@@ -98,6 +109,7 @@ impl RollingWindow {
             forks: Vec::new(),
             dir: None,
             _lock: None,
+            snapshot: None,
         })
     }
 
@@ -370,15 +382,39 @@ impl RollingWindow {
         }
         let observed_ms = now_ms();
         let collect_ms = began.elapsed().as_secs_f64() * 1000.;
+        let mempool_set: BTreeSet<_> = mempool.iter().copied().collect();
+        if let Some(cached) = self.snapshot.as_ref().filter(|cached| {
+            cached.snapshot.network == genesis
+                && cached.blocks == self.blocks
+                && cached.forks == self.forks
+                && cached.mempool == mempool_set
+        }) {
+            return Ok(Observation {
+                snapshot: cached.snapshot.clone(),
+                observed_ms,
+                collect_ms,
+                blocks: self.blocks.len(),
+                mempool: mempool.len(),
+                retained_forks: self.forks.len(),
+            });
+        }
         let mut blocks = self.blocks.clone();
         let mut forks = self.forks.clone();
-        let snapshot = Snapshot::build(genesis, self.salt, &blocks, &mempool, &forks)?;
+        let snapshot = Arc::new(Snapshot::build(
+            genesis, self.salt, &blocks, &mempool, &forks,
+        )?);
         blocks.retain(|block| block.height >= snapshot.start);
         forks.retain(|fork| fork.height >= snapshot.start);
         let retained_forks = forks.len();
         self.persist(genesis, &blocks, &forks)?;
         self.blocks = blocks;
         self.forks = forks;
+        self.snapshot = Some(CachedSnapshot {
+            blocks: self.blocks.clone(),
+            forks: self.forks.clone(),
+            mempool: mempool_set,
+            snapshot: snapshot.clone(),
+        });
         Ok(Observation {
             snapshot,
             observed_ms,

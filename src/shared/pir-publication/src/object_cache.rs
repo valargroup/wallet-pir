@@ -4,14 +4,16 @@
 //! digest only after the caller verified the whole transfer, and are collected
 //! when no authoritative reference retains them. A cached file confers no
 //! authority; the caller still observes and checks the publication.
-use crate::{is_object_digest, ObjectReference};
-use sha2::{Digest, Sha256};
+use crate::{
+    is_object_digest, open_object_file, verify_object_file, FileIdentity, ObjectReference,
+};
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs, io,
     io::Read,
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
 };
 
 const PARTIAL_PREFIX: &str = ".download-";
@@ -22,6 +24,57 @@ const PARTIAL_PREFIX: &str = ".download-";
 #[derive(Clone)]
 pub struct ObjectCache {
     directory: PathBuf,
+    verified: Arc<Mutex<BTreeMap<String, (ObjectReference, FileIdentity)>>>,
+}
+
+/// An opened object whose exact inode and bytes passed integrity verification.
+/// This proof is local to this process and grants no publication authority.
+pub struct VerifiedObjectFile {
+    path: PathBuf,
+    file: fs::File,
+    identity: FileIdentity,
+    #[cfg(test)]
+    reused: bool,
+}
+impl VerifiedObjectFile {
+    /// Verify a physical file without reusing evidence from another owner.
+    pub fn open(path: PathBuf, object: &ObjectReference) -> io::Result<Self> {
+        let mut file = open_object_file(&path, Some(object.bytes))?;
+        let verified = verify_object_file(&path, &mut file, Some(object), None, &|| false)?;
+        Ok(Self {
+            path,
+            file,
+            identity: verified.identity,
+            #[cfg(test)]
+            reused: false,
+        })
+    }
+    pub fn file(&self) -> &fs::File {
+        &self.file
+    }
+    /// Ensure the open file and its name still select the verified inode.
+    pub fn check(&self) -> io::Result<()> {
+        self.identity
+            .check(&self.path, &self.file)
+            .map_err(io::Error::from)
+    }
+    /// Read the verified file from the beginning, rejecting concurrent changes.
+    pub fn read_bytes(&self) -> io::Result<Vec<u8>> {
+        use std::io::Seek;
+        self.check()?;
+        let mut reader = &self.file;
+        reader.rewind()?;
+        let size = self.file.metadata()?.len();
+        let mut bytes = Vec::new();
+        reader
+            .take(size.saturating_add(1))
+            .read_to_end(&mut bytes)?;
+        self.check()?;
+        if bytes.len() as u64 != size {
+            return Err(io::Error::other("verified object length changed"));
+        }
+        Ok(bytes)
+    }
 }
 
 impl ObjectCache {
@@ -43,7 +96,10 @@ impl ObjectCache {
                 fs::remove_file(entry.path())?;
             }
         }
-        Ok(Self { directory })
+        Ok(Self {
+            directory,
+            verified: Arc::new(Mutex::new(BTreeMap::new())),
+        })
     }
     pub fn directory(&self) -> &Path {
         &self.directory
@@ -60,33 +116,48 @@ impl ObjectCache {
         }
         Ok(self.directory.join(&object.sha256))
     }
-    /// The promoted file for `object` after re-verifying its full length and
-    /// digest, or `None` when it is absent. A present file with different bytes
-    /// is an error: an immutable promoted object was altered.
+    /// The promoted file for `object` after checking its integrity, or `None`
+    /// when absent. Settled, unchanged files reuse process-local evidence; a
+    /// changed file is hashed again and altered bytes are an error.
     pub fn verified_cached(&self, object: &ObjectReference) -> io::Result<Option<PathBuf>> {
+        Ok(self.open_verified(object)?.map(|file| file.path))
+    }
+    /// Open and verify an object, reusing only settled integrity evidence for
+    /// the same reference and unchanged physical file. Clones share evidence;
+    /// reopening the cache after a restart deliberately starts without it.
+    pub fn open_verified(
+        &self,
+        object: &ObjectReference,
+    ) -> io::Result<Option<VerifiedObjectFile>> {
         let path = self.object_path(object)?;
-        let file = match fs::File::open(&path) {
+        let mut file = match open_object_file(&path, Some(object.bytes)) {
             Ok(file) => file,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(error),
-        };
-        if file.metadata()?.len() != object.bytes {
-            return Err(io::Error::other("cached object length differs"));
-        }
-        let mut reader = io::BufReader::new(file);
-        let mut buffer = [0u8; 65536];
-        let mut hash = Sha256::new();
-        loop {
-            let read = reader.read(&mut buffer)?;
-            if read == 0 {
-                break;
+            Err(crate::ObjectFileError::Io(error)) if error.kind() == io::ErrorKind::NotFound => {
+                return Ok(None)
             }
-            hash.update(&buffer[..read]);
+            Err(error) => return Err(error.into()),
+        };
+        let prior = self.verified.lock().unwrap().get(&object.sha256).cloned();
+        let verified = verify_object_file(
+            &path,
+            &mut file,
+            Some(object),
+            prior.as_ref().map(|(r, i)| (r, *i)),
+            &|| false,
+        )?;
+        let mut evidence = self.verified.lock().unwrap();
+        if verified.reusable {
+            evidence.insert(object.sha256.clone(), (object.clone(), verified.identity));
+        } else {
+            evidence.remove(&object.sha256);
         }
-        if hex::encode(hash.finalize()) != object.sha256 {
-            return Err(io::Error::other("cached object digest differs"));
-        }
-        Ok(Some(path))
+        Ok(Some(VerifiedObjectFile {
+            path,
+            file,
+            identity: verified.identity,
+            #[cfg(test)]
+            reused: verified.reused,
+        }))
     }
     /// Start a new partial file for `object`. Dropping the partial before
     /// [`PartialObject::promote`] removes it.
@@ -116,6 +187,7 @@ impl ObjectCache {
             if is_object_digest(&name) && entry.file_type()?.is_file() && !retained.contains(&name)
             {
                 fs::remove_file(entry.path())?;
+                self.verified.lock().unwrap().remove(&name);
             }
         }
         Ok(())
@@ -164,6 +236,43 @@ impl Drop for PartialObject {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn settled_objects_reuse_integrity_across_clones_but_not_restarts_or_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = ObjectCache::open(dir.path().to_path_buf()).unwrap();
+        let object = ObjectReference::for_bytes(b"verified");
+        let path = cache.object_path(&object).unwrap();
+        fs::write(&path, b"verified").unwrap();
+        // The shared verifier deliberately distrusts the current filesystem
+        // timestamp tick; allow this file to settle before recording evidence.
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        assert!(!cache.open_verified(&object).unwrap().unwrap().reused);
+        let opened = cache.clone().open_verified(&object).unwrap().unwrap();
+        assert!(opened.reused);
+        assert_eq!(opened.read_bytes().unwrap(), b"verified");
+        let restarted = ObjectCache::open(dir.path().to_path_buf()).unwrap();
+        assert!(!restarted.open_verified(&object).unwrap().unwrap().reused);
+
+        // Equal length and the same digest-shaped name cannot hide corruption.
+        fs::write(&path, b"verifieD").unwrap();
+        assert!(cache.open_verified(&object).is_err());
+        assert!(opened.read_bytes().is_err());
+        fs::remove_file(&path).unwrap();
+        fs::write(&path, b"verified").unwrap();
+        assert!(!cache.open_verified(&object).unwrap().unwrap().reused);
+        assert!(opened.check().is_err());
+        assert!(cache
+            .open_verified(&ObjectReference {
+                bytes: object.bytes + 1,
+                ..object.clone()
+            })
+            .is_err());
+        let target = dir.path().join("other");
+        fs::rename(&path, &target).unwrap();
+        std::os::unix::fs::symlink(&target, &path).unwrap();
+        assert!(cache.open_verified(&object).is_err());
+    }
 
     #[test]
     fn opening_a_symlink_does_not_clean_another_directory() {

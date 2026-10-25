@@ -209,7 +209,11 @@ keeps `state_dir`, `salt_hex`, `window_blocks` and `private_listen`; worker/rout
 control origins are removed. It never waits for consumer acknowledgments.
 
 Only a verified source observation supplies a new timestamp. Immutable artifacts
-are reused across metadata-only publications. Query servers independently fetch,
+and prepared allocations are reused across unchanged observations. Identical
+observations keep the current publication until it is five seconds old, then
+refresh it from a newly checked observation; changed data, anchors and recovery
+publish immediately. This avoids replacing authority on every source poll while
+consumers finish their live checks. Query servers independently fetch,
 verify, load and activate material through `pir-sync-manager`; Status no longer
 uses publisher heartbeats. The twenty-second wallet observation-age limit is
 unchanged. See [Status distribution](status/status_distributed.md).

@@ -253,6 +253,32 @@ impl Generation {
     ) -> Result<(Self, Preparation), Error> {
         let (mut worker, mut stats) =
             Self::prepare_worker(snapshot, generation, recovery_epoch, observed_ms, previous)?;
+        // An unchanged database has unchanged combined hints and packing. Unit
+        // reuse alone used to miss this and rebuilt and hashed the large hint
+        // buffer before discovering that every packing block was reusable.
+        if let Some(previous) = previous.filter(|old| {
+            old.manifest.network == snapshot.network
+                && old.manifest.salt == snapshot.salt
+                && worker.units.len() == ROWS / profile().rlwe().d
+                && old.units.len() == worker.units.len()
+                && old
+                    .units
+                    .iter()
+                    .zip(&worker.units)
+                    .all(|(a, b)| Arc::ptr_eq(a, b))
+                && !old.public.is_empty()
+                && !old.packing_digests.is_empty()
+        }) {
+            worker.manifest.public_digest = previous.manifest.public_digest;
+            worker.public = previous.public.clone();
+            worker.packing = previous.packing.clone();
+            #[cfg(not(feature = "native-reinspiring"))]
+            {
+                worker.mapped_packing = previous.mapped_packing.clone();
+            }
+            worker.packing_digests = previous.packing_digests.clone();
+            return Ok((worker, stats));
+        }
         let started = Instant::now();
         let router = Self::prepare_router_with_previous(
             worker.manifest.clone(),
@@ -438,18 +464,18 @@ impl Generation {
         let mut reused = 0;
         let mut incremental_units = 0;
         for (i, bytes) in snapshot.rows.chunks_exact(d * ROW_BYTES).enumerate() {
-            let digest: Hash = Sha256::digest(bytes).into();
             let old = previous
                 .filter(|prev| {
                     prev.manifest.network == snapshot.network && prev.manifest.salt == snapshot.salt
                 })
                 .and_then(|prev| prev.units.get(i))
-                .filter(|u| u.bytes_digest == digest && !u.hint.is_empty());
+                .filter(|u| u.rows == bytes && !u.hint.is_empty());
             if let Some(old) = old {
                 units.push(old.clone());
                 reused += 1;
                 continue;
             }
+            let digest: Hash = Sha256::digest(bytes).into();
             // Snapshot rows are already verified, row-major little-endian u16.
             // The shared loader enforces full consumption without keeping a
             // second database copy and preserves a kernel-construction error.

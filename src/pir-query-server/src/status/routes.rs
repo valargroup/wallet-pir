@@ -116,9 +116,10 @@ async fn provider_ready(
     controller.check(&generation)?;
     Ok(Json(true))
 }
-/// The single colocated router pins its old and incoming views until its local
-/// activation is durable. These references provide backpressure through the
-/// core'service existing retention bound; they never renew source observation age.
+/// The single colocated router keeps its acknowledged serving view and its
+/// current incoming view. A new serial preparation supersedes an abandoned
+/// incoming hold, without releasing the acknowledged view. These references
+/// preserve the existing retention bound and never renew observation age.
 pub(super) async fn provider_pin(
     State(service): State<Service>,
     Path(id): Path<String>,
@@ -143,15 +144,28 @@ pub(super) async fn provider_pin(
     state
         .router_holds
         .retain(|generation| generation.manifest().fresh(now_ms()).is_ok());
+    let committed = state.router_committed;
+    if committed == Some(id) {
+        // A delayed retry for the serving view cannot cancel its successor.
+        return Ok(Json(true));
+    }
+    if state
+        .router_holds
+        .iter()
+        .any(|held| held.manifest().generation > generation.manifest().generation)
+    {
+        return Err(StatusCode::CONFLICT);
+    }
+    state.router_holds.retain(|generation| {
+        let held = generation.manifest().id();
+        Some(held) == committed || held == id
+    });
     if state
         .router_holds
         .iter()
         .any(|generation| generation.manifest().id() == id)
     {
         return Ok(Json(true));
-    }
-    if state.router_holds.len() >= 2 {
-        return Err(StatusCode::CONFLICT);
     }
     state.router_holds.push(generation);
     Ok(Json(true))
@@ -184,9 +198,13 @@ pub(super) async fn provider_commit(
     {
         return Err(StatusCode::CONFLICT);
     }
+    if state.router_committed == Some(id) {
+        return Ok(Json(true));
+    }
     state
         .router_holds
         .retain(|generation| generation.manifest().id() == id);
+    state.router_committed = Some(id);
     Ok(Json(true))
 }
 

@@ -27,8 +27,13 @@ Worker and router stay separate processes on the existing host. Before announcin
 a generation, the router selects the worker's reported inventory, verifies it
 against the publisher and confirms that the worker can evaluate the exact wallet
 manifest. A private pin/commit handover holds the router's previous and incoming
-views while it persists and switches them. Worker updates defer through the
-existing retention backpressure until that handover completes; expired views
+views from before bulk transfer through durable activation, so worker refreshes
+cannot evict the incoming view during loading. Each new serial attempt replaces
+an abandoned incoming reservation while retaining the last acknowledged serving
+view; before the first acknowledgment only the current incoming view is held.
+Late requests for older views cannot replace a newer incoming reservation, and
+repeated acknowledgments preserve the next preparation. Worker updates defer
+through the existing retention backpressure until that handover completes; expired views
 remain unusable and their holds are released. A lost acknowledgment is retried on
 the normal shared polling schedule. No publisher heartbeat or new lease is added.
 Independent polling cannot combine material from different generations.
@@ -93,7 +98,9 @@ major version stops the query-server host; ordinary failures during polling use
 the shared retry schedule. Discovery never grants serving authority. Status
 retains its own freshness and worker/router handover checks as lifecycle hooks.
 The shared object cache enforces exact lengths and hashes and owns durable file
-promotion; loading verifies objects again before activation.
+promotion. Fetch and load share process-local verification evidence for the same
+settled inode, length and digest. Changes and restarts require hashing again;
+cached integrity evidence never supplies serving authority.
 
 Each state directory has one exclusive owner. Downloads use temporary files,
 verify their full length/digest, fsync, then publish read-only immutable inodes.
@@ -119,7 +126,9 @@ negative authority, expiry and changed worker pins prevent reuse. This avoids
 repeated loading while the publisher changes, without waiting for it to stop.
 After loading, a router can adopt fresher metadata already served by its worker
 when it names the same verified material; it still pins that exact worker view
-before activation. A worker sampled ahead of the router's publisher envelope
+before using it. If the worker has advanced again, its original pinned view can
+still finish under fresh authority and its original observation deadline.
+A worker sampled ahead of the router's publisher envelope
 causes another normal poll, rather than failure backoff.
 Retention blocks a third prepared material while an older one is pinned. Views
 that share every prepared allocation with the active view count as one material;

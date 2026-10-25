@@ -2,8 +2,9 @@
 use super::{require, AnyError};
 use crate::zakura::ZakuraClient;
 use serde_json::json;
+use status_shared::index::Snapshot;
 use status_shared::protocol::*;
-use std::{path::PathBuf, time::Duration};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 pub async fn observe_live(
     rpc_url: String,
@@ -26,7 +27,7 @@ pub async fn observe_live(
         Some(path) => crate::source::RollingWindow::open(path, salt, window_blocks)?,
         None => crate::source::RollingWindow::new(salt, window_blocks)?,
     };
-    let mut previous = None;
+    let mut previous: Option<Arc<Snapshot>> = None;
     for sample in 0..samples {
         if sample > 0 {
             tokio::time::sleep(Duration::from_millis(interval_ms)).await;

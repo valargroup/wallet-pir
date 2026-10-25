@@ -45,7 +45,7 @@ async fn wait_manifest(
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn shared_status_lifecycle_collects_publishes_and_advances_over_real_roles() {
     let _ = tracing_subscriber::fmt()
-        .with_env_filter("warn")
+        .with_env_filter(std::env::var("RUST_LOG").unwrap_or_else(|_| "warn".into()))
         .with_test_writer()
         .try_init();
     let root = tempfile::tempdir().unwrap();
