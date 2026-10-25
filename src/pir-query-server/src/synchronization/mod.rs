@@ -6,7 +6,7 @@
 //! changes. [`publication_lifecycle`] owns envelope succession, durable floors,
 //! object transfer and commit ordering; products supply material hooks. A
 //! successful poll confers no permission to serve.
-#[cfg(feature = "status")]
+#[cfg(any(feature = "status", feature = "receiver"))]
 pub mod publication_lifecycle;
 
 use std::{

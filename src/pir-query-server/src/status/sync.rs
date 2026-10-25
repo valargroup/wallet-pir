@@ -515,9 +515,12 @@ impl PublicationAdapter for StatusPublication {
         ))
     }
 
-    fn can_resume(&self, loaded: &StatusLoaded, envelope: &Current) -> bool {
-        let valid = self.revalidate(envelope, loaded).is_ok();
-        if !valid && loaded.inventory.manifest.fresh(now_ms()).is_err() {
+    fn resumable_view(&self, loaded: &StatusLoaded, envelope: &Current) -> Option<ViewIdentity> {
+        let valid = self
+            .revalidate(envelope, loaded)
+            .ok()
+            .map(|(identity, _)| identity);
+        if valid.is_none() && loaded.inventory.manifest.fresh(now_ms()).is_err() {
             tracing::debug!(role = ?self.service.role, reason = "candidate_expired", "Status prepared candidate discarded");
         }
         valid

@@ -387,3 +387,21 @@ seeds, framing and row placement. Run those tests in that repository with its
 ## Evidence
 
 Pre-deployment mainnet runs are indexed in [the evidence README](../../evidence/receiver/README.md).
+
+### HTTPS query host
+
+Build `pir-query-server` with `receiver` to consume the Receiver provider over
+HTTPS, either alone or alongside the other product features. Enable a `receiver`
+section with `publisher`, optional `publisher_ca`, absolute `state_dir`, expected
+`genesis` bytes and `activation_height`; set the root `public_listen` as usual.
+`poll_seconds`, `bootstrap_max_bytes`, `table_memory_mib` and `retention_seconds`
+control synchronization, download size, resident tables and retained inventories.
+The default table budget is 4096 MiB and retention is 600 seconds. Node and payout
+audit credentials belong only to the publisher.
+
+Only wallet operations under `/receiver/v1/` and `/v1/receiver/` join the public
+listener. Aggregate readiness remains on the root management listener. Cached
+objects and saved active metadata never authorize serving after a restart: the
+host must obtain fresh publisher authority first. A transient publisher outage
+preserves already approved answers; a withdrawal, recovery fence or negative
+canonical answer invalidates those answers, including work already in flight.

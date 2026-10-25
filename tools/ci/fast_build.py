@@ -480,6 +480,7 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
     # not enable them, and ci_smoke only names history.
     if 'pir-query-server' in stable['names']:
         stable['features'].update(TRANSPARENT_QUERY_ROLES)
+        stable['features'].add('pir-query-server/receiver')
     commands = []
     command = _compile_command(stable, options)
     if command:

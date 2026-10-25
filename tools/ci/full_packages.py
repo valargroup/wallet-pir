@@ -72,7 +72,7 @@ def commands(group, groups, lint=False, compile_only=False):
             'pir-publisher/receiver', 'pir-publisher/native-reinspiring',
             'pir-publisher/status-tests', 'pir-e2e-tests/enhance-tests',
             'pir-e2e-tests/native-reinspiring',
-            'pir-query-server/enhance', 'pir-query-server/status',
+            'pir-query-server/enhance', 'pir-query-server/status', 'pir-query-server/receiver',
             'pir-query-server/transparent-history', 'pir-query-server/transparent-detail',
             'pir-query-server/native-reinspiring'],
         'shared': ['pir-control/admission'],

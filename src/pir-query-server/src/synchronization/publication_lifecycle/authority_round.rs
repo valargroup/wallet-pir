@@ -21,6 +21,17 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
         envelope: &Envelope<A>,
         subjects: Vec<(ViewIdentity, A::AuthoritySubject)>,
     ) -> Result<(), Error> {
+        for subjects in self.adapter.authority_batches(subjects) {
+            self.check_authority_batch(envelope, subjects).await?;
+        }
+        Ok(())
+    }
+
+    async fn check_authority_batch(
+        &mut self,
+        envelope: &Envelope<A>,
+        subjects: Vec<(ViewIdentity, A::AuthoritySubject)>,
+    ) -> Result<(), Error> {
         let authority = envelope
             .authority()
             .ok_or(PublicationLifecycleError::WithdrawnBeforeCommit)?;

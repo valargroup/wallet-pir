@@ -108,6 +108,14 @@ pub trait PublicationAdapter: Send {
         &mut self,
         envelope: &Envelope<Self>,
     ) -> impl Future<Output = Vec<(ViewIdentity, Self::AuthoritySubject)>> + Send;
+    /// Split authority proofs into independently bounded requests. Each returned
+    /// proof keeps its view identity; a negative chunk invalidates that view.
+    fn authority_batches(
+        &self,
+        subjects: Vec<(ViewIdentity, Self::AuthoritySubject)>,
+    ) -> Vec<Vec<(ViewIdentity, Self::AuthoritySubject)>> {
+        vec![subjects]
+    }
     /// Choose what to load under `envelope`, fetching metadata through
     /// `objects`. The engine refuses a plan whose identity the floor invalidated.
     fn plan(
@@ -143,8 +151,14 @@ pub trait PublicationAdapter: Send {
     /// grants no serving authority: every retry observes the floor and repeats
     /// revalidation, the live authority check and peer reservation. Products
     /// that require exactly the latest material keep the default.
-    fn can_resume(&self, _loaded: &Self::Loaded, _envelope: &Envelope<Self>) -> bool {
-        false
+    /// The identity of reusable prepared work, before it has been rebound to
+    /// the latest metadata. This never authorizes installation or serving.
+    fn resumable_view(
+        &self,
+        _loaded: &Self::Loaded,
+        _envelope: &Envelope<Self>,
+    ) -> Option<ViewIdentity> {
+        None
     }
     /// Report expected coordination without turning it into failure backoff.
     fn deferred(&mut self, _reason: DeferralReason) -> impl Future<Output = ()> + Send {
@@ -320,6 +334,19 @@ pub struct PublicationLifecycle<A: PublicationAdapter> {
 }
 
 impl<A: PublicationAdapter> PublicationLifecycle<A> {
+    #[cfg(all(test, feature = "receiver"))]
+    pub(crate) async fn check_serving_proofs(
+        &mut self,
+        subjects: Vec<(ViewIdentity, A::AuthoritySubject)>,
+    ) -> Result<(), Error> {
+        let envelope = self.observe_envelope().await?;
+        self.check_authority(&envelope, subjects).await
+    }
+    #[cfg(all(test, feature = "receiver"))]
+    pub(crate) fn view_was_invalidated(&self, identity: ViewIdentity) -> bool {
+        self.floor.is_invalidated(&identity)
+    }
+
     /// `floor` was opened for `source`'s origin, namespace and chain; `cache`
     /// is exclusively owned by this role.
     pub fn new(
@@ -466,11 +493,9 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
             .as_ref()
             .zip(self.floor.envelope())
             .is_some_and(|(loaded, envelope)| {
-                self.adapter.can_resume(loaded, envelope)
-                    && self
-                        .adapter
-                        .revalidate(envelope, loaded)
-                        .is_ok_and(|(identity, _)| !self.floor.is_invalidated(&identity))
+                self.adapter
+                    .resumable_view(loaded, envelope)
+                    .is_some_and(|identity| !self.floor.is_invalidated(&identity))
             });
         if !keep {
             self.pending_loaded = None;

@@ -34,6 +34,8 @@ pub struct Config {
     /// external HTTPS edge. Required when an enabled role answers wallets.
     #[serde(default)]
     pub public_listen: Option<SocketAddr>,
+    #[cfg(feature = "receiver")]
+    pub receiver: Option<Product<crate::receiver::Config>>,
     #[cfg(feature = "enhance")]
     pub enhance: Option<Product<crate::enhance::service::ServingRole>>,
     #[cfg(feature = "status")]
@@ -110,7 +112,8 @@ impl Layout {
         feature = "enhance",
         feature = "status",
         feature = "transparent-history",
-        feature = "transparent-detail"
+        feature = "transparent-detail",
+        feature = "receiver"
     ))]
     fn wallets(
         &mut self,
@@ -133,7 +136,8 @@ impl Layout {
             feature = "enhance",
             feature = "status",
             feature = "transparent-history",
-            feature = "transparent-detail"
+            feature = "transparent-detail",
+            feature = "receiver"
         )),
         allow(dead_code)
     )]
@@ -155,7 +159,8 @@ impl Layout {
         feature = "enhance",
         feature = "status",
         feature = "transparent-history",
-        feature = "transparent-detail"
+        feature = "transparent-detail",
+        feature = "receiver"
     ))]
     fn product(&mut self, name: &'static str) {
         self.products.push(name);
@@ -167,7 +172,8 @@ impl Layout {
         feature = "enhance",
         feature = "status",
         feature = "transparent-history",
-        feature = "transparent-detail"
+        feature = "transparent-detail",
+        feature = "receiver"
     )),
     allow(dead_code)
 )]
@@ -197,6 +203,12 @@ impl Config {
     pub fn verification(&self) -> Result<Verification<'_>> {
         #[allow(unused_mut)]
         let mut selected = Vec::new();
+        #[cfg(feature = "receiver")]
+        if self.receiver.as_ref().is_some_and(|p| p.enabled) {
+            return Err(
+                "--verify-only accepts only a Transparent section; disable receiver".into(),
+            );
+        }
         #[cfg(feature = "enhance")]
         if self.enhance.as_ref().is_some_and(|p| p.enabled) {
             return Err("--verify-only accepts only a Transparent section; disable enhance".into());
@@ -230,6 +242,13 @@ impl Config {
         layout.listener("management", self.management_listen)?;
         if let Some(public) = self.public_listen {
             layout.listener("public", public)?;
+        }
+        #[cfg(feature = "receiver")]
+        if let Some(role) = active(&self.receiver)? {
+            role.validate()?;
+            layout.wallets("receiver", self.public_listen, true)?;
+            layout.root("receiver", &role.state_dir)?;
+            layout.product("receiver");
         }
         #[cfg(feature = "enhance")]
         if let Some(role) = active(&self.enhance)? {
@@ -301,7 +320,8 @@ mod tests {
         feature = "enhance",
         feature = "status",
         feature = "transparent-history",
-        feature = "transparent-detail"
+        feature = "transparent-detail",
+        feature = "receiver"
     ))]
     #[test]
     fn all_product_example_serves_complete_products() {

@@ -50,6 +50,7 @@ impl Segment {
 /// so their prepared rows and filter bytes are cached once.
 pub struct Publication {
     inventory: Inventory,
+    authorized: Arc<std::sync::atomic::AtomicBool>,
     head: Vec<u8>,
     chunks: Vec<Vec<u8>>,
     segments: Vec<Segment>,
@@ -117,6 +118,7 @@ impl Publication {
             sessions,
             filters: named,
             report: None,
+            authorized: Arc::new(std::sync::atomic::AtomicBool::new(true)),
         })
     }
 
@@ -157,6 +159,12 @@ impl Publication {
         }
         let inventory = Inventory::build(genesis, history_revision, listed)?;
         Self::verified(inventory, segments, filters)
+    }
+
+    /// A request holds this token through loading and evaluation. Selective
+    /// withdrawal fences only requests using the rejected inventory.
+    pub fn authorization(&self) -> Arc<std::sync::atomic::AtomicBool> {
+        self.authorized.clone()
     }
 
     /// Attaches the owner's report, such as feed freshness, which health serves with
@@ -268,6 +276,7 @@ impl Publication {
             sessions: self.sessions.clone(),
             filters: self.filters.clone(),
             report: Some(report),
+            authorized: self.authorized.clone(),
         }
     }
 }
@@ -479,6 +488,68 @@ impl Publications {
         self.0.read().unwrap().filters.clone()
     }
 
+    /// Install one fully authorized HTTPS view atomically. All refusals happen
+    /// before changing serving state; the lifecycle has already fenced revisions
+    /// that invalidate earlier answers. Returning the installed directory lets
+    /// its owner retain files until the final request releases it.
+    pub fn install_view(
+        &self,
+        directory: Option<Publication>,
+        filters: Option<crate::blocks::BlockWindow>,
+        revision: u64,
+        expected_epoch: u64,
+    ) -> Result<Option<Arc<Publication>>, &'static str> {
+        let mut state = self.0.write().unwrap();
+        if state.epoch != expected_epoch || revision < state.history_revision {
+            return Err("Receiver view was fenced");
+        }
+        if directory
+            .as_ref()
+            .is_some_and(|p| p.head().history_revision != revision)
+            || filters
+                .as_ref()
+                .is_some_and(|f| f.head().revision != revision)
+        {
+            return Err("Receiver view revisions differ");
+        }
+        let correction = revision > state.history_revision;
+        if !correction
+            && (directory.as_ref().is_some_and(|p| {
+                state.current.as_ref().is_some_and(|old| {
+                    old.head().end_height > p.head().end_height
+                        || (old.id() != p.id() && state.ready_at().is_some())
+                })
+            }) || filters.as_ref().is_some_and(|f| {
+                state
+                    .filters
+                    .as_ref()
+                    .is_some_and(|old| old.head().tip.height > f.head().tip.height)
+            }))
+        {
+            return Err("Receiver view advanced during preparation or retention is full");
+        }
+        if correction {
+            state.revoke();
+            state.history_revision = revision;
+        }
+        state.expire();
+        if let Some(directory) = directory {
+            let directory = Arc::new(directory);
+            if let Some(old) = state.current.replace(directory) {
+                if state.current.as_ref().unwrap().id() == old.id() {
+                    state.release(std::iter::once(old));
+                } else {
+                    let until = Instant::now() + state.retention;
+                    state.retained.push((old, until));
+                }
+            }
+        }
+        if let Some(filters) = filters {
+            state.filters = Some(Arc::new(filters));
+        }
+        Ok(state.current.clone())
+    }
+
     /// The current rolling window, whether or not a PIR publication is ready.
     pub(crate) fn filters(&self) -> Result<Arc<crate::blocks::BlockWindow>, StatusCode> {
         self.0
@@ -618,6 +689,50 @@ impl Publications {
         true
     }
 
+    /// Withdraw only the named inventories and rolling window. The owner has
+    /// already removed identities that an independently approved view still uses.
+    pub fn invalidate(
+        &self,
+        inventories: &std::collections::HashSet<Hash>,
+        filters: Option<&zakura_pir_query_server::receiver::blocks::Head>,
+    ) {
+        let mut state = self.0.write().unwrap();
+        let held: Vec<_> = state.released.iter().filter_map(Weak::upgrade).collect();
+        for publication in state
+            .current
+            .iter()
+            .chain(state.retained.iter().map(|(p, _)| p))
+            .chain(held.iter())
+        {
+            if inventories.contains(&publication.id()) {
+                publication
+                    .authorized
+                    .store(false, std::sync::atomic::Ordering::Release);
+            }
+        }
+        let removed_current = if state
+            .current
+            .as_ref()
+            .is_some_and(|p| inventories.contains(&p.id()))
+        {
+            state.current.take()
+        } else {
+            None
+        };
+        let (removed, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut state.retained)
+            .into_iter()
+            .partition(|(p, _)| inventories.contains(&p.id()));
+        state.retained = kept;
+        state.release(
+            removed_current
+                .into_iter()
+                .chain(removed.into_iter().map(|(p, _)| p)),
+        );
+        if filters.is_some_and(|head| state.filters.as_ref().is_some_and(|f| f.head() == head)) {
+            state.filters = None;
+        }
+    }
+
     /// Conservatively invalidate all sessions, including CPU work that started before the reorg.
     pub fn revoke(&self) {
         self.0.write().unwrap().revoke();
@@ -708,6 +823,33 @@ mod tests {
             zakura_pir_query_server::receiver::snapshot::Snapshot::build(manifest, &[]).unwrap()
         };
         crate::prepared::prepare_payments(snapshot).unwrap()
+    }
+
+    /// Selective rejection fences held requests without closing unrelated
+    /// current admission or changing the global recovery epoch.
+    #[test]
+    fn invalidating_one_inventory_preserves_other_approved_requests() {
+        let publications = Publications::default();
+        let first = publication_at(1, 1);
+        let id = first.id();
+        let token = first.authorization();
+        assert!(publications.publish(first, 0));
+        let held = publications.live()[0].clone();
+        let next = publication_at(2, 2);
+        let approved = next.authorization();
+        assert!(publications.publish(next, 0));
+        // The request outlives its inventory's retention, before a sweep has
+        // transferred the expired entry into the released set.
+        publications.0.write().unwrap().retained[0].1 = Instant::now() - Duration::from_secs(1);
+        publications.invalidate(&std::collections::HashSet::from([id]), None);
+        assert!(!token.load(std::sync::atomic::Ordering::Acquire));
+        assert!(!held
+            .authorization()
+            .load(std::sync::atomic::Ordering::Acquire));
+        assert!(approved.load(std::sync::atomic::Ordering::Acquire));
+        assert_eq!(publications.epoch(), 0);
+        assert_eq!(publications.live().len(), 1);
+        assert_eq!(publications.current_anchor(), Some((101, [2; 32])));
     }
 
     /// A check that found an anchor off the chain revokes only while its epoch is
