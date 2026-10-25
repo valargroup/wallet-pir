@@ -1405,12 +1405,14 @@ mod tests {
     }
 
     /// A reqwest transport for the library client that counts encrypted queries.
+    #[cfg(feature = "qualification-tests")]
     #[derive(Clone, Default)]
     struct Wallet {
         http: reqwest::Client,
         queries: Arc<std::sync::atomic::AtomicUsize>,
     }
 
+    #[cfg(feature = "qualification-tests")]
     impl zakura_pir_client::receiver::transport::Transport for Wallet {
         async fn get(
             &self,
@@ -1432,6 +1434,7 @@ mod tests {
     }
 
     /// One response within `limit`, 410 as a revision change.
+    #[cfg(feature = "qualification-tests")]
     async fn wallet_read(
         request: reqwest::RequestBuilder,
         limit: usize,
@@ -1505,6 +1508,7 @@ mod tests {
 
         /// Captures the served inventory at the store's tip as a wallet does, with the
         /// count of encrypted queries the client then sends.
+        #[cfg(feature = "qualification-tests")]
         async fn capture(
             &self,
             filters: bool,
@@ -1536,6 +1540,7 @@ mod tests {
 
     /// Every record of `receiver` in the captured inventory, with the shard and segment
     /// holding it, skipping sealed shards whose filter excludes it as a wallet may.
+    #[cfg(feature = "qualification-tests")]
     async fn lookup(
         client: &zakura_pir_client::receiver::transport::InventoryClient<Wallet>,
         receiver: [u8; 43],
@@ -1854,6 +1859,7 @@ mod tests {
     /// the data directory when evicted, and a restart prepares none of them again. A
     /// sealed shard and the recent tier are four tables against a budget of two, the
     /// most one lookup needs at once.
+    #[cfg(feature = "qualification-tests")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn sealed_tables_beyond_the_budget_load_on_demand() {
         use super::common::receiver;
@@ -2028,6 +2034,7 @@ mod tests {
     /// prepared: every table and filter it lists reloads from the staged files. Staged
     /// serving keeps its prepared tables within the budget: a sealed shard and the recent
     /// tier are four tables against a budget of two.
+    #[cfg(feature = "qualification-tests")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_staged_check_keeps_no_prepared_segment() {
         use crate::serve_publication::{load, PublicationRecord};
@@ -2345,6 +2352,7 @@ mod tests {
 
     /// The first sealed shard's payment table revision and companion manifest in
     /// `shards`, as a one-shot pass wrote them.
+    #[cfg(feature = "qualification-tests")]
     fn first_written(
         shards: &[Vec<Written>],
     ) -> ([u8; 32], zakura_pir_publisher::receiver::witness::Manifest) {
@@ -2359,6 +2367,7 @@ mod tests {
     /// companion follows the tip, a completed one freezes, and replacing either
     /// block rebuilds its witness without changing the payment table. Each payload
     /// is checked against an independent rebuild from the stored commitments.
+    #[cfg(feature = "qualification-tests")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn written_companions_follow_reorgs_before_and_after_finality() {
         let one = super::common::receiver();

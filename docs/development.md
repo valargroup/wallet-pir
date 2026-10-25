@@ -90,8 +90,11 @@ use up to three disjoint groups of exact discovered case names inside the same
 three-process limit; each group keeps fixture reuse and serial case deadlines.
 Status cases stay together in one exclusive process and share prepared material
 across publication identities. Splitting those cases copies their large native
-fixtures and can exhaust the runner's memory limit. Adjacent Receiver witness
-reorg checks share one history through provisional and completed witnesses.
+fixtures and can exhaust the runner's memory limit. Receiver's encrypted HTTP
+smoke and focused storage, witness and cache-budget units stay in fast feedback.
+Full publication reload/restart, staged loading and witness-finality campaigns
+use `qualification-tests`; adjacent witness reorg checks share one history
+through provisional and completed witnesses there.
 HTTP integrations and the small-runner publisher protection remain intact.
 
 `make check-correctness` runs that complete bounded unit/integration population
