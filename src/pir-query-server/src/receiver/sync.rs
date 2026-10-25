@@ -340,6 +340,17 @@ impl PublicationAdapter for Receiver {
     async fn release_peer(&mut self, _: &Self::Report) -> PeerHandover {
         PeerHandover::Complete
     }
+    async fn pass_finished(
+        &mut self,
+        result: &Result<
+            crate::synchronization::publication_lifecycle::PublicationPass<Self::Report>,
+            Error,
+        >,
+    ) {
+        if let Err(error) = result {
+            tracing::warn!(%error, "Receiver publication synchronization failed");
+        }
+    }
     async fn serving_report(&mut self) -> Self::Report {
         if self.publications.current_anchor().is_none()
             && self.publications.filter_window().is_none()
