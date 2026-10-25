@@ -323,7 +323,7 @@ configuration rendering; it does not silently replace captured production units.
 Every product registers one optional external worker role that an operator can
 add on a host of their own: `enhance.external-worker`, `status.external-worker`,
 `transparent-history.external-worker`, `transparent-display.external-worker`
-and `receiver.serve-publication`. Its whole unit and configuration are rendered
+and `receiver.query`. Its whole unit and configuration are rendered
 by the product's adapter (`tools/enhance/lib/roles.py`, `tools/status/lib/roles.py`,
 `tools/transparent/lib/roles.py`, `tools/txid/lib/roles.py`, `tools/receiver/lib/roles.py`) from the
 inventory entry's `settings`; the template beside it owns the sandbox. The
@@ -332,23 +332,24 @@ inventory owns hosts, paths, listeners, budgets (`limits`: `MemoryMax`,
 `User`, `Group`) and credential file references (`credentials`: installed
 `EnvironmentFile` paths whose contents are never read). Templates carry no
 fleet address and no optional provider credential; the standalone Receiver
-never carries a partner key. Inputs (publications, assignments, records,
+never carries node or partner credentials. Inputs (publications, assignments,
 configuration, credentials) are read-only and may not overlap the writable
 state and cache directories, which an install creates.
 
 ```json
 {"host": "edge-01", "install": true, "vars": {"listen": "127.0.0.1:18390"},
- "settings": {"config_path": "/etc/receiver-serve/config.json",
-              "publication_record": "/etc/receiver-serve/record/publication.json",
-              "publication_root": "/srv/receiver-serve/publications",
-              "state_dir": "/var/lib/receiver-serve", "bind": "127.0.0.1:18390",
-              "rpc_urls": ["http://10.0.0.5:8232"], "cookie": "/run/zakura/.cookie"}}
+ "settings": {"config_path": "/etc/receiver-query/config.json",
+              "state_dir": "/srv/receiver-query", "listen": "127.0.0.1:18390",
+              "management_listen": "127.0.0.1:18391",
+              "publisher": "https://receiver-pir.valargroup.dev",
+              "genesis": [8, 206, 61, 151, 49, 176, 0, 192, 131, 56, 69, 92, 138, 74, 107, 208, 93, 161, 110, 38, 177, 29, 170, 27, 145, 113, 132, 236, 232, 15, 4, 0],
+              "activation_height": 3428143}}
 ```
 
 Review a rendering before any host is touched:
 
 ```sh
-python3 <release>/tools/scripts/wallet-pir-roles.py --service receiver --role serve-publication \
+python3 <release>/tools/scripts/wallet-pir-roles.py --service receiver --role query \
   --settings settings.json --release /opt/receiver-pir/releases/<sha256>
 ```
 
@@ -361,9 +362,9 @@ them with the usual exact artifact identity, pinned hosts, lock and journal:
    refuses to overwrite a configuration file it did not render.
 3. `deploy` stages the release, then runs the product's own check on the
    staged release against a staged copy of the configuration before any unit
-   changes: `receiver-directory serve-publication --check`. Enhance, Status
-   and Transparent workers download their publications from their HTTPS
-   publisher and have no staged inputs, so no check is manufactured for them. The
+   changes: `pir-query-server --config FILE --check`. Receiver downloads
+   immutable objects over HTTPS and requires fresh publisher authority before
+   activating them. Other workers use their registered configuration checks. The
    unit is then written, enabled, started and verified: active, the release's
    digest running, health answering with that `binary_sha256`, and the role's
    own readiness where it has one.
@@ -382,7 +383,7 @@ identity, never serving authority:
 | Status worker | the worker downloads prepared database units from its configured HTTPS publisher; wallet/evaluation forwarding remains separate | control health `ready`, with a fresh, verified and eligible publication |
 | Transparent history worker | the worker downloads verified publications and runtimes from its configured HTTPS publisher and activates them itself | `/v1/ready` once its runtimes are warm |
 | Transparent display worker | the worker downloads the full display publication from its configured HTTPS publisher and activates it itself; starts empty | `/v1/ready` after its first activation |
-| Receiver `serve-publication` | the operator's publication record; a node for canonical checks; the publisher remains trusted for completeness | `serving` set, once the record verifies and its anchor is canonical |
+| Receiver query | HTTPS publisher objects and durable authority floors; no node or partner credentials | root `/ready` after an eligible directory activates |
 
 `worker-report SERVICE [--only ROLE]` reads only existing private endpoints and
 reports each worker on separate axes: process (systemd state, running digest),

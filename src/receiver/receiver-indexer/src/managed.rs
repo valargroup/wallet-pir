@@ -75,8 +75,8 @@ impl Config {
             data_dir: self.data_dir.clone(),
             min_rows: self.min_rows,
             rpc_url: vec![chain.rpc_url.clone()],
-            cookie: Some(chain.rpc_cookie.clone()),
-            no_auth: false,
+            cookie: chain.rpc_cookie.clone(),
+            no_auth: chain.rpc_cookie.is_none(),
             start_height: blocks::ironwood_activation(),
             end_height: None,
             depth: self.depth,
@@ -98,6 +98,19 @@ impl Config {
     }
 }
 
+/// Directory retrieval is ready only after a completed directory is authorized;
+/// filter-only startup envelopes do not advertise full Receiver readiness.
+pub fn distribution_ready(bytes: &[u8]) -> bool {
+    serde_json::from_slice::<receiver_pir_server::distribution::Current>(bytes).is_ok_and(
+        |current| {
+            current.eligible
+                && current
+                    .publication
+                    .is_some_and(|p| p.descriptor.directory.is_some())
+        },
+    )
+}
+
 /// Declare resources without opening state, sockets or credential files.
 pub fn configure<E: PublisherExecutor + IngestionExecutor>(
     config: Config,
@@ -117,8 +130,8 @@ pub fn configure<E: PublisherExecutor + IngestionExecutor>(
         writable_paths: vec![args.data_dir.clone()],
         probes: vec![ReadinessProbe {
             address: args.bind,
-            path: "/v1/receiver/inventory",
-            rule: ReadinessRule::HttpSuccess,
+            path: "/provider/receiver/v1/current",
+            rule: ReadinessRule::Body(distribution_ready),
         }],
     };
     Ok(
@@ -181,10 +194,30 @@ async fn run<E: PublisherExecutor + IngestionExecutor>(
     distribution.attach(&publications);
     let reads = crate::near::Reads::default();
     let mut tasks = pir_pipeline::service::Tasks::default();
-    let app = axum::Router::new().nest(
-        receiver_pir_server::distribution::PREFIX.trim_end_matches('/'),
-        distribution.router(),
-    );
+    let audit_publications = publications.clone();
+    let audit_reads = reads.clone();
+    let app = axum::Router::new()
+        .route(
+            "/operator/receiver/health",
+            axum::routing::get(move || {
+                let publications = audit_publications.clone();
+                let reads = audit_reads.clone();
+                async move {
+                    let (current, epoch) = publications.health();
+                    let mut fields = reads.health();
+                    fields.insert("epoch".into(), epoch.into());
+                    fields.insert(
+                        "indexer".into(),
+                        current.and_then(|(_, report)| report).into(),
+                    );
+                    axum::Json(serde_json::Value::Object(fields))
+                }
+            }),
+        )
+        .nest(
+            receiver_pir_server::distribution::PREFIX.trim_end_matches('/'),
+            distribution.router(),
+        );
     if let Some(key) = args.near_key.clone() {
         let path = args.data_dir.join(application::PROVIDERS);
         let since = args

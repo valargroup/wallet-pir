@@ -171,3 +171,7 @@ reason = "Essential certificates and checker verdicts for the txid display table
 [[allow_data]]
 pattern = "tools/transparent/fixtures/observation/failed-observation-20260912T003121Z.tar.gz"
 reason = "Real failed observation consumed by the mandatory audit negative control."
+
+[[allow_data]]
+pattern = "tools/receiver/deploy/receiver-*.example.json"
+reason = "Receiver root host configuration examples consumed by offline deployment checks."

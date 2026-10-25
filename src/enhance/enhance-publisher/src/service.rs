@@ -71,7 +71,13 @@ pub async fn run<E: PublisherExecutor + IngestionExecutor>(
             tracing::error!(%reason, moved_to = %moved_to.display(), "rejected staged Enhance journal rebuild")
         }
     }
-    let rpc = ZakuraClient::from_cookie_file(&chain.rpc_url, &chain.rpc_cookie)?;
+    let rpc = ZakuraClient::from_cookie_file(
+        &chain.rpc_url,
+        chain
+            .rpc_cookie
+            .as_ref()
+            .ok_or("Enhance publisher requires a node cookie")?,
+    )?;
     let publisher = EnhancePublisher::open(&config.data_dir.join("publication"), rpc.clone())?;
     let artifacts =
         tokio::spawn(http.serve(config.artifact_listen, publisher.distribution().router()));
@@ -121,6 +127,9 @@ pub fn configure<E: PublisherExecutor + IngestionExecutor>(
     let chain = chain
         .cloned()
         .ok_or("enabled enhance publisher needs the root chain settings")?;
+    if chain.rpc_cookie.is_none() {
+        return Err("Enhance publisher requires a node cookie".into());
+    }
     let resources = PublisherResources {
         listeners: vec![config.listen, config.artifact_listen],
         writable_paths: vec![config.data_dir.clone()],

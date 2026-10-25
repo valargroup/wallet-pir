@@ -715,6 +715,8 @@ mod tests {
 #[cfg(all(test, feature = "qualification-tests"))]
 mod fixture_cache_tests {
     use super::*;
+    use crate::receiver::tests::{common, prepared};
+    use zakura_pir_publisher::receiver::snapshot::SnapshotPublisherExt as _;
     use zakura_pir_query_server::receiver::snapshot::Snapshot;
     fn snapshot() -> Snapshot {
         Snapshot::build(
@@ -745,9 +747,20 @@ mod fixture_cache_tests {
         ));
         let first = prepared::prepare_payments(snapshot()).unwrap();
         let second = prepared::prepare_payments(snapshot()).unwrap();
+        let expected = first.head().inventory;
         let changed = first.with_report(serde_json::json!({"fixture": "changed"}));
-        assert!(changed.head().inventory == first.head().inventory);
-        assert_eq!(second.head().inventory, first.head().inventory);
+        assert_eq!(changed.head().inventory, expected);
+        let publications = Publications::new(Duration::from_secs(600), 4096 << 20);
+        publications
+            .install_view(Some(changed), None, 0, 0)
+            .unwrap();
+        assert_eq!(
+            publications.health().0.unwrap().1,
+            Some(serde_json::json!({"fixture": "changed"}))
+        );
+        let independent = Publications::new(Duration::from_secs(600), 4096 << 20);
+        independent.install_view(Some(second), None, 0, 0).unwrap();
+        assert_eq!(independent.health().0.unwrap().1, None);
         let mut corrupt = snapshot();
         corrupt.data[0] ^= 1;
         assert!(payments(corrupt).is_err());

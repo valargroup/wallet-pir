@@ -20,8 +20,8 @@ optional payout audit store are this repository's `receiver-store` package. The
 indexer enables the checks before storing a payment and before serving a
 publication, and a wallet checks a retrieved payment before crediting it.
 Dependencies run one way from wallet-pir to wallet-libraries; wallet-libraries
-never consumes wallet-pir packages. `receiver-pir-server` serves publications
-over HTTP using only the query server's module. `receiver-indexer` builds them from a Zakura node; its
+never consumes wallet-pir packages. `receiver-pir-server` holds reusable publication and evaluator primitives.
+`pir-query-server` owns HTTP serving, admission and synchronization. `receiver-indexer` builds them from a Zakura node; its
 services run through `pir-publisher` and `pir-query-server`. The service shares process identity and
 admission (`pir-control`), metrics (`pir-observability`) and the PIR profile
 (`pir-native`) with the other services, and reads the node through
@@ -36,12 +36,11 @@ block hints; its work token borrows those dependencies. Shared preparation
 consumes that token, building the publication from the committed chain index
 alone, and passes the prepared product candidate to owner publication. The
 optional payout audit only supplies the report health serves beside it. The final
-canonical check and epoch-fenced atomic activation remain product owned; one-shot
+canonical check and epoch-fenced distribution commit remain publisher owned; one-shot
 publication writes the publication's files instead. Preparation failure keeps
 committed progress for retry. `pir-publisher` configures these calls and
-independently wires the HTTP server, canonical guard and optional payout audit;
-the guard continues checking served anchors throughout both phases. This
-standard-path adapter adds no HTTP source. The shared acquisition seam accepts
+independently wires its distribution listener, canonical guard and optional payout audit;
+the guard continues checking served anchors throughout both phases. Query hosts receive prepared objects over HTTPS and never contact the node. The shared acquisition seam accepts
 product work without owning a store, protocol, queue or authority ([lifecycle boundaries](../enhance/architecture.md#ingestion-application)).
 
 ## Publisher distribution
@@ -242,7 +241,7 @@ canonical counterpart.
 | `POST /receiver/v1/query` | One encrypted payment or witness row query |
 | `GET /receiver/v1/block-filters/head` | Rolling hint availability |
 | `GET /receiver/v1/block-filters/:revision/:from/:limit` | Bounded consecutive block filters |
-| `GET /v1/receiver/health` | Process identity, the served inventory, the indexer's report and this process's NEAR reads (operators only) |
+| `GET /v1/receiver/health` | Query process identity and the served inventory (management listener only) |
 
 A query holds `RPQ1`, the session ID, a fresh 16-byte nonce, the packing key and
 the encrypted row selection. The response echoes that 52-byte header. The
@@ -296,7 +295,7 @@ One-shot maintenance uses `pir-publisher receiver publish --data-dir PATH
 --rpc-url URL --no-auth` (or a node cookie). It prepares the same publication files
 without a continuous runtime. `receiver-probe` remains the independent encrypted
 payment, witness and filter diagnostic. Its optional `--health-url` checks a
-private Receiver report when one is available; it never sends node credentials
+private publisher audit report at `/operator/receiver/health` when one is available; it never sends node credentials
 to the query service.
 
 The root public listener mounts only wallet operations under `/receiver/v1/` and
@@ -313,8 +312,10 @@ old continuous and operator-staged serving commands have been removed.
 `cargo test -p receiver-store` covers publications and store restart and
 rollback, commitment ranges, completed Ironwood shards, sealed shards and
 corrections.
-`cargo test -p receiver-pir-server` tests the HTTP service with the canonical
-library client. `cargo test -p receiver-indexer` covers indexing with synthetic
+`cargo test -p pir-query-server --features receiver --lib receiver::` tests HTTP
+and HTTPS synchronization with the canonical library client.
+`cargo test -p pir-publisher --features receiver --test receiver` covers the root
+maintenance process, SQLite resume, canonical withdrawal and restart. `cargo test -p receiver-indexer` covers indexing with synthetic
 blocks, sealing on placement, witness capacity and target with oversized-block
 segments, sealed shards served through the library client with filters and
 witnesses, restart reconstruction, reorgs across a seal and of witness

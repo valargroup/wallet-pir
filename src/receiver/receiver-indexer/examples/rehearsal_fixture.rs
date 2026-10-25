@@ -1,4 +1,4 @@
-//! Operator-rehearsal fixture for `serve-publication`; never a production tool.
+//! Operator-rehearsal fixture for `Receiver HTTPS publication`; never a production tool.
 //!
 //! `stage DIR NAME OFFSET HASH_BYTE` writes a complete publication directory, in the
 //! indexer's file layout, ending `OFFSET` blocks after Ironwood activation at a block

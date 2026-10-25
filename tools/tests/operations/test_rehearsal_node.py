@@ -1,7 +1,7 @@
 """The operator rehearsal's fake node, `tools/tests/operations/rehearsal/rehearse.py`.
 
-`serve-publication` activates a publication only once the node confirms each block it
-depends on and the Ironwood tree size after it. It reads the size as the receiver's
+Receiver publication checks each block it
+depends on and the Ironwood tree size after it. The fixture reads the size as the receiver's
 node client does (`receiver_boundary` in `src/shared/pir-chain/src/receiver.rs`): a
 verbose `getblock` by the block's displayed hash, then `trees.ironwood.size`. A fake
 that cannot answer leaves activation deferred, so the rehearsal never serves.

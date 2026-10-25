@@ -8,10 +8,7 @@
   },
   "receiver-indexer": {
     "fast": [],
-    "full": [
-      "indexer",
-      "serve_publication"
-    ]
+    "full": []
   },
   "receiver-pir-server": {
     "fast": [
@@ -81,7 +78,7 @@
       "lifecycle",
       "commands"
     ],
-    "full": []
+    "full": ["receiver"]
   },
   "pir-e2e-tests": {
     "fast": [

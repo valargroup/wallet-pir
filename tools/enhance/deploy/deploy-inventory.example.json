@@ -282,7 +282,7 @@
               "management_listen": "127.0.0.1:18381",
               "chain": {
                 "rpc_url": "http://10.70.0.19:8232",
-                "rpc_cookie": null,
+                "rpc_cookie": null, "no_auth": true,
                 "poll_ms": 1000
               },
               "receiver": {

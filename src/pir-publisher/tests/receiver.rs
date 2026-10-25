@@ -1,6 +1,4 @@
 //! Public refund ciphertext in synthetic block envelopes. Consensus is trusted to RPC.
-#[path = "common/bound.rs"]
-mod bound;
 use axum::{extract::State, routing::post, Json, Router};
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -85,8 +83,10 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
     let task = tokio::spawn(async move { axum::serve(socket, router).await.unwrap() });
     let dir = tempfile::tempdir().unwrap();
     let run = || {
-        let output = Command::new(env!("CARGO_BIN_EXE_receiver-directory"))
+        let output = Command::new(env!("CARGO_BIN_EXE_pir-publisher"))
             .args([
+                "receiver",
+                "publish",
                 "--data-dir",
                 dir.path().to_str().unwrap(),
                 "--rpc-url",
@@ -140,8 +140,10 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
     // A node behind the index proves nothing about the blocks above its tip, so the
     // index waits for it instead of rewinding.
     count.store(1, Ordering::SeqCst);
-    let behind = Command::new(env!("CARGO_BIN_EXE_receiver-directory"))
+    let behind = Command::new(env!("CARGO_BIN_EXE_pir-publisher"))
         .args([
+            "receiver",
+            "publish",
             "--data-dir",
             dir.path().to_str().unwrap(),
             "--rpc-url",
@@ -165,103 +167,107 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
             let _ = self.0.wait();
         }
     }
-    // Each daemon binds a port of its own choosing, read back from its log.
-    let log = dir.path().join("daemon.log");
-    let start = || async {
-        let child = Child(
-            Command::new(env!("CARGO_BIN_EXE_receiver-directory"))
-                .args([
-                    "--data-dir",
-                    dir.path().to_str().unwrap(),
-                    "--rpc-url",
-                    &url,
-                    "--no-auth",
-                    "--depth",
-                    "0",
-                    "--serve",
-                    "--poll-seconds",
-                    "1",
-                    "--bind",
-                    "127.0.0.1:0",
-                ])
-                .env("RUST_LOG", "info")
+    fn address() -> std::net::SocketAddr {
+        std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+    }
+    let (listen, management) = (address(), address());
+    let config = dir.path().join("publisher.json");
+    std::fs::write(
+        &config,
+        serde_json::to_vec(&json!({
+            "management_listen": management,
+            "chain": {"rpc_url": url, "no_auth": true, "poll_ms": 100},
+            "receiver": {"enabled": true, "settings": {
+                "data_dir": dir.path(), "bind": listen, "depth": 0
+            }}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let start = || {
+        Child(
+            Command::new(env!("CARGO_BIN_EXE_pir-publisher"))
+                .arg("--config")
+                .arg(&config)
                 .stdout(std::process::Stdio::null())
-                .stderr(std::fs::File::create(&log).unwrap())
+                .stderr(std::fs::File::create(dir.path().join("publisher.log")).unwrap())
                 .spawn()
                 .unwrap(),
-        );
-        (child, bound::address(&log, 0, "receiver PIR bound").await)
+        )
     };
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(2))
         .build()
         .unwrap();
-    async fn wait_height(client: &reqwest::Client, endpoint: &str, height: u64) {
+    let endpoint = format!("http://{listen}/provider/receiver/v1/current");
+    async fn wait_eligible(client: &reqwest::Client, endpoint: &str, eligible: bool) {
         tokio::time::timeout(std::time::Duration::from_secs(90), async {
             loop {
                 if let Ok(response) = client.get(endpoint).send().await {
-                    if response.status().is_success()
-                        && response.json::<Value>().await.unwrap()["end_height"] == height
-                    {
-                        break;
+                    if response.status().is_success() {
+                        let value = response.json::<Value>().await.unwrap();
+                        if value["eligible"] == eligible
+                            && (!eligible
+                                || !value["publication"]["descriptor"]["directory"].is_null())
+                        {
+                            break;
+                        }
                     }
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             }
         })
         .await
-        .expect("daemon did not publish the canonical height");
+        .expect("publisher did not update its authority");
     }
-    let files = || {
-        std::fs::read_dir(dir.path().join("publications"))
-            .unwrap()
-            .count()
-    };
-    let written = files();
-    let (daemon, addr) = start().await;
-    let endpoint = format!("http://{addr}/v1/receiver/inventory");
-    wait_height(&client, &endpoint, activation() + 1).await;
-    assert_eq!(files(), written, "serving publishes from memory");
-    // The deploy gate's form of the probe, `receiver-directory probe`, with its built-in
-    // mainnet fixture. That payment is above this synthetic chain, so the probe reaches the
-    // served manifest and refuses to check it. The lookup itself is the probe's unit test.
-    let output = Command::new(env!("CARGO_BIN_EXE_receiver-directory"))
-        .args([
-            "probe",
-            "--origin",
-            &format!("http://{addr}"),
-            "--health-url",
-            &format!("http://{addr}/v1/receiver/health"),
-            "--rpc-url",
-            &url,
-            "--no-auth",
-        ])
-        .output()
-        .unwrap();
-    let result = serde_json::from_slice::<Value>(&output.stdout).unwrap();
-    assert!(!output.status.success());
-    assert_eq!(result["category"], "oracle_invalid", "{result}");
-    assert_eq!(result["detail"], json!({"fixture": "after coverage"}));
-    hold.store(true, Ordering::SeqCst);
-    changed.store(false, Ordering::SeqCst);
+    let daemon = start();
+    wait_eligible(&client, &endpoint, true).await;
+    let ready = format!("http://{management}/ready");
     tokio::time::timeout(std::time::Duration::from_secs(10), async {
-        loop {
-            if client.get(&endpoint).send().await.unwrap().status()
-                == reqwest::StatusCode::SERVICE_UNAVAILABLE
-            {
-                break;
-            }
+        while !client
+            .get(&ready)
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .is_success()
+        {
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
     })
     .await
-    .expect("guard kept serving an orphaned publication during ingestion failure");
+    .unwrap();
+    assert_eq!(
+        client
+            .get(format!("http://{listen}/v1/receiver/inventory"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        reqwest::StatusCode::NOT_FOUND
+    );
+    assert!(client
+        .get(format!("http://{listen}/operator/receiver/health"))
+        .send()
+        .await
+        .unwrap()
+        .status()
+        .is_success());
+    hold.store(true, Ordering::SeqCst);
+    changed.store(false, Ordering::SeqCst);
+    wait_eligible(&client, &endpoint, false).await;
+    assert_eq!(
+        client.get(&ready).send().await.unwrap().status(),
+        reqwest::StatusCode::SERVICE_UNAVAILABLE
+    );
     hold.store(false, Ordering::SeqCst);
-    wait_height(&client, &endpoint, activation() + 1).await;
+    wait_eligible(&client, &endpoint, true).await;
     drop(daemon);
-    let (_restarted, addr) = start().await;
-    let endpoint = format!("http://{addr}/v1/receiver/inventory");
-    wait_height(&client, &endpoint, activation() + 1).await;
+    let _restarted = start();
+    wait_eligible(&client, &endpoint, true).await;
     task.abort();
 }
 
@@ -269,8 +275,10 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
 fn cli_rejects_unservable_geometry_before_contacting_the_node() {
     for rows in ["1", "4096", "8193", "131072"] {
         let dir = tempfile::tempdir().unwrap();
-        let output = std::process::Command::new(env!("CARGO_BIN_EXE_receiver-directory"))
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_pir-publisher"))
             .args([
+                "receiver",
+                "publish",
                 "--data-dir",
                 dir.path().to_str().unwrap(),
                 "--rpc-url",
@@ -292,10 +300,12 @@ fn cli_rejects_unservable_geometry_before_contacting_the_node() {
 /// start before contacting the node.
 #[test]
 fn cli_refuses_a_later_start_before_contacting_the_node() {
-    for flag in ["--depth=2", "--serve"] {
+    for flag in ["--depth=2", "--depth=0"] {
         let dir = tempfile::tempdir().unwrap();
-        let output = std::process::Command::new(env!("CARGO_BIN_EXE_receiver-directory"))
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_pir-publisher"))
             .args([
+                "receiver",
+                "publish",
                 "--data-dir",
                 dir.path().to_str().unwrap(),
                 "--rpc-url",
@@ -316,23 +326,13 @@ fn cli_refuses_a_later_start_before_contacting_the_node() {
     }
 }
 
-/// Serving binds loopback or a private address, never a public one.
+/// Retired continuous runtime flags cannot start a service via maintenance.
 #[test]
-fn cli_refuses_a_public_bind_before_contacting_the_node() {
-    let dir = tempfile::tempdir().unwrap();
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_receiver-directory"))
-        .args([
-            "--data-dir",
-            dir.path().to_str().unwrap(),
-            "--rpc-url",
-            "http://127.0.0.1:1",
-            "--no-auth",
-            "--serve",
-            "--bind",
-            "0.0.0.0:18380",
-        ])
+fn maintenance_rejects_continuous_runtime_flags() {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_pir-publisher"))
+        .args(["receiver", "publish", "--serve"])
         .output()
         .unwrap();
     assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("loopback or private bind"));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("unexpected argument"));
 }

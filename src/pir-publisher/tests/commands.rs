@@ -104,3 +104,45 @@ fn maintenance_commands_require_the_compiled_product() {
         );
     }
 }
+
+/// Exercise the Python renderer and root binary together, without opening a
+/// node cookie or existing Receiver store.
+#[cfg(feature = "receiver")]
+#[test]
+fn rendered_receiver_publisher_passes_the_root_offline_check() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap();
+    let rendered = Command::new("python3").arg("-c").arg(r#"
+import json,sys
+from pathlib import Path
+root=Path(sys.argv[1]); sys.path.insert(0,str(root/'tools/lib')); sys.path.insert(0,str(root))
+from tools.receiver.lib.roles import publisher
+example=json.loads((root/'tools/receiver/deploy/receiver-publisher.example.json').read_text())
+s={'config_path':'/etc/receiver-publisher/config.json','management_listen':example['management_listen'],
+   'chain':example['chain'],'receiver':example['receiver']['settings']}
+print(next(iter(publisher(s,release='/release').files.values())))
+"#).arg(root).output().unwrap();
+    assert!(
+        rendered.status.success(),
+        "{}",
+        String::from_utf8_lossy(&rendered.stderr)
+    );
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("publisher.json");
+    std::fs::write(&path, &rendered.stdout).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_pir-publisher"))
+        .arg("--config")
+        .arg(&path)
+        .arg("--check")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+}

@@ -95,7 +95,8 @@ existing names and semantics; non-optional settings must be explicit. Receiver
 is continuous, and Enhance's embedded Status setting is replaced
 by the separate Status section. No configuration reload is performed.
 
-The root `chain` section (`rpc_url`, `rpc_cookie`, and `poll_ms`, default
+The root `chain` section (`rpc_url`, `rpc_cookie` or explicit `no_auth: true`
+for Receiver-only nodes, and `poll_ms`, default
 1000) names the one node every chain-following product reads. Enhance, Status,
 Transparent History and Transparent Filters require it and no longer accept
 their own node endpoint, cookie or polling settings (`zakura_rpc_url`,

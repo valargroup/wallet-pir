@@ -4,13 +4,15 @@
 Run from a copy outside the source checkout:
 
     rehearse.py --ops UNPACKED_OPERATIONS --binaries DIR --work DIR --out EVIDENCE.json \
-        --forbid SOURCE_CHECKOUT [--roles receiver,enhance,status]
+        --forbid SOURCE_CHECKOUT [--roles enhance,status]
 
 Every deploy, rollback and report goes through the unpacked operations
 package's own engine and product adapters; an audit hook refuses any file
 open under --forbid, so nothing is read from the source checkout. Binaries
 are copies of release builds; fixture controllers, nodes and oracles are the
-release's own tools or the rehearsal's fixture programs. Nothing here is a
+release's own tools or the rehearsal's fixture programs. Receiver process and
+configuration checks live with the root publisher and query-server integration
+tests; deployment transactions use the shared deploy suite. Nothing here is a
 GPU qualification, and the local executor does not enforce the sandbox.
 Status runs --binaries' `pir-query-server`, built with its `status` feature.
 """
@@ -192,86 +194,6 @@ class Rehearsal:
         return {'role': self.name, 'steps': self.steps}
 
 
-def receiver():
-    r = Rehearsal('receiver-serve-publication')
-    fixture = r.binary('rehearsal_fixture')
-    binary = r.binary('receiver-directory')
-    sha = sha256(binary)
-    node = Node(MAINNET_GENESIS)
-    publications = r.work / 'publications'
-    publications.mkdir()
-    stage = lambda name, offset, byte: json.loads(r.run(fixture, 'stage', publications, name, offset, byte).stdout)
-    a = stage('a', 1, 161)
-    node.stage(a)
-    record = r.work / 'input/record/publication.json'
-    record.parent.mkdir(parents=True)
-    def point(published):
-        temporary = record.with_suffix('.tmp')
-        temporary.write_text(json.dumps({'directory': published['directory'], 'revision': published['revision']}))
-        os.replace(temporary, record)
-    point(a)
-    port = free_port()
-    listen = '127.0.0.1:%d' % port
-    origin = 'http://' + listen
-    settings = {'config_path': str(r.work / 'input/config.json'), 'publication_record': str(record),
-                'publication_root': str(publications), 'state_dir': str(r.work / 'worker-state'),
-                'bind': listen, 'rpc_urls': [node.url], 'no_auth': True, 'poll_seconds': 1}
-    exact = lambda offset, byte: [fixture, 'lookup', origin, str(offset), str(byte)]
-    inventory = r.inventory('receiver', 'serve-publication', settings, listen, exact(1, 161))
-    deployer = r.deployer('receiver', inventory)
-    baseline = deployer.capture_baseline()
-    r.step('baseline', target_load_state=baseline['targets']['serve-publication@local']['load_state'])
-    journal = deployer.deploy(sha, binary)
-    r.step('fresh-install', transaction=journal.id, status=journal.status, binary_sha256=sha,
-           exact_answer='deploy exact_check passed (fixture lookup of the staged payments)')
-    health = r.health(origin + '/v1/receiver/health')
-    r.step('serving', session=health['serving'], expected_session=a['session'])
-    assert health['serving'] == a['session']
-    r.executor.systemctl('local', 'restart', 'receiver-serve-publication.service')
-    r.wait('restart serving', lambda: (r.health(origin + '/v1/receiver/health') or {}).get('serving') == a['session'])
-    r.run(*exact(1, 161))
-    r.step('restart', note='re-verified from the record; exact answer after restart')
-    b = stage('b', 2, 178)
-    node.stage(b)
-    point(b)
-    r.wait('update serving', lambda: (r.health(origin + '/v1/receiver/health') or {}).get('serving') == b['session'])
-    r.run(*exact(2, 178))
-    r.step('publication-update', session=b['session'], exact_answer=True)
-    record.write_text(json.dumps({'directory': str(publications / 'a'), 'revision': b['revision']}))
-    refused = r.wait('refusal', lambda: ((r.health(origin + '/v1/receiver/health') or {}).get('publication') or {}).get('refusal'))
-    still = r.health(origin + '/v1/receiver/health')['serving']
-    r.run(*exact(2, 178))
-    r.step('failed-publication-update', refusal=refused, still_serving=still == b['session'])
-    assert still == b['session']
-    point(b)
-    report = r.report('receiver', inventory)
-    r.step('report', report=report)
-    # A configuration update the product's own check refuses changes nothing.
-    bad = dict(settings, publication_record=str(r.work / 'input/record/missing.json'))
-    inventory = r.inventory('receiver', 'serve-publication', bad, listen, exact(2, 178))
-    try:
-        r.deployer('receiver', inventory).deploy(sha, binary)
-        raise AssertionError('a refused configuration deployed')
-    except Exception as error:  # noqa: BLE001
-        message = str(error)
-    r.wait('still serving', lambda: (r.health(origin + '/v1/receiver/health') or {}).get('serving') == b['session'], 30)
-    r.step('failed-configuration-update', refused=message[:300], still_serving=True)
-    # A real configuration update, then its rollback.
-    inventory = r.inventory('receiver', 'serve-publication', dict(settings, poll_seconds=2), listen, exact(2, 178))
-    update = r.deployer('receiver', inventory).deploy(sha, binary)
-    r.step('configuration-update', transaction=update.id, status=update.status)
-    r.deployer('receiver', inventory).rollback(update.id)
-    config = json.loads(Path(settings['config_path']).read_text())
-    r.wait('serving after rollback', lambda: (r.health(origin + '/v1/receiver/health') or {}).get('serving') == b['session'])
-    r.step('rollback-update', poll_seconds=config['poll_seconds'])
-    r.deployer('receiver', inventory).rollback(journal.id)
-    r.step('rollback-install', absent=r.absent('receiver-serve-publication.service'),
-           config_removed=not Path(settings['config_path']).exists(),
-           state_kept=(r.work / 'worker-state').exists())
-    assert r.absent('receiver-serve-publication.service')
-    return r.finish()
-
-
 def enhance():
     r = Rehearsal('enhance-external-worker')
     binary = r.binary('pir-query-server')
@@ -331,7 +253,7 @@ def status_worker():
     return r.finish()
 
 
-ROLES = {'receiver': receiver, 'enhance': enhance, 'status': status_worker}
+ROLES = {'enhance': enhance, 'status': status_worker}
 
 
 def main():
