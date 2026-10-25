@@ -304,12 +304,22 @@ async fn authority_check(
         .clone()
         .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
     let mut answers = Vec::new();
+    let mut canonical = std::collections::BTreeMap::new();
     for &(height, hash) in &request.subjects {
-        let still_authoritative = rpc
-            .block_hash(u64::from(height))
-            .await
-            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
-            == hash;
+        // Several serving identities usually name the same anchor. Check
+        // each height once per request, rather than stretching this live
+        // authority round across another publication with duplicate RPCs.
+        let canonical_hash = if let Some(hash) = canonical.get(&height) {
+            *hash
+        } else {
+            let hash = rpc
+                .block_hash(u64::from(height))
+                .await
+                .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+            canonical.insert(height, hash);
+            hash
+        };
+        let still_authoritative = canonical_hash == hash;
         answers.push(SubjectAnswer {
             subject: (height, hash),
             still_authoritative,
@@ -355,6 +365,62 @@ mod lifecycle_wallet_tests;
 #[cfg(test)]
 mod withdrawal_tests {
     use super::*;
+
+    #[cfg(feature = "fixtures")]
+    #[tokio::test]
+    async fn repeated_anchor_checks_share_one_live_lookup_but_not_across_requests() {
+        use std::sync::atomic::Ordering;
+        let root = tempfile::tempdir().unwrap();
+        let publisher = Publisher::new(Config {
+            state_dir: root.path().into(),
+            salt_hex: "01".repeat(32),
+            window_blocks: 1,
+            private_listen: "127.0.0.1:8480".parse().unwrap(),
+        })
+        .unwrap();
+        let (rpc, server, mock) = source::tests::controlled_chain_fixture(false, false).await;
+        let anchor = rpc.block_hash(1).await.unwrap();
+        mock.hash_reads.store(0, Ordering::SeqCst);
+        *publisher.rpc.write().unwrap() = Some(rpc);
+        publisher.open_authority([1; 32], [1; 32]).unwrap();
+        let current = publisher
+            .published
+            .write()
+            .unwrap()
+            .authority
+            .as_mut()
+            .unwrap()
+            .apply(AuthorityTransition::Publish(PublicationReference::new(
+                [7; 32],
+                pir_publication::ObjectReference::for_bytes(b"inventory"),
+                StatusDescriptor { generation: 1 },
+            )))
+            .unwrap()
+            .clone();
+        let request = AnchorCheckRequest {
+            authority: current.authority().unwrap(),
+            subjects: vec![(1, anchor), (1, [0xff; 32]), (1, anchor)],
+        };
+        for reads in [1, 2] {
+            let answer = authority_check(State(publisher.clone()), Json(request.clone()))
+                .await
+                .unwrap()
+                .0;
+            assert_eq!(
+                answer.answers.iter().map(|a| a.subject).collect::<Vec<_>>(),
+                request.subjects
+            );
+            assert_eq!(request.verdicts(answer).unwrap(), [true, false, true]);
+            assert_eq!(mock.hash_reads.load(Ordering::SeqCst), reads);
+        }
+        publisher.withdraw();
+        assert_eq!(
+            authority_check(State(publisher), Json(request)).await.err(),
+            Some(StatusCode::CONFLICT)
+        );
+        assert_eq!(mock.hash_reads.load(Ordering::SeqCst), 2);
+        server.abort();
+    }
 
     #[test]
     fn withdrawals_and_recoveries_refuse_earlier_preparations() {

@@ -347,6 +347,18 @@ impl PublicationAdapter for StatusPublication {
             }
             (CandidateMaterial::LoadFromCache, required)
         };
+        // Keep the selected worker view throughout bulk transfer and loading,
+        // not just during the final commit. Otherwise two ordinary refreshes
+        // can evict it while the router prepares its matching packing material.
+        // This reserves retention only; authority is still checked after load.
+        if self.service.role == Role::Router
+            && worker_handover::pin(&self.service, &inventory.manifest).await?
+                == PeerReservation::PeerAdvanced
+        {
+            self.poll_soon = true;
+            self.waiting("waiting_for_worker_pin").await;
+            return Ok(PublicationPlan::Deferred);
+        }
         Ok(PublicationPlan::Candidate {
             identity: view(&inventory.manifest),
             candidate: StatusCandidate {
@@ -385,10 +397,10 @@ impl PublicationAdapter for StatusPublication {
                 let loading = inventory.clone();
                 let material = self.service.material();
                 tokio::task::spawn_blocking(move || {
-                    Generation::load_prepared(
+                    Generation::load_prepared_cached(
                         &loading,
                         material,
-                        |object| cache.object_path(object),
+                        &cache,
                         previous.as_deref(),
                     )
                 })
@@ -449,6 +461,15 @@ impl PublicationAdapter for StatusPublication {
             return Ok(loaded);
         };
         inventory.authorize(&inventory_object, envelope, loaded.authorization)?;
+        if loaded.authorization == InventoryAuthorization::RetainedHandover
+            && worker_handover::pin(&self.service, &inventory.manifest).await?
+                == PeerReservation::PeerAdvanced
+        {
+            // The original view remains pinned. If the worker advanced again
+            // or both hold slots are occupied, commit that still-fresh view
+            // rather than discarding its loaded material to chase metadata.
+            return Ok(loaded);
+        }
         Ok(StatusLoaded {
             inventory,
             inventory_object,

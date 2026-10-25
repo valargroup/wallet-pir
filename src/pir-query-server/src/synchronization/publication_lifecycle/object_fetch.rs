@@ -5,7 +5,8 @@ use std::path::PathBuf;
 
 /// Fetches objects for one pass within the source's aggregate byte budget.
 /// Every object is verified against its full length and SHA-256 before it is
-/// promoted; a cached object is re-verified before reuse.
+/// promoted; a cached object is verified before reuse, with settled integrity
+/// evidence reused only while its exact file identity remains unchanged.
 pub struct ObjectFetcher<'a> {
     source: &'a mut HttpsSource,
     cache: &'a ObjectCache,

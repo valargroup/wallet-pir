@@ -11,6 +11,13 @@ fn native_client_decodes_real_server_two_mask_material() {
         .unwrap_or(32);
     let snapshot = fixture::snapshot(entries, false).unwrap();
     let (g, _) = Generation::prepare(&snapshot, 1, 1, now_ms(), None).unwrap();
+    let (refreshed, stats) = Generation::prepare(&snapshot, 2, 1, now_ms(), Some(&g)).unwrap();
+    assert!(g.shares_prepared_allocations(&refreshed));
+    assert_eq!(stats.rebuilt_units, 0);
+    assert_eq!(stats.packing_ms, 0.);
+    assert_ne!(g.manifest().id(), refreshed.manifest().id());
+    // Exercise the new identity's encrypted answers using the shared material.
+    let g = refreshed;
     assert_eq!(
         g.public().len(),
         zakura_pir_query_server::native::public_len(server::COLS)

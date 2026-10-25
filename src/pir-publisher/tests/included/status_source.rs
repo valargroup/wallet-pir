@@ -5,27 +5,33 @@ use super::*;
 use axum::{extract::State, routing::post, Json, Router};
 use serde_json::{json, Value};
 use std::sync::{
-    atomic::{AtomicUsize, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc, RwLock,
 };
 
 #[derive(Clone)]
-struct Mock {
+pub(crate) struct Mock {
     block_hex: String,
     hash: String,
     mempool_id: Arc<RwLock<String>>,
     tip_reads: Arc<AtomicUsize>,
-    move_tip: bool,
+    move_tip: Arc<AtomicBool>,
     bad_block_hash: bool,
+    pub(crate) hash_reads: Arc<AtomicUsize>,
 }
 
 async fn rpc(State(mock): State<Mock>, Json(input): Json<Value>) -> Json<Value> {
     let result = match input["method"].as_str().unwrap() {
         "getblockcount" => {
             let n = mock.tip_reads.fetch_add(1, Ordering::SeqCst);
-            json!(if mock.move_tip && n > 0 { 2 } else { 1 })
+            json!(if mock.move_tip.load(Ordering::SeqCst) && n > 0 {
+                2
+            } else {
+                1
+            })
         }
         "getblockhash" => {
+            mock.hash_reads.fetch_add(1, Ordering::SeqCst);
             if mock.bad_block_hash && input["params"][0].as_u64() == Some(1) {
                 json!("00".repeat(32))
             } else {
@@ -55,17 +61,26 @@ pub(crate) async fn controlled_fixture(
     tokio::task::JoinHandle<()>,
     Arc<RwLock<String>>,
 ) {
+    let (client, job, mock) = controlled_chain_fixture(move_tip, bad_block_hash).await;
+    (client, job, mock.mempool_id)
+}
+
+pub(crate) async fn controlled_chain_fixture(
+    move_tip: bool,
+    bad_block_hash: bool,
+) -> (ZakuraClient, tokio::task::JoinHandle<()>, Mock) {
     let (block_hex, hash, mempool_id) = zakura_server_chain::testing::status::regtest_genesis();
     let mempool_id = Arc::new(RwLock::new(mempool_id));
-    let control = mempool_id.clone();
     let mock = Mock {
         block_hex,
         hash,
         mempool_id,
         tip_reads: Arc::new(AtomicUsize::new(0)),
-        move_tip,
+        move_tip: Arc::new(AtomicBool::new(move_tip)),
         bad_block_hash,
+        hash_reads: Arc::new(AtomicUsize::new(0)),
     };
+    let control = mock.clone();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let job = tokio::spawn(async move {
@@ -202,6 +217,50 @@ async fn checkpoint_recovers_only_as_a_cache_and_reobserves_canonical_source() {
         recovered.observe(&client).await.unwrap().snapshot.digest,
         first_digest
     );
+    job.abort();
+}
+
+#[tokio::test]
+async fn unchanged_source_reuses_rows_only_after_a_successful_fresh_observation() {
+    let (client, job, mock) = controlled_chain_fixture(false, false).await;
+    let mut window = RollingWindow::new([1; 32], 1).unwrap();
+    let first = window.observe(&client).await.unwrap();
+    let second = window.observe(&client).await.unwrap();
+    assert!(Arc::ptr_eq(&first.snapshot, &second.snapshot));
+    assert!(second.observed_ms >= first.observed_ms);
+
+    // A failed source read cannot mint freshness from cached index bytes.
+    *mock.mempool_id.write().unwrap() = "invalid transaction id".into();
+    assert!(window.observe(&client).await.is_err());
+    *mock.mempool_id.write().unwrap() = "77".repeat(32);
+    let changed = window.observe(&client).await.unwrap();
+    assert!(!Arc::ptr_eq(&second.snapshot, &changed.snapshot));
+    assert_ne!(second.snapshot.digest, changed.snapshot.digest);
+    let repeated = window.observe(&client).await.unwrap();
+    assert!(Arc::ptr_eq(&changed.snapshot, &repeated.snapshot));
+
+    // Fork observations are part of the index input too.
+    window.forks.push(ForkRecord {
+        txid: [0x55; 32],
+        height: 1,
+        block: [0x66; 32],
+    });
+    let forked = window.observe(&client).await.unwrap();
+    assert_ne!(forked.snapshot.digest, repeated.snapshot.digest);
+    assert!(!Arc::ptr_eq(&forked.snapshot, &repeated.snapshot));
+    mock.move_tip.store(true, Ordering::SeqCst);
+    assert!(matches!(
+        window
+            .snapshot(
+                &client,
+                forked.snapshot.network,
+                1,
+                forked.snapshot.anchor,
+                Instant::now()
+            )
+            .await,
+        Err(SourceError::TipChanged)
+    ));
     job.abort();
 }
 

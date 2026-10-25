@@ -2032,7 +2032,6 @@ async fn router_rebinds_loaded_material_to_its_workers_fresh_metadata() {
         let mut inventory = export(&source, &first);
         let object = publish_inventory(&source, &mut inventory);
         let mut refreshed = export(&source, &next);
-        let refreshed_object = publish_inventory(&source, &mut refreshed);
         let first = first.reobserved(inventory.manifest.observed_ms);
         let next = next.reobserved(refreshed.manifest.observed_ms);
         *source.current.write().unwrap() = Current {
@@ -2076,6 +2075,24 @@ async fn router_rebinds_loaded_material_to_its_workers_fresh_metadata() {
         tokio::time::timeout(Duration::from_secs(10), reached.notified())
             .await
             .unwrap();
+        // The worker must keep the selected view while the router downloads
+        // and loads it. Pinning only after that work lets ordinary worker
+        // refreshes evict it and forces the router to load the bytes again.
+        assert!(worker
+            .state
+            .lock()
+            .await
+            .router_holds
+            .iter()
+            .any(|held| { held.manifest().id() == inventory.manifest.id() }));
+        let intermediate = next.clone();
+        refreshed.manifest.generation += 1;
+        let refreshed_object = publish_inventory(&source, &mut refreshed);
+        let next = next.reidentified(
+            refreshed.manifest.generation,
+            refreshed.manifest.recovery_epoch,
+            refreshed.manifest.observed_ms,
+        );
         *source.current.write().unwrap() = Current {
             scope: scope(NETWORK, SALT),
             sequence: 8,
@@ -2083,7 +2100,19 @@ async fn router_rebinds_loaded_material_to_its_workers_fresh_metadata() {
         };
         {
             let mut state = worker.state.lock().await;
+            state
+                .controller
+                .as_ref()
+                .unwrap()
+                .activate(intermediate)
+                .unwrap();
             state.controller.as_ref().unwrap().activate(next).unwrap();
+            assert!(state
+                .controller
+                .as_ref()
+                .unwrap()
+                .resolve(inventory.manifest.id())
+                .is_ok());
             state.inventory = Some(refreshed_object);
         }
         resume.notify_one();

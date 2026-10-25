@@ -33,7 +33,7 @@ pub use authority_floor::{
     AuthorityFloor, AuthorityFloorError, CheckedSuccession, PendingFloorWrite, SourceBinding,
     StaleSuccessionCheck, WrittenFloor,
 };
-pub use object_cache::{ObjectCache, PartialObject};
+pub use object_cache::{ObjectCache, PartialObject, VerifiedObjectFile};
 pub use object_file::{hash_object_file, open_object_file, FileIdentity, ObjectFileError};
 pub use object_installation::{InstalledObject, ObjectInstaller};
 pub use object_reference::{

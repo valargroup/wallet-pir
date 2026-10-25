@@ -2,11 +2,7 @@
 //! computing hints or packing matrices on query hosts.
 use super::*;
 use crate::publication::{self, Failure, Inventory};
-use pir_publication::ObjectReference;
-use std::{
-    fs::File,
-    io::{Read, Write},
-};
+use pir_publication::{ObjectCache, ObjectReference, VerifiedObjectFile};
 
 /// Which prepared material a serving process holds beside the public
 /// parameters: a worker evaluates over the serving units, a router packs
@@ -67,23 +63,54 @@ impl Generation {
         })
     }
 
-    /// Caller verifies the inventory and files and holds their immutable inodes.
-    /// This repeats each file's digest check at the loader boundary.
+    /// Load from physical paths, verifying each object at the loader boundary.
     pub fn load_prepared(
         inventory: &Inventory,
         material: PreparedMaterial,
         object: impl Fn(&ObjectReference) -> std::io::Result<std::path::PathBuf>,
         previous: Option<&Self>,
     ) -> Result<Self, Failure> {
+        Self::load_verified(
+            inventory,
+            material,
+            |item| VerifiedObjectFile::open(object(item)?, item),
+            previous,
+        )
+    }
+
+    /// Load through the same cache that verified the transfer. Unchanged,
+    /// settled inodes reuse that evidence instead of hashing their bodies at
+    /// both the fetch and load boundaries. Restarted caches verify afresh.
+    pub fn load_prepared_cached(
+        inventory: &Inventory,
+        material: PreparedMaterial,
+        cache: &ObjectCache,
+        previous: Option<&Self>,
+    ) -> Result<Self, Failure> {
+        Self::load_verified(
+            inventory,
+            material,
+            |item| {
+                cache.open_verified(item)?.ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        "Status prepared object disappeared",
+                    )
+                })
+            },
+            previous,
+        )
+    }
+
+    fn load_verified(
+        inventory: &Inventory,
+        material: PreparedMaterial,
+        object: impl Fn(&ObjectReference) -> std::io::Result<VerifiedObjectFile>,
+        previous: Option<&Self>,
+    ) -> Result<Self, Failure> {
         inventory.validate_material()?;
-        let read = |o: &ObjectReference| -> Result<Vec<u8>, Failure> {
-            let mut bytes = Vec::new();
-            File::open(object(o)?)?
-                .take(o.bytes + 1)
-                .read_to_end(&mut bytes)?;
-            o.verify(&bytes)?;
-            Ok(bytes)
-        };
+        let read =
+            |o: &ObjectReference| -> Result<Vec<u8>, Failure> { Ok(object(o)?.read_bytes()?) };
         let public = read(&inventory.public)?;
         if Sha256::digest(&public)[..] != inventory.manifest.public_digest {
             return Err("Status public parameters digest differs".into());
@@ -99,7 +126,11 @@ impl Generation {
             for (i, item) in inventory.units.iter().enumerate() {
                 let bytes = read(item)?;
                 rows_hash.update(&bytes);
-                let digest: Hash = Sha256::digest(&bytes).into();
+                // The opened object's complete bytes already matched this
+                // digest. Hashing them again cannot add integrity evidence.
+                let digest: Hash = hex::decode(&item.sha256)?
+                    .try_into()
+                    .map_err(|_| "Status unit digest length differs")?;
                 if let Some(unit) = previous
                     .filter(|p| {
                         p.manifest.network == inventory.manifest.network
@@ -137,16 +168,11 @@ impl Generation {
             #[cfg(feature = "native-reinspiring")]
             let mut blocks = Vec::new();
             for item in &inventory.packing {
-                let file = File::open(object(item)?)?;
-                let mut hash = Sha256::new();
-                let mut reader = &file;
-                let n = std::io::copy(&mut reader, &mut HashWriter(&mut hash))?;
-                if n != item.bytes || hex::encode(hash.finalize()) != item.sha256 {
-                    return Err("Status packing digest differs".into());
-                }
+                let file = object(item)?;
                 // SAFETY: downloads publish read-only immutable inodes with atomic
                 // rename; collection only unlinks them. The mapping pins this inode.
-                let map = unsafe { memmap2::Mmap::map(&file)? };
+                let map = unsafe { memmap2::Mmap::map(file.file())? };
+                file.check()?;
                 #[cfg(feature = "native-reinspiring")]
                 {
                     let setup =
@@ -178,15 +204,5 @@ impl Generation {
             }
         }
         Ok(generation)
-    }
-}
-struct HashWriter<'a>(&'a mut Sha256);
-impl Write for HashWriter<'_> {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        self.0.update(bytes);
-        Ok(bytes.len())
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
     }
 }
