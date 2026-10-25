@@ -66,6 +66,8 @@ class Coordinator(FakeFleet):
             raise RemoteError('reply lost after completed service mutation')
 
     def http_get(self, host, url, timeout=5):
+        if url.endswith('/.well-known/pir-service-discovery'):
+            return FakeFleet.http_get(self, host, url, timeout)
         if (host, url) in self.endpoints:
             status, body = FakeFleet.http_get(self, host, url, timeout)
             value = json.loads(body)

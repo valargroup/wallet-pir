@@ -483,7 +483,7 @@ class Deployer:
         """
         hosts = list(dict.fromkeys(hosts))
         if not hosts:
-            return
+            return {}
         for host in hosts:
             self.lock.verify()
             if journal:
@@ -496,6 +496,7 @@ class Deployer:
             for host, info in zip(hosts, identities):
                 journal.event('staged', host=host,
                               contract=info.to_json() if info is not None else 'unknown')
+        return dict(zip(hosts, identities))
 
     def stage_host(self, host, sha, binary, partial):
         """Verify or upload one immutable release under the caller's lock."""
@@ -539,6 +540,41 @@ class Deployer:
                                       % (host, code, output[-500:]))
         self.out('%s: staged %s and it runs' % (host, path))
         return info
+
+    def contract_guard(self, plans, identities, journal):
+        """Refuse a forward deploy that would leave a consumer on another contract major.
+
+        Every changing query process that reads an HTTPS publisher, CUDA
+        workers and unified nodes included, must run a candidate whose
+        compiled major equals what each of its publishers advertises now,
+        observed from that consumer's host. Unknown on either side refuses:
+        a contract-major change goes through `fleet-release-*`, which moves
+        publishers and every consumer together. Runs after staging and before
+        any unit changes.
+        """
+        from .fleet_release import observe_publisher, publisher_origins
+        refusals = []
+        for plan in plans:
+            target = plan.target
+            if (target.role.binary or self.service.binary) != 'pir-query-server':
+                continue
+            origins = sorted(publisher_origins(target.settings))
+            if not origins:
+                continue
+            info = identities.get(target.host)
+            if info is None:
+                refusals.append('%s: candidate reports no contract identity, so compatibility with %s is unknown'
+                                % (target.key, ', '.join(origins)))
+                continue
+            for origin in origins:
+                observed = observe_publisher(self.ex, target.host, origin)
+                journal.event('publisher contract', target=target.key, origin=origin, major=observed['major'])
+                if observed['major'] != info.contract_major:
+                    refusals.append('%s: candidate contract major %d, publisher %s advertises %s; use fleet-release'
+                                    % (target.key, info.contract_major, origin,
+                                       'an unknown major' if observed['major'] is None else observed['major']))
+        if refusals:
+            raise DeployError('refused before any restart:\n  ' + '\n  '.join(refusals))
 
     def contract_info(self, host, path, name, sha):
         """The staged executable's compiled contract identity, or None for an older release.
@@ -704,7 +740,8 @@ class Deployer:
             journal.event('replaces incomplete transaction', transaction=latest.id, status=latest.status)
         self.out('transaction %s (%s)' % (journal.id, journal.path))
         try:
-            self.stage(list(dict.fromkeys(p.target.host for p in restart)), sha, binary, journal)
+            identities = self.stage(list(dict.fromkeys(p.target.host for p in restart)), sha, binary, journal)
+            self.contract_guard(restart, identities, journal)
             self.product_checks(journal, sha)
             journal.set_status('activating')
             for index, record in enumerate(journal.hosts):

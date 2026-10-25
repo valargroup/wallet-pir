@@ -15,7 +15,7 @@ import shlex
 import tempfile
 import time
 
-from .. import durable, release
+from .. import contract, durable, release
 from ..fleet import Fleet
 from ..paths import ROOT
 from . import descriptors, publisher_products, units
@@ -469,6 +469,7 @@ class Cutover:
             self.effect(journal, 'stage configuration', lambda: self.write(staged_config, plan['desired'][CONFIG]))
             code, output = self.ex.run(self.host, [plan['binary'], '--config', staged_config, '--check'], 60)
             require(code == 0, 'staged publisher refuses its configuration: ' + output[-1000:])
+            self.contract_guard(plan['binary'])
             self.serving.stage(journal, serving_binary)
             self.unchanged_during_staging(plan)
             self.resources()
@@ -609,6 +610,32 @@ class Cutover:
                 self.require_stopped_load()
             self.save(journal, 'committed')
             return journal
+
+    def contract_guard(self, binary):
+        """Refuse a staged publisher whose contract major differs from the running one's.
+
+        Consumers keep running through a publisher update, so this path may only
+        keep the major the publisher advertises now; a major change goes through
+        `fleet-release-*`. A stopped or absent publisher has no consumers using
+        its contract, so only the candidate's own report is required then.
+        """
+        code, output = self.ex.run(self.host, [binary, *contract.CONTRACT_INFO_ARGV], 60)
+        require(code == 0, 'staged publisher reports no contract identity, so consumer compatibility is unknown')
+        try:
+            candidate = contract.parse_contract_info(output, executable='pir-publisher',
+                                                     sha256=self.request['release']['binary_sha256'])
+        except contract.ContractError as error:
+            raise DeployError('staged publisher: %s' % error)
+        if self.ex.probe_unit(self.host, UNIT).get('active_state') != 'active':
+            return
+        try:
+            status, body = self.ex.http_get(self.host, 'http://127.0.0.1:18080' + contract.DISCOVERY_PATH)
+            running = contract.publisher_document_major(status, body)
+        except (contract.ContractError, RemoteError, OSError) as error:
+            raise DeployError('running publisher contract major is unknown (%s); use fleet-release' % error)
+        require(running == candidate.contract_major,
+                'staged publisher contract major %d differs from the running major %d; use fleet-release'
+                % (candidate.contract_major, running))
 
     def stage(self, binary, target):
         self.ex.mkdir(self.host, str(Path(target).parent), 0o755)
