@@ -28,7 +28,7 @@ runs:
       run: python3 tools/ci/hosted_tools.py probe
     - name: Install hosted toolchain
       if: runner.environment != 'self-hosted' && env.WALLET_PIR_HOSTED_TOOLS_READY != '1' && steps.prerequisites.outputs.rust-ready != 'true'
-      uses: dtolnay/rust-toolchain@stable
+      uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec  # stable
       with:
         toolchain: ${{ steps.prerequisites.outputs.toolchain }}
         components: rustfmt, clippy
@@ -88,7 +88,7 @@ runs:
     - name: Restore hosted Cargo cache
       id: restore
       if: runner.environment != 'self-hosted' && inputs.lane != 'fast' && inputs.lane != 'full-test'
-      uses: Swatinem/rust-cache@v2
+      uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2
       with:
         prefix-key: v1-wallet-pir
         shared-key: ${{ steps.identity.outputs.shared-key }}
@@ -108,7 +108,7 @@ runs:
     - name: Restore hosted workspace snapshot
       id: workspace
       if: runner.environment != 'self-hosted' && (inputs.lane == 'fast' || inputs.lane == 'full-test') && (github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && inputs.lane == 'fast'))
-      uses: actions/cache@v4
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4
       with:
         path: |
           ~/.cargo/registry
@@ -120,7 +120,7 @@ runs:
     - name: Restore hosted workspace snapshot without saving
       id: workspace-restore
       if: runner.environment != 'self-hosted' && (inputs.lane == 'fast' || inputs.lane == 'full-test') && !(github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && inputs.lane == 'fast'))
-      uses: actions/cache/restore@v4
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830  # v4
       with:
         path: |
           ~/.cargo/registry

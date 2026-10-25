@@ -37,7 +37,7 @@ jobs:
       enhance: ${{ steps.affected.outputs.enhance }}
       cuda: ${{ steps.affected.outputs.cuda }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
           persist-credentials: false
       - name: Select services since each last qualified ancestor
@@ -113,7 +113,7 @@ jobs:
     if: ${{ !cancelled() && needs.select.outputs.ops == 'true' && needs.common.result == 'success' && needs.ops.result == 'success' }}
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
           persist-credentials: false
       - uses: ./.github/actions/qualify-artifacts
@@ -126,7 +126,7 @@ jobs:
     if: ${{ !cancelled() && needs.select.outputs.receiver == 'true' && needs.common.result == 'success' && needs.receiver.result == 'success' && needs.shared.result == 'success' }}
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
           persist-credentials: false
       - uses: ./.github/actions/qualify-artifacts
@@ -139,7 +139,7 @@ jobs:
     if: ${{ !cancelled() && needs.select.outputs.transparent == 'true' && needs.common.result == 'success' && needs.transparent.result == 'success' && needs.shared.result == 'success' }}
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
           persist-credentials: false
       - uses: ./.github/actions/qualify-artifacts
@@ -152,7 +152,7 @@ jobs:
     if: ${{ !cancelled() && needs.select.outputs.enhance == 'true' && needs.common.result == 'success' && needs.enhance.result == 'success' && needs.shared.result == 'success' }}
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
           persist-credentials: false
       - uses: ./.github/actions/qualify-artifacts
@@ -165,7 +165,7 @@ jobs:
     if: ${{ !cancelled() && needs.select.outputs.cuda == 'true' && needs.common.result == 'success' && needs.shared.result == 'success' && needs.enhance.result == 'success' }}
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
           persist-credentials: false
       - uses: ./.github/actions/qualify-artifacts

@@ -10,7 +10,7 @@ inputs:
 runs:
   using: composite
   steps:
-    - uses: actions/download-artifact@v4
+    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
       if: inputs.cuda != 'true'
       with:
         name: candidate-${{ inputs.family }}-${{ github.sha }}
@@ -21,7 +21,7 @@ runs:
         FAMILY: ${{ inputs.family }}
       shell: bash
       run: umask 022 && python3 tools/ci/qualification.py verify --family "$FAMILY" --sha "$GITHUB_SHA"
-    - uses: actions/upload-artifact@v4
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
       if: inputs.cuda != 'true' && (inputs.family == 'ops')
       with:
         name: wallet-pir-ops-${{ github.sha }}
@@ -30,7 +30,7 @@ runs:
         compression-level: 0
         if-no-files-found: error
         retention-days: 14
-    - uses: actions/upload-artifact@v4
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
       if: inputs.cuda != 'true' && (inputs.family == 'receiver')
       with:
         name: receiver-pir-${{ github.sha }}
@@ -39,7 +39,7 @@ runs:
         compression-level: 0
         if-no-files-found: error
         retention-days: 14
-    - uses: actions/upload-artifact@v4
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
       if: inputs.cuda != 'true' && (inputs.family == 'transparent')
       with:
         name: transparent-shard-${{ github.sha }}
@@ -48,7 +48,7 @@ runs:
         compression-level: 0
         if-no-files-found: error
         retention-days: 14
-    - uses: actions/upload-artifact@v4
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
       if: inputs.cuda != 'true' && (inputs.family == 'transparent')
       with:
         name: transparent-publisher-${{ github.sha }}
@@ -57,7 +57,7 @@ runs:
         compression-level: 0
         if-no-files-found: error
         retention-days: 14
-    - uses: actions/upload-artifact@v4
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
       if: inputs.cuda != 'true' && (inputs.family == 'transparent')
       with:
         name: transparent-txid-display-${{ github.sha }}
@@ -66,7 +66,7 @@ runs:
         compression-level: 0
         if-no-files-found: error
         retention-days: 14
-    - uses: actions/upload-artifact@v4
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
       if: inputs.cuda != 'true' && (inputs.family == 'enhance')
       with:
         name: enhance-pir-${{ github.sha }}
@@ -75,7 +75,7 @@ runs:
         compression-level: 0
         if-no-files-found: error
         retention-days: 14
-    - uses: actions/upload-artifact@v4
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
       if: inputs.cuda != 'true' && (inputs.family == 'enhance')
       with:
         name: enhance-pir-native-${{ github.sha }}
@@ -84,7 +84,7 @@ runs:
         compression-level: 0
         if-no-files-found: error
         retention-days: 14
-    - uses: actions/upload-artifact@v4
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
       if: inputs.cuda != 'true' && (inputs.family == 'enhance')
       with:
         name: status-pir-${{ github.sha }}
@@ -93,7 +93,7 @@ runs:
         compression-level: 0
         if-no-files-found: error
         retention-days: 14
-    - uses: actions/download-artifact@v4
+    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
       if: inputs.cuda == 'true'
       with:
         name: candidate-native-cuda-${{ github.sha }}
@@ -104,7 +104,7 @@ runs:
       run: >-
         umask 022 && python3 tools/ci/qualification.py verify --family enhance --cuda
         --sha "$GITHUB_SHA" --output release-bundles-native-cuda
-    - uses: actions/upload-artifact@v4
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
       if: inputs.cuda == 'true'
       with:
         name: enhance-pir-native-cuda-${{ github.sha }}
@@ -113,7 +113,7 @@ runs:
         compression-level: 0
         if-no-files-found: error
         retention-days: 14
-    - uses: actions/upload-artifact@v4
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
       if: inputs.cuda != 'true' && inputs.family == 'enhance'
       with:
         name: pir-publisher-${{ github.sha }}

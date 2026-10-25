@@ -49,7 +49,7 @@ jobs:
     # compile time; a compile over five minutes still fails. GitHub's default
     # job timeout remains the runaway safety limit.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
           fetch-depth: 1
       - name: Fetch comparison revision
@@ -125,7 +125,7 @@ jobs:
     outputs:
       cuda: ${{ steps.affected.outputs.cuda }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - name: Select CUDA contracts and dependencies
         id: affected
         env:

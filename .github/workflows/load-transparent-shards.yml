@@ -148,12 +148,12 @@ jobs:
           sku_re='^[A-Za-z0-9._ /-]+$'
           [[ -z "$HOST_SKU" || "$HOST_SKU" =~ $sku_re ]] || { echo "host_sku has characters the report must not carry"; exit 1; }
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
           ref: ${{ inputs.ref }}
           persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec  # stable
         with:
           toolchain: 1.97.1
 
@@ -219,7 +219,7 @@ jobs:
             jq -r '"stopped at: \(.stopped_at_concurrency // "none"); reason: \(.stop_reason // "steps exhausted")"' load/report.json
           } >>"$GITHUB_STEP_SUMMARY"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         if: always()
         with:
           name: transparent-load-${{ inputs.run_id }}
