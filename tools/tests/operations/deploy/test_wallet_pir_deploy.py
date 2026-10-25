@@ -1405,6 +1405,21 @@ class CommandLineTests(Fleet):
         self.assertEqual(self.run_cli('rollback', 'enhance'), 0)
         self.assertTrue(all(self.running(h, u) == OLD_SHA for h, u in ENHANCE))
 
+    def test_submission_time_starts_the_release_clock(self):
+        import time
+        self.enhance_fleet()
+        self.deployer()
+        submitted = time.time() - 120
+        self.assertEqual(self.serving_cli('deploy', 'enhance', '--binary', str(self.binary), '--retire-historical',
+                                          '--submitted-unix', str(submitted)), 0)
+        journal = Journal.load(self.state, 'enhance')
+        self.assertEqual(journal.data['source']['submitted_unix'], submitted)
+        self.assertEqual(self.run_cli('status', 'enhance'), 0)
+        self.assertTrue(any('source_to_accepted' in line for line in self.lines), self.lines)
+        self.assertEqual(self.serving_cli('deploy', 'enhance', '--binary', str(self.binary),
+                                          '--submitted-unix', str(time.time() + 3600)), 1)
+        self.assertTrue(any('must be a past Unix time' in line for line in self.lines))
+
     def test_plan_and_preflight_name_a_drop_in_on_a_unit_its_role_owns(self):
         self.receiver_fleet()
         path = dropin('receiver-pir.service', '50-key.conf')

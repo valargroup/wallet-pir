@@ -8,6 +8,7 @@ import subprocess
 import shlex
 import sys
 import tempfile
+import time
 
 from . import descriptors
 from .engine import Deployer, DeployError, file_sha256
@@ -133,6 +134,18 @@ def target_binary(args, service, state_dir):
     binary when the group did not name one. An archive contributes that file;
     its sha256, not the archive's, names the release directory.
     """
+    sha, path, source = _target_binary(args, service, state_dir)
+    submitted = getattr(args, 'submitted_unix', None)
+    if submitted is not None:
+        # The release clock starts at source submission, before compilation and
+        # any wait for the production lock; journal status reports it.
+        if not 0 < submitted <= time.time():
+            raise DeployError('--submitted-unix must be a past Unix time')
+        source = {**source, 'submitted_unix': submitted}
+    return sha, path, source
+
+
+def _target_binary(args, service, state_dir):
     chosen = [flag for flag in ('binary', 'archive', 'sha256') if getattr(args, flag)]
     if len(chosen) != 1:
         raise DeployError('give exactly one of --binary, --archive (with --sha) or --sha256')
@@ -344,6 +357,8 @@ def parser():
                                  help='under the lock, upload the release directory and run its self-check')
         if name == 'deploy':
             command.add_argument('--skip-exact-check', action='store_true')
+            command.add_argument('--submitted-unix', type=float,
+                                 help='when the source revision was submitted; starts the release clock')
             command.add_argument('--hold-on-failure', action='store_true',
                                  help='leave changed targets in place for operator repair instead of rolling back')
     command = commands.add_parser('rollback')
