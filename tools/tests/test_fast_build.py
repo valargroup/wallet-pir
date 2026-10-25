@@ -391,7 +391,7 @@ class FastBuildTests(unittest.TestCase):
         # HTTP target is compiled for every subset. Host tests stay there too.
         self.assertEqual(stable_tests, [
             'ci_smoke', 'commands', 'enhance', 'immutable_objects', 'lifecycle',
-            'object_access_http', 'operator', 'transparent'])
+            'object_access_http', 'operator', 'receiver_ci_smoke', 'transparent'])
         self.assertEqual(hint_tests, ['ci_hint', 'operator'])
         transparent = self._cargo_tests(['transparent-publisher'])
         self.assertEqual(len(transparent), 1)
