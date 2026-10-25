@@ -81,6 +81,41 @@ def incremental_candidates(root, *, age=86400, now=None, references=()):
     return sorted(result)
 
 
+def compiler_processes(proc=Path('/proc')):
+    """Process ids whose command name is cargo or rustc."""
+    found = []
+    for process in proc.glob('[0-9]*'):
+        if not process.name.isdigit():
+            continue
+        try:
+            command = (process / 'comm').read_text(encoding='utf-8', errors='replace').strip()
+        except OSError:
+            continue
+        if command in {'cargo', 'rustc'}:
+            found.append(int(process.name))
+    return sorted(found)
+
+
+def wait_for_compilers(timeout, *, proc=Path('/proc'), sleep=time.sleep, clock=time.monotonic):
+    """Wait until a cancelled compile has left this runner.
+
+    Cancel-in-progress starts the next fast job while the previous rustc can
+    still be alive. Two release-fast compilers exceed the fast runner's memory
+    cap and the out-of-memory kill drops the runner. Waiting fails the job
+    instead of starting the second compiler.
+    """
+    if timeout <= 0:
+        raise ValueError('compiler wait must be positive')
+    deadline = clock() + timeout
+    while True:
+        running = compiler_processes(proc)
+        if not running:
+            return []
+        if clock() >= deadline:
+            raise TimeoutError(f'cargo or rustc still running after {timeout:.0f}s: {running}')
+        sleep(min(0.5, max(0.0, deadline - clock())))
+
+
 def drop_target_incremental(target):
     """Remove incremental sessions from one Cargo target.
 
@@ -147,14 +182,24 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', type=Path)
     parser.add_argument('--drop-incremental-target', type=Path)
+    parser.add_argument('--wait-compilers-exit', type=float, metavar='SECONDS')
     parser.add_argument('--apply', action='store_true')
     parser.add_argument('--keep', type=int, default=2)
     parser.add_argument('--minimum-free-gib', type=int, default=10)
     parser.add_argument('--diagnostics', type=Path)
     args = parser.parse_args()
-    if args.drop_incremental_target:
+    if args.drop_incremental_target or args.wait_compilers_exit is not None:
         if args.root is not None or args.apply or args.diagnostics is not None:
-            parser.error('--drop-incremental-target does not combine with cache maintenance')
+            parser.error('compiler recovery does not combine with cache maintenance')
+        if args.drop_incremental_target and args.wait_compilers_exit is not None:
+            parser.error('drop incremental sessions and wait for compilers separately')
+        if args.wait_compilers_exit is not None:
+            try:
+                wait_for_compilers(args.wait_compilers_exit)
+            except TimeoutError as error:
+                raise SystemExit(str(error)) from error
+            print(json.dumps({'compilers': []}, sort_keys=True))
+            return
         print(json.dumps({'incremental': drop_target_incremental(args.drop_incremental_target)}, sort_keys=True))
         return
     if args.root is None:

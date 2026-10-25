@@ -87,6 +87,13 @@ jobs:
         # link can grow past the cap. Fingerprints and finished artifacts stay.
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && !inputs.hosted && steps.affected.outputs.rust == 'true'
         run: python3 tools/ci/runner_storage.py --drop-incremental-target "$CARGO_TARGET_DIR"
+      - name: Wait for a cancelled compile to exit
+        # The concurrency group cancels the previous job without waiting for
+        # its rustc. Two compilers on this cgroup drop the runner and upload
+        # no log. An idle runner returns immediately, so the wait is not part
+        # of a normal three-minute measurement.
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && !inputs.hosted && steps.affected.outputs.rust == 'true'
+        run: python3 tools/ci/runner_storage.py --wait-compilers-exit 30
       - name: Run affected fast checks
         env:
           BASE: ${{ env.FAST_BASE }}

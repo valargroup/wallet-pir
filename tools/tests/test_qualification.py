@@ -322,6 +322,46 @@ class StorageTests(unittest.TestCase):
             self.assertEqual(binary.read_bytes(), b'compiled')
             self.assertTrue(other.is_symlink())
 
+    def test_compiler_wait_returns_as_soon_as_the_cancelled_compiler_exits(self):
+        with tempfile.TemporaryDirectory() as directory:
+            proc = Path(directory)
+            live = proc / '42'
+            live.mkdir()
+            (live / 'comm').write_text('rustc\n')
+            other = proc / '7'
+            other.mkdir()
+            (other / 'comm').write_text('python3\n')
+            now = {'t': 0.0}
+
+            def clock():
+                now['t'] += 0.1
+                return now['t']
+
+            slept = []
+
+            def sleep(seconds):
+                slept.append(seconds)
+                (live / 'comm').write_text('python3\n')
+
+            self.assertEqual(storage.wait_for_compilers(5, proc=proc, sleep=sleep, clock=clock), [])
+            self.assertEqual(slept, [0.5])
+            self.assertEqual(storage.compiler_processes(proc), [])
+
+    def test_compiler_wait_fails_instead_of_starting_a_second_compiler(self):
+        with tempfile.TemporaryDirectory() as directory:
+            proc = Path(directory)
+            live = proc / '9'
+            live.mkdir()
+            (live / 'comm').write_text('cargo\n')
+            now = {'t': 0.0}
+
+            def clock():
+                now['t'] += 1.0
+                return now['t']
+
+            with self.assertRaisesRegex(TimeoutError, 'still running after 2s'):
+                storage.wait_for_compilers(2, proc=proc, sleep=lambda _seconds: None, clock=clock)
+
     def test_last_used_marker_preserves_a_recently_reused_old_generation(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
