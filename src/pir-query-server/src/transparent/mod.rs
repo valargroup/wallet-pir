@@ -19,12 +19,8 @@
 //! The `transparent-history` and `transparent-detail` features compile each
 //! product independently; neither implies the other.
 
-mod activation;
 pub mod admission;
 pub mod config;
-mod durable;
-#[cfg(feature = "test-support")]
-pub use durable::test_support;
 #[cfg(feature = "transparent-history")]
 pub mod history;
 mod objects;

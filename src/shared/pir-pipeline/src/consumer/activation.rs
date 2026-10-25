@@ -7,7 +7,7 @@
 use std::sync::Mutex;
 use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 
-pub(crate) trait Adapter: Send + 'static {
+pub trait Adapter: Send + 'static {
     type Candidate: Send;
     type Validated;
 
@@ -30,7 +30,7 @@ pub(crate) trait Adapter: Send + 'static {
     fn install(&self, candidate: Self::Candidate, validated: Self::Validated);
 }
 
-pub(crate) async fn activate<A: Adapter>(
+pub async fn activate<A: Adapter>(
     expected: String,
     requested: String,
     adapter: A,

@@ -436,7 +436,7 @@ impl<A: PublicationAdapter> Consumer for EnvelopeConsumer<A> {
         let mut fetcher = ObjectFetcher::new(&mut self.source, &self.cache);
         let mut artifacts = VerifiedObjects::default();
         for object in &selected.required_objects {
-            artifacts.insert(fetcher.fetch(object).await?);
+            artifacts.insert(fetcher.fetch(object).await?.file);
         }
         Ok(artifacts)
     }

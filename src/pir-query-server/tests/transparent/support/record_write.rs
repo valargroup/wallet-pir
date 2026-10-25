@@ -1,7 +1,7 @@
 //! Control the real service's record-write boundary without depending on the
 //! durable helper's private temporary filenames. Every wait is bounded, and
 //! dropping a blocked write releases its worker even if an assertion panics.
-use pir_query_server::transparent::test_support::{record_writer, RecordWriter};
+use pir_publication::records::test_support::{record_writer, RecordWriter};
 use std::{io, io::Write, path::Path, sync::Mutex, time::Duration};
 
 pub fn fail_before_replace(path: &Path) -> RecordWriter {

@@ -654,10 +654,11 @@ impl Client {
     pub async fn object(&mut self, object: &Object) -> Result<VerifiedObjectFile, Error> {
         object.validate()?;
         pir_sync_manager::objects::ObjectFetcher::new(&mut self.source, &self.cache)
-            .replace_corrupt()
+            .with_corruption(pir_sync_manager::objects::CorruptionPolicy::ReplaceFile)
             .with_cache_limit(self.cache_limit)
             .fetch(&object.reference())
             .await
+            .map(|fetched| fetched.file)
     }
 }
 

@@ -37,23 +37,25 @@ impl pir_pipeline::publisher::Publisher for DetailPublication<'_> {
         }
         Ok(())
     }
-    async fn acquire(&mut self) -> Result<pir_pipeline::Input<Self::Publication<'_>>, BoxError> {
+    async fn acquire(
+        &mut self,
+    ) -> Result<pir_pipeline::publisher::PublicationInput<Self::Publication<'_>>, BoxError> {
         let controller = &mut *self.controller;
         // No new publication while the journal writer catches up; the
         // still-valid predecessor keeps serving.
         if controller.halted.is_some() || !controller.source.current() {
-            return Ok(pir_pipeline::Input::Unchanged);
+            return Ok(pir_pipeline::publisher::PublicationInput::Deferred);
         }
         if controller.retry_at.is_none_or(|t| Instant::now() >= t) {
             if controller.needs_cycle() {
-                return Ok(pir_pipeline::Input::Work(
+                return Ok(pir_pipeline::publisher::PublicationInput::NewMaterial(
                     super::preparation::DisplayPreparation::new(controller),
                 ));
             }
             controller.failures = 0;
             controller.retry_at = None;
         }
-        Ok(pir_pipeline::Input::Unchanged)
+        Ok(pir_pipeline::publisher::PublicationInput::Unchanged)
     }
     fn completed(&mut self, _: ()) {
         self.controller.settings.metrics.cycle_finished(true);

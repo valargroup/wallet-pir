@@ -1,6 +1,6 @@
 //! Domain operations supplied to the host's publication engine.
 use super::Control;
-use crate::{FailurePolicy, Input};
+use crate::FailurePolicy;
 use std::{future::Future, pin::Pin};
 
 /// One source-bound publication. Each phase consumes the preceding phase's
@@ -51,6 +51,16 @@ pub trait Publication: Send {
     ) -> impl Future<Output = Result<Self::Report, Self::Error>> + Send;
 }
 
+/// Product-selected input, independent of source polling and publication order.
+/// A refresh retains material identity but carries newly checked metadata.
+/// Products still choose equality, freshness deadlines and invalidation rules.
+pub enum PublicationInput<P> {
+    Unchanged,
+    MetadataRefresh(P),
+    NewMaterial(P),
+    Deferred,
+}
+
 /// A publisher's input and policy. Work can borrow product state; constructing
 /// it must not advance current or run preparation. Waiting is cancel-safe.
 pub trait Publisher: Send {
@@ -71,7 +81,7 @@ pub trait Publisher: Send {
     }
     fn acquire(
         &mut self,
-    ) -> impl Future<Output = Result<Input<Self::Publication<'_>>, Self::Error>> + Send;
+    ) -> impl Future<Output = Result<PublicationInput<Self::Publication<'_>>, Self::Error>> + Send;
     fn completed(&mut self, _report: Self::Report) {}
     fn failed(&mut self, _error: &Self::Error) -> FailurePolicy {
         FailurePolicy::Stop

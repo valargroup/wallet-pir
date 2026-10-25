@@ -1,6 +1,7 @@
 //! Verified objects and stable revision directories shared by both HTTPS consumers.
 use crate::transparent::source::Source;
-use pir_publication::{ObjectCache, ObjectReference};
+use pir_publication::{ObjectCache, ObjectReference, ReceivedObjectFile, VerifiedObjectFile};
+use pir_sync_manager::objects::{CorruptionPolicy, Fetched, ObjectFetcher};
 use transparent_shared::publication::{self, Error};
 
 #[cfg(test)]
@@ -127,85 +128,67 @@ fn collect_objects_inner(
     Ok(Some((files, bytes)))
 }
 
-/// Cache objects are promoted after the complete HTTPS stream has its expected
-/// length. Bulk hashes are checked after activation; metadata hashes are immediate.
-/// Local files are trusted;
-/// later loads check regular-file status and byte size, including after restart.
+/// Metadata is fully verified before staging. Bulk bytes retain a length-only
+/// receipt and are hashed by the query-prioritized validator after activation.
+pub(crate) enum ArtifactFile {
+    Metadata(VerifiedObjectFile),
+    Bulk(ReceivedObjectFile),
+}
+impl ArtifactFile {
+    fn path(&self) -> &std::path::Path {
+        match self {
+            Self::Metadata(file) => file.path(),
+            Self::Bulk(file) => file.path(),
+        }
+    }
+    fn reference(&self) -> &ObjectReference {
+        match self {
+            Self::Metadata(file) => file.reference(),
+            Self::Bulk(file) => file.reference(),
+        }
+    }
+    fn check(&self) -> Result<(), Error> {
+        match self {
+            Self::Metadata(file) => Ok(file.check()?),
+            Self::Bulk(file) => Ok(file.check()?),
+        }
+    }
+}
+
 pub(crate) async fn ensure_object(
     source: &mut Source,
     objects: &ObjectCache,
     artifact: &publication::Artifact,
     transfer: &mut std::time::Duration,
-) -> Result<bool, Error> {
-    if !std::fs::symlink_metadata(objects.directory())?.is_dir() {
-        return Err("object cache must be a real directory".into());
-    }
+) -> Result<Fetched<ArtifactFile>, Error> {
     let reference = ObjectReference {
         sha256: artifact.sha256.clone(),
         bytes: artifact.bytes,
     };
-    let object = objects.object_path(&reference)?;
-    match std::fs::symlink_metadata(&object) {
-        Ok(metadata) => {
-            if metadata.is_file() {
-                let (path, file) = (object.clone(), artifact.clone());
-                if tokio::task::spawn_blocking(move || reuse_object(&path, &file)).await?? {
-                    return Ok(false);
-                }
-            }
-            // A corrupt object, or a symlink/directory under its name: unlink
-            // the entry itself and never follow it.
-            if metadata.is_dir() {
-                std::fs::remove_dir_all(&object)?;
-            } else {
-                std::fs::remove_file(&object)?;
-            }
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(e) => return Err(e.into()),
-    }
-    let mut partial = objects.begin_partial(&reference)?;
-    let check_metadata = artifact.kind == publication::Kind::Metadata;
-    let fetching = std::time::Instant::now();
+    let started = std::time::Instant::now();
     let result = async {
-        let mut output = tokio::fs::File::from_std(partial.take_file()?);
-        let response = source
-            .get(&format!("artifacts/{}", artifact.sha256))
-            .await?;
-        let verification = if check_metadata {
-            pir_sync_manager::Verification::Sha256(&artifact.sha256)
+        let mut fetcher = ObjectFetcher::new(source.artifact_source(), objects)
+            .with_prefix("artifacts/")
+            .with_corruption(CorruptionPolicy::RepairEntry);
+        let received = if artifact.kind == publication::Kind::Metadata {
+            let fetched = fetcher.fetch(&reference).await?;
+            Fetched {
+                file: ArtifactFile::Metadata(fetched.file.make_read_only()?),
+                downloaded: fetched.downloaded,
+            }
         } else {
-            pir_sync_manager::Verification::Length
+            let fetched = fetcher.receive(&reference).await?;
+            Fetched {
+                file: ArtifactFile::Bulk(fetched.file),
+                downloaded: fetched.downloaded,
+            }
         };
-        response
-            .copy_to(&mut output, artifact.bytes, verification)
-            .await?;
-        let written = output.into_std().await;
-        let object = tokio::task::spawn_blocking(move || partial.promote(written)).await??;
-        publication::record_received_file(&object, artifact, &object)?;
-        Ok(())
+        publication::record_received_file(received.file.path(), artifact, received.file.path())?;
+        Ok(received)
     }
     .await;
-    *transfer += fetching.elapsed();
-    result.map(|()| true)
-}
-
-/// Reuse completed network-checked local bytes after a size check.
-fn reuse_object(path: &std::path::Path, artifact: &publication::Artifact) -> Result<bool, Error> {
-    if !std::fs::symlink_metadata(path)?.is_file() {
-        return Ok(false);
-    }
-    let file = std::fs::File::open(path)?;
-    if file.metadata()?.len() != artifact.bytes {
-        return Ok(false);
-    }
-    let mut permissions = file.metadata()?.permissions();
-    if !permissions.readonly() {
-        permissions.set_readonly(true);
-        file.set_permissions(permissions)?;
-    }
-    publication::record_received_file(path, artifact, path)?;
-    Ok(true)
+    *transfer += started.elapsed();
+    result
 }
 
 /// Stage a verified immutable object by hard link: the stage and cache share
@@ -250,12 +233,22 @@ fn link_object_locked(
 pub(crate) fn stage_object(
     root: &std::path::Path,
     stage: &std::path::Path,
-    object: &std::path::Path,
+    checked: &ArtifactFile,
     artifact: &publication::Artifact,
 ) -> Result<(), Error> {
     use std::os::unix::fs::MetadataExt;
     use std::path::Component;
     let _catalog = crate::transparent::validation::CATALOG.lock().unwrap();
+    checked.check()?;
+    if checked.reference()
+        != &(ObjectReference {
+            sha256: artifact.sha256.clone(),
+            bytes: artifact.bytes,
+        })
+    {
+        return Err("staged object does not match its artifact".into());
+    }
+    let object = checked.path();
     let path = std::path::Path::new(&artifact.path);
     let components: Vec<_> = path.components().collect();
     if components.is_empty()
@@ -360,6 +353,18 @@ mod tests {
     use super::*;
     use std::os::unix::fs::MetadataExt;
 
+    fn received(path: &std::path::Path, artifact: &publication::Artifact) -> ArtifactFile {
+        ArtifactFile::Bulk(
+            ReceivedObjectFile::open(
+                path.into(),
+                ObjectReference {
+                    sha256: artifact.sha256.clone(),
+                    bytes: artifact.bytes,
+                },
+            )
+            .unwrap(),
+        )
+    }
     fn fixture(root: &std::path::Path) -> (std::path::PathBuf, publication::Artifact) {
         let object = root.join("object");
         std::fs::write(&object, b"checked rows").unwrap();
@@ -389,10 +394,22 @@ mod tests {
             .open(root.path().join(".sources.lock"))
             .unwrap();
         lock.lock().unwrap();
-        assert!(stage_object(root.path(), &stage, &object, &artifact).is_err());
+        assert!(stage_object(
+            root.path(),
+            &stage,
+            &received(&object, &artifact),
+            &artifact
+        )
+        .is_err());
         assert!(!stage.join(&artifact.path).exists());
         drop(lock);
-        stage_object(root.path(), &stage, &object, &artifact).unwrap();
+        stage_object(
+            root.path(),
+            &stage,
+            &received(&object, &artifact),
+            &artifact,
+        )
+        .unwrap();
         publication::verify_file(&stage.join(&artifact.path), &artifact).unwrap();
     }
 
@@ -470,9 +487,21 @@ mod tests {
         let second = root.path().join("staging-second");
         std::fs::create_dir(&first).unwrap();
         std::fs::create_dir(&second).unwrap();
-        stage_object(root.path(), &first, &object, &artifact).unwrap();
+        stage_object(
+            root.path(),
+            &first,
+            &received(&object, &artifact),
+            &artifact,
+        )
+        .unwrap();
         let before = std::fs::metadata(first.join(&artifact.path)).unwrap();
-        stage_object(root.path(), &second, &object, &artifact).unwrap();
+        stage_object(
+            root.path(),
+            &second,
+            &received(&object, &artifact),
+            &artifact,
+        )
+        .unwrap();
         std::fs::remove_dir_all(&first).unwrap();
         let after = std::fs::metadata(second.join(&artifact.path)).unwrap();
         assert_eq!(
@@ -492,22 +521,57 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let root = tempfile::tempdir().unwrap();
         let (object, artifact) = fixture(root.path());
-        assert!(reuse_object(&object, &artifact).unwrap());
-        assert!(reuse_object(&object, &artifact).unwrap());
+        assert!(ReceivedObjectFile::open(
+            object.clone(),
+            ObjectReference {
+                sha256: artifact.sha256.clone(),
+                bytes: artifact.bytes
+            }
+        )
+        .is_ok());
+        assert!(ReceivedObjectFile::open(
+            object.clone(),
+            ObjectReference {
+                sha256: artifact.sha256.clone(),
+                bytes: artifact.bytes
+            }
+        )
+        .is_ok());
         std::fs::set_permissions(&object, std::fs::Permissions::from_mode(0o644)).unwrap();
         std::fs::write(&object, b"same size!!!").unwrap();
         assert!(
-            reuse_object(&object, &artifact).unwrap(),
+            ReceivedObjectFile::open(
+                object.clone(),
+                ObjectReference {
+                    sha256: artifact.sha256.clone(),
+                    bytes: artifact.bytes
+                }
+            )
+            .is_ok(),
             "local same-size changes are outside the network integrity boundary"
         );
         let short = publication::Artifact {
             bytes: 11,
             ..artifact.clone()
         };
-        assert!(!reuse_object(&object, &short).unwrap());
+        assert!(ReceivedObjectFile::open(
+            object.clone(),
+            ObjectReference {
+                sha256: short.sha256.clone(),
+                bytes: short.bytes
+            }
+        )
+        .is_err());
         std::fs::remove_file(&object).unwrap();
         std::fs::write(&object, b"short").unwrap();
-        assert!(!reuse_object(&object, &artifact).unwrap());
+        assert!(ReceivedObjectFile::open(
+            object.clone(),
+            ObjectReference {
+                sha256: artifact.sha256.clone(),
+                bytes: artifact.bytes
+            }
+        )
+        .is_err());
     }
 
     #[test]
@@ -518,7 +582,13 @@ mod tests {
         let stage = root.path().join("staging-first");
         std::fs::create_dir(&stage).unwrap();
         std::os::unix::fs::symlink(outside.path(), root.path().join(".sources")).unwrap();
-        assert!(stage_object(root.path(), &stage, &object, &artifact).is_err());
+        assert!(stage_object(
+            root.path(),
+            &stage,
+            &received(&object, &artifact),
+            &artifact
+        )
+        .is_err());
         assert_eq!(std::fs::read_dir(outside.path()).unwrap().count(), 0);
     }
 
@@ -528,14 +598,26 @@ mod tests {
         let (object, artifact) = fixture(root.path());
         let stage = root.path().join("staging-first");
         std::fs::create_dir(&stage).unwrap();
-        stage_object(root.path(), &stage, &object, &artifact).unwrap();
+        stage_object(
+            root.path(),
+            &stage,
+            &received(&object, &artifact),
+            &artifact,
+        )
+        .unwrap();
         let source = root.path().join(".sources").join(&artifact.path);
         std::fs::remove_file(&source).unwrap();
         std::fs::write(&source, b"short").unwrap();
         let mut permissions = std::fs::metadata(&source).unwrap().permissions();
         permissions.set_readonly(true);
         std::fs::set_permissions(&source, permissions).unwrap();
-        assert!(stage_object(root.path(), &stage, &object, &artifact).is_err());
+        assert!(stage_object(
+            root.path(),
+            &stage,
+            &received(&object, &artifact),
+            &artifact
+        )
+        .is_err());
     }
 
     #[test]
@@ -546,7 +628,13 @@ mod tests {
         let next = root.path().join("staging-next");
         std::fs::create_dir(&first).unwrap();
         std::fs::create_dir(&next).unwrap();
-        stage_object(root.path(), &first, &object, &artifact).unwrap();
+        stage_object(
+            root.path(),
+            &first,
+            &received(&object, &artifact),
+            &artifact,
+        )
+        .unwrap();
         let source = root.path().join(".sources").join(&artifact.path);
         let receipt = source.with_file_name("rows.bin.received.json");
         let original_receipt = std::fs::read(&receipt).unwrap();
@@ -561,12 +649,18 @@ mod tests {
             ..artifact.clone()
         };
         for _ in 0..2 {
-            assert!(stage_object(root.path(), &next, &replacement, &conflicting).is_err());
+            assert!(stage_object(
+                root.path(),
+                &next,
+                &received(&replacement, &conflicting),
+                &conflicting
+            )
+            .is_err());
             assert_eq!(std::fs::read(&receipt).unwrap(), original_receipt);
             assert_eq!(std::fs::read(&source).unwrap(), b"checked rows");
             assert!(!next.join(&artifact.path).exists());
         }
-        stage_object(root.path(), &next, &object, &artifact).unwrap();
+        stage_object(root.path(), &next, &received(&object, &artifact), &artifact).unwrap();
         publication::verify_file(&next.join(&artifact.path), &artifact).unwrap();
     }
 
@@ -583,9 +677,21 @@ mod tests {
             std::fs::metadata(&object).unwrap().ino(),
             std::fs::metadata(&source).unwrap().ino()
         );
-        stage_object(root.path(), &stage, &object, &artifact).unwrap();
+        stage_object(
+            root.path(),
+            &stage,
+            &received(&object, &artifact),
+            &artifact,
+        )
+        .unwrap();
         publication::verify_file(&stage.join(&artifact.path), &artifact).unwrap();
-        stage_object(root.path(), &stage, &object, &artifact).unwrap();
+        stage_object(
+            root.path(),
+            &stage,
+            &received(&object, &artifact),
+            &artifact,
+        )
+        .unwrap();
     }
 }
 #[test]

@@ -17,12 +17,12 @@
 use zakura_pir_protocol::transparent::shard as transparent_shard;
 
 use super::service::{self, json, DisplayRuntime, DisplayState};
-use crate::transparent::durable::persist;
 use crate::transparent::preparation::{PreparationOutcome, PreparingGuard, Refusal};
 use axum::extract::{Request, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Router;
+use pir_publication::records::persist;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
@@ -158,7 +158,7 @@ pub struct DisplayLive(Arc<Inner>);
 
 struct DisplayActivation(Arc<Inner>);
 
-impl crate::transparent::activation::Adapter for DisplayActivation {
+impl pir_pipeline::consumer::activation::Adapter for DisplayActivation {
     type Candidate = Candidate;
     type Validated = BTreeSet<String>;
 
@@ -346,19 +346,16 @@ impl DisplayLive {
         *invalid = next;
         Ok(())
     }
-    pub(crate) async fn activate_checked<F, Fut>(
+    pub(crate) async fn reserve_activation(&self) -> tokio::sync::OwnedMutexGuard<()> {
+        self.0.operations.clone().lock_owned().await
+    }
+    pub(crate) async fn commit_checked(
         &self,
         expected: String,
         map: String,
-        check: F,
-    ) -> Result<(), String>
-    where
-        F: FnOnce() -> Fut,
-        Fut: std::future::Future<Output = Result<(), String>>,
-    {
-        let operation = self.0.operations.clone().lock_owned().await;
-        check().await?;
-        crate::transparent::activation::activate(
+        operation: tokio::sync::OwnedMutexGuard<()>,
+    ) -> Result<(), String> {
+        pir_pipeline::consumer::activation::activate(
             expected,
             map,
             DisplayActivation(self.0.clone()),
@@ -713,7 +710,7 @@ impl DisplayLive {
 
     async fn activate(&self, expected: String, map_sha256: String) -> Result<Reply, String> {
         let operation = self.0.operations.clone().lock_owned().await;
-        crate::transparent::activation::activate(
+        pir_pipeline::consumer::activation::activate(
             expected,
             map_sha256,
             DisplayActivation(self.0.clone()),

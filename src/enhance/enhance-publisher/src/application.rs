@@ -8,7 +8,8 @@ use crate::{
 };
 use pir_pipeline::{
     ingestion::{BlockId, ChainFeed, ChainObservation, Ingestion},
-    FailurePolicy, Input,
+    publisher::PublicationInput,
+    FailurePolicy,
 };
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -180,14 +181,14 @@ impl pir_pipeline::publisher::Publisher for PublicationWorkflow {
         Self: 'a;
     async fn acquire(
         &mut self,
-    ) -> std::result::Result<pir_pipeline::Input<Self::Publication<'_>>, String> {
+    ) -> std::result::Result<PublicationInput<Self::Publication<'_>>, String> {
         match self.pending.borrow_and_update().clone() {
-            Some(work) if self.publisher.published(&work) => Ok(Input::Unchanged),
+            Some(work) if self.publisher.published(&work) => Ok(PublicationInput::Unchanged),
             Some(work) => self
                 .publisher
                 .publication(work)
-                .map(|work| Input::Work(work.stopping(self.shutdown.clone()))),
-            None => Ok(Input::Unchanged),
+                .map(|work| PublicationInput::NewMaterial(work.stopping(self.shutdown.clone()))),
+            None => Ok(PublicationInput::Unchanged),
         }
     }
     fn settled(&mut self) -> std::result::Result<pir_pipeline::publisher::Control, String> {

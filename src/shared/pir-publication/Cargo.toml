@@ -5,6 +5,9 @@ edition = "2021"
 description = "Transport-free publisher-query publication contract: content-addressed objects, pointer succession, durable authority floors and object caches"
 publish = false
 
+[features]
+test-support = []
+
 [dependencies]
 hex = "0.4"
 pir-control = { path = "../pir-control" }

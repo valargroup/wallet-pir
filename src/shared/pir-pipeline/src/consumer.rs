@@ -1,5 +1,6 @@
 //! A transport-neutral publication consumer. Products supply decisions and
 //! typed material operations; this engine owns their execution order.
+pub mod activation;
 pub mod durable;
 mod engine;
 pub mod polling;
@@ -35,6 +36,14 @@ pub enum PeerHandover {
 pub enum ConsumerPass<R> {
     Committed { report: R, handover: PeerHandover },
     Deferred { report: R },
+}
+
+impl<R> ConsumerPass<R> {
+    pub fn into_report(self) -> R {
+        match self {
+            Self::Committed { report, .. } | Self::Deferred { report } => report,
+        }
+    }
 }
 
 /// Services composed by one product consumer. Observations, material and
@@ -116,6 +125,11 @@ pub trait Consumer: Send {
     }
     fn deferred(&mut self, _reason: DeferralReason) -> impl Future<Output = ()> + Send {
         async {}
+    }
+    /// Continue a product's bounded recovery handoff within this poll. Every
+    /// continuation runs a complete observed and guarded pass.
+    fn continue_after(&mut self, _result: &Result<ConsumerPass<Self::Report>, Error>) -> bool {
+        false
     }
     fn terminal(&self, _error: &Error) -> bool {
         false

@@ -1,6 +1,8 @@
 //! Whole-file integrity and exact filesystem identity. Neither is serving authority.
 mod error;
 mod identity;
+mod received;
+pub use received::ReceivedObjectFile;
 
 use crate::{is_object_digest, ObjectReference};
 pub use error::ObjectFileError;

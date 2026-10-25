@@ -308,5 +308,8 @@ Neither grants serving authority by itself. The transport-neutral `ConsumerEngin
 floors, object cache and publisher object store); Status is its first adopter,
 and Enhance composes its existing lease and replay protocol with the same
 consumer engine. Product code retains schemas, directory locks, validation,
-preparation and activation. Transparent and Receiver adoption follows separately. Status uses the same polling and backoff; its
+preparation and activation. Transparent History and Detail use the same consumer engine and guarded owner
+activation. Their bulk artifacts carry length-only receipts until the existing
+background validator hashes them after serving starts; disk reload checks size.
+Receiver adoption follows separately. Status uses the same polling and backoff; its
 wallet still rejects observations older than twenty seconds.

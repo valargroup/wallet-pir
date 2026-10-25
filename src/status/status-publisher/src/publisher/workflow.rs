@@ -37,7 +37,7 @@ impl pir_pipeline::publisher::Publisher for Publication<'_> {
         = super::preparation::StatusPublication<'a>
     where
         Self: 'a;
-    async fn acquire(&mut self) -> Result<pir_pipeline::Input<Self::Publication<'_>>, Failure> {
+    async fn acquire(&mut self) -> Result<PublicationInput<Self::Publication<'_>>, Failure> {
         if self.server.is_finished() || self.observer.is_finished() {
             return Err("Status background service stopped".into());
         }
@@ -70,7 +70,7 @@ impl pir_pipeline::publisher::Publisher for Publication<'_> {
                 .is_some_and(|active| keep_published(active, &observed, now_ms()));
             if unchanged {
                 self.last_observed = observed.observed_ms;
-                return Ok(Input::Unchanged);
+                return Ok(PublicationInput::Unchanged);
             }
             if self.authority.is_none() {
                 self.authority = Some(authority::Authority::open(
@@ -80,16 +80,26 @@ impl pir_pipeline::publisher::Publisher for Publication<'_> {
                 )?);
             }
             self.last_observed = observed.observed_ms;
-            return Ok(Input::Work(super::preparation::StatusPublication::new(
+            let refresh = self.previous.as_ref().is_some_and(|previous| {
+                previous.manifest().network == observed.snapshot.network
+                    && previous.manifest().salt == observed.snapshot.salt
+                    && previous.manifest().rows_digest == observed.snapshot.digest
+            });
+            let publication = super::preparation::StatusPublication::new(
                 self.publisher,
                 observed,
                 self.authority.as_mut().unwrap(),
                 self.previous.clone(),
                 &self.rpc,
                 self.shutdown.clone(),
-            )?));
+            )?;
+            return Ok(if refresh {
+                PublicationInput::MetadataRefresh(publication)
+            } else {
+                PublicationInput::NewMaterial(publication)
+            });
         }
-        Ok(Input::Unchanged)
+        Ok(PublicationInput::Unchanged)
     }
     fn completed(&mut self, generation: Generation) {
         self.previous = Some(generation);
