@@ -1255,8 +1255,11 @@ mod tests {
         rpc: NodeClient,
         /// The node `rpc` serves, its block headers dated [`NOW`] at first.
         node: Node,
+        #[cfg(feature = "qualification-tests")]
         publications: Publications,
+        #[cfg(feature = "qualification-tests")]
         origin: String,
+        #[cfg(feature = "qualification-tests")]
         state: State,
     }
 
@@ -1325,23 +1328,33 @@ mod tests {
                 shard_rows: zakura_pir_publisher::receiver::session::MIN_ROWS,
                 shard_target: None,
             };
-            let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let origin = format!("http://{}", socket.local_addr().unwrap());
-            let app = crate::router::router_with_publications(publications.clone());
-            tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
+            #[cfg(feature = "qualification-tests")]
+            let origin = {
+                let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                let origin = format!("http://{}", socket.local_addr().unwrap());
+                let app = crate::router::router_with_publications(publications.clone());
+                tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
+                origin
+            };
+            #[cfg(not(feature = "qualification-tests"))]
+            drop(publications);
             Self {
                 dir,
                 args,
                 rpc,
                 node,
+                #[cfg(feature = "qualification-tests")]
                 publications,
+                #[cfg(feature = "qualification-tests")]
                 origin,
+                #[cfg(feature = "qualification-tests")]
                 state: State::default(),
             }
         }
 
         /// Restarts the service as a new process would: fresh serving state, table cache
         /// and listener, with the same budget, over the same data directory and node.
+        #[cfg(feature = "qualification-tests")]
         async fn restart(&mut self) {
             self.publications =
                 Publications::new(DEFAULT_RETENTION, self.publications.tables().budget());
@@ -1353,6 +1366,7 @@ mod tests {
         }
 
         /// Refreshes, as the serving loop does.
+        #[cfg(feature = "qualification-tests")]
         async fn refresh(&mut self) -> Result<()> {
             refresh(
                 &self.args,
@@ -1574,6 +1588,7 @@ mod tests {
     struct Written {
         payments: zakura_pir_publisher::receiver::snapshot::Manifest,
         rows: Vec<u8>,
+        #[cfg(feature = "qualification-tests")]
         witnesses: zakura_pir_publisher::receiver::witness::Manifest,
         payloads: Vec<u8>,
     }
@@ -1661,6 +1676,7 @@ mod tests {
                         Written {
                             payments: serde_json::from_slice(&read(format!("{p}.json"))).unwrap(),
                             rows: read(format!("{p}.rows")),
+                            #[cfg(feature = "qualification-tests")]
                             witnesses: serde_json::from_slice(&read(format!("{w}.witness.json")))
                                 .unwrap(),
                             payloads: read(format!("{w}.witness")),
