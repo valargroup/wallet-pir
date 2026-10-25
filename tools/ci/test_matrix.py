@@ -28,9 +28,10 @@ REFERENCE_LIB_FILTERS = ['ipir::tests', 'client::', 'protocol::', 'record::', 'r
                          'runtime::tests::tail_domain_reuses_b_units_and_decodes_b_at_unchanged_coordinates']
 REFERENCE_TESTS = {('pir-e2e-tests', 'ci_hint'), ('pir-e2e-tests', 'encrypted_lifecycle'),
                    ('pir-e2e-tests', 'publication_renewal')}
-# Real-process campaigns are compiled and listed here but run only by their
-# scripts under tools/transparent/scripts; every case must stay ignored.
-MANUAL_CAMPAIGNS = {('pir-e2e-tests', 'unified_http_sync_campaign')}
+# Deployed-origin probes and real-process campaigns are compiled and listed
+# here, but run only through explicit operator invocation. Every case stays ignored.
+MANUAL_CAMPAIGNS = {('pir-e2e-tests', 'unified_http_sync_campaign'),
+                    ('status-publisher', 'live_lookup')}
 
 
 def variants(groups):
