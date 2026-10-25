@@ -45,7 +45,7 @@ fn copy_fixture(source: &std::path::Path, target: &std::path::Path) {
                     .expect("fixture aliases must remain within the retained tree");
                 // Map the resolved source into the retained tree. An alias
                 // that leaves and reenters the source must not keep its old name.
-                let mut retained = std::path::PathBuf::new();
+                let mut retained = std::path::PathBuf::from(".");
                 for _ in source.strip_prefix(root).unwrap().components() {
                     retained.push("..");
                 }
@@ -73,6 +73,7 @@ fn retained_fixture_aliases_survive_source_removal_and_refuse_outside_targets() 
     std::fs::create_dir(source.path().join("objects")).unwrap();
     std::fs::write(source.path().join("objects/table"), b"verified rows").unwrap();
     std::os::unix::fs::symlink("objects", source.path().join("active")).unwrap();
+    std::os::unix::fs::symlink(".", source.path().join("root_alias")).unwrap();
     std::os::unix::fs::symlink(
         std::path::Path::new("..")
             .join(source.path().file_name().unwrap())
@@ -88,6 +89,10 @@ fn retained_fixture_aliases_survive_source_removal_and_refuse_outside_targets() 
         b"verified rows"
     );
 
+    assert_eq!(
+        std::fs::read(target.join("root_alias/objects/table")).unwrap(),
+        b"verified rows"
+    );
     assert_eq!(
         std::fs::read(target.join("reentered/table")).unwrap(),
         b"verified rows"
