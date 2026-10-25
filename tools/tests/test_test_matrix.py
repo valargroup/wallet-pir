@@ -115,6 +115,30 @@ class MatrixTests(unittest.TestCase):
             packages['pir-query-server'], matrix.package_features('pir-query-server', context, packages))
         self.assertEqual(host_features(baseline), host_features(contexts['reference']))
 
+    def test_live_status_probe_is_listed_but_must_remain_manual(self):
+        package = self.plan[3]['status-publisher']
+        artifact = dict(package_id=package['id'], target=dict(name='live_lookup', kind=['test']),
+                        executable='/not-executed', features=['cli', 'qualification-tests'])
+        identity = 'native:status-publisher:live_lookup'
+        listing = 'status_live_lookup: test\n'
+        with patch.object(matrix.subprocess, 'check_output', return_value=listing):
+            _, programs, cases = matrix.test_programs([artifact], 'native',
+                                                      {package['name']: package}, {})
+        self.assertEqual(cases[identity]['tests'], ['status_live_lookup'])
+        self.assertEqual(cases[identity]['ignored'], ['status_live_lookup'])
+        self.assertEqual(programs[0]['args'], [])
+
+        for listings in [('', ''), (listing, '')]:
+            with self.subTest(listings=listings), \
+                    patch.object(matrix.subprocess, 'check_output', side_effect=listings):
+                with self.assertRaisesRegex(ValueError, 'manual campaign must contain only ignored cases'):
+                    matrix.test_programs([artifact], 'native', {package['name']: package}, {})
+
+        artifact['target']['name'] = 'unregistered_probe'
+        with patch.object(matrix.subprocess, 'check_output', return_value=listing):
+            with self.assertRaisesRegex(ValueError, 'empty integration executable'):
+                matrix.test_programs([artifact], 'native', {package['name']: package}, {})
+
     def test_artifact_withdrawal_cases_keep_the_shared_validator_idle(self):
         package = self.plan[3]['pir-query-server']
         for target in ('txid_sharded', 'revisions_and_cache'):
