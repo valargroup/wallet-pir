@@ -120,7 +120,7 @@ class FastBuildTests(unittest.TestCase):
             self.assertCountEqual(parts[0]['args'][1:], other_names)
             self.assertFalse(parts[0].get('exclusive'))
             self.assertCountEqual(parts[1]['args'][1:], status_names)
-            self.assertTrue(parts[1]['exclusive'])
+            self.assertEqual(bool(parts[1].get('exclusive')), cpus < 8)
         [part] = fast_build.bounded_programs(program, status_names)
         self.assertCountEqual(part['args'][1:], status_names)
 
@@ -140,7 +140,7 @@ class FastBuildTests(unittest.TestCase):
         self.assertIsNone(fast_build.cgroup_cpus(root, membership))
         self.assertIsNone(fast_build.cgroup_cpus(root, Path(self.directory.name) / 'missing'))
 
-    def test_status_unit_program_runs_alone_on_every_host(self):
+    def test_status_unit_program_runs_alone_only_on_small_hosts(self):
         names = {'status::sync::tests::case', 'config::tests::case'}
         with patch.object(fast_build, 'available_cpus', return_value=3):
             self.assertTrue(fast_build.status_runs_alone('pir-query-server', ['lib'], names))
@@ -149,7 +149,7 @@ class FastBuildTests(unittest.TestCase):
             self.assertFalse(fast_build.status_runs_alone('pir-query-server', ['test'], names))
             self.assertFalse(fast_build.status_runs_alone('receiver-indexer', ['lib'], names))
         with patch.object(fast_build, 'available_cpus', return_value=8):
-            self.assertTrue(fast_build.status_runs_alone('pir-query-server', ['lib'], names))
+            self.assertFalse(fast_build.status_runs_alone('pir-query-server', ['lib'], names))
 
     def test_rust_tests_wait_for_helpers_only_on_small_hosts(self):
         from concurrent.futures import Future

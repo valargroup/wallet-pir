@@ -19,7 +19,9 @@ selected. Test programs retain their package directory and Cargo environment.
 The Enhance and Receiver runtime libraries run alone below eight cores,
 counting any cgroup CPU quota. Status stays in one process so its cases share
 prepared material instead of copying a multi-gigabyte fixture across lanes.
-The remaining programs share a pool of at most three processes.
+Below eight cores that process runs before the pool. The 8-core fast runner
+has room for it as one of the three pool programs. The remaining programs
+share a pool of at most three processes.
 """
 import json
 import os
@@ -74,9 +76,15 @@ def publisher_runs_alone(name, kinds):
 
 
 def status_runs_alone(name, kinds, names):
-    """One shared Status fixture runs before the ordinary test pool."""
+    """One shared Status fixture keeps its own process.
+
+    Splitting the cases would copy the prepared database. Below eight cores
+    that process also runs alone: the 8-core fast runner schedules it as one
+    of the three pool programs so the rest of the suite is not stuck behind it.
+    """
     return (name == 'pir-query-server' and 'lib' in kinds
-            and any(case.startswith('status::') for case in names))
+            and any(case.startswith('status::') for case in names)
+            and available_cpus() < 8)
 
 
 def isolate_status_fixture(parts, package, kinds, discovered):

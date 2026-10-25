@@ -342,10 +342,11 @@ artifact preparation, rollout and query verification. These reductions do not by
 themselves establish that end-to-end timing; record a complete run before claiming it.
 
 Status sync cases share one prepared database per snapshot and run in one
-exclusive process. Publication identities reuse those allocations. Their
-HTTP peers, writable caches, authority checks and failure controls remain
-independent. Running three Status processes multiplies the large native
-working set and can kill the runner at its memory ceiling.
+process. On the 8-core fast runner that process is one of the three pool
+slots; smaller hosts run it alone. Publication identities reuse those
+allocations. Their HTTP peers, writable caches, authority checks and failure
+controls remain independent. Running three Status processes multiplies the
+large native working set and can kill the runner at its memory ceiling.
 
 ## Warm runners
 

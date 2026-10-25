@@ -410,17 +410,22 @@ async fn discovery_has_a_whole_request_deadline() {
     let source = tls.source(100);
     // Real DNS/TCP/TLS setup must run with real time. A paused Tokio clock can
     // expire the connection timeout before the server receives the request.
+    // The production bound stays [`DISCOVERY_DEADLINE`]; this case uses a
+    // one-second bound so fast feedback does not wait out the operator deadline.
+    let deadline = Duration::from_secs(1);
     let started = std::time::Instant::now();
     let error = tokio::time::timeout(
-        DISCOVERY_DEADLINE + Duration::from_secs(5),
-        source.discover(),
+        deadline + Duration::from_secs(5),
+        source.discover_within(deadline),
     )
     .await
     .expect("discovery did not stop while the response body was stalled")
     .unwrap_err();
-    assert!(started.elapsed() >= DISCOVERY_DEADLINE);
+    let elapsed = started.elapsed();
+    assert!(elapsed >= deadline, "{elapsed:?}");
+    assert!(elapsed < deadline + Duration::from_secs(3), "{elapsed:?}");
     assert_eq!(tls.requests.lock().unwrap().len(), 1);
-    assert!(error.to_string().contains("within 10s"), "{error}");
+    assert!(error.to_string().contains("within 1s"), "{error}");
     assert!(error.incompatible().is_none());
 }
 
