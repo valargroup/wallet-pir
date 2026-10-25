@@ -59,10 +59,12 @@ where
     let started = std::time::Instant::now();
     let mut public = public;
     let mut restored = None;
+    let mut preparation = None;
     let mut failed = None;
     if active_path.exists() {
         match restore_public(&config, &public) {
             Ok(Restore::Restored(found)) => {
+                preparation = restore_preparation(&config, &public, &found);
                 public.distribution = Some(found.finalized);
                 restored = Some(found.validation);
             }
@@ -91,6 +93,9 @@ where
         }
     }
     let restore_seconds = started.elapsed().as_secs_f64();
+    let (prepared_set, checked_runtimes) = preparation
+        .map(|p| (Some(p.tables), p.runtimes))
+        .unwrap_or_default();
     let authority = Authority(Arc::new(Inner {
         cycle_duration: Default::default(),
         publication_freshness: Default::default(),
@@ -110,9 +115,9 @@ where
             "integrity_validation":{"state":"pending"},
             "correctness_validation":{"state":"pending"}})),
         observed: RwLock::new(BTreeMap::new()),
-        prepared_set: std::sync::Mutex::new(None),
+        prepared_set: std::sync::Mutex::new(prepared_set),
         shutdown: shutdown.clone(),
-        checked_runtimes: Default::default(),
+        checked_runtimes: std::sync::Mutex::new(checked_runtimes),
         runtime_preparations: AtomicU64::new(0),
         runtime_preparation_failures: AtomicU64::new(0),
         validation: Default::default(),

@@ -29,6 +29,13 @@ pub(super) async fn activate_history(
         return Ok(());
     }
     let directory = &candidate.publication.directory;
+    let background = candidate
+        .distribution
+        .as_ref()
+        .filter(|d| d.requires_validation())
+        .map(|d| d.validation(directory, config.recent_from, true))
+        .transpose()?;
+
     {
         let distribution = candidate
             .distribution
@@ -45,9 +52,14 @@ pub(super) async fn activate_history(
         // Completion evidence for a cheap restart, written only now that the
         // required preparation passed and before the active pointer moves.
         let record = distribution.restore_record(true, config.recent_from, height, &hash)?;
-        publication::write_durable(
+        let preparation = distribution.preparation_record(directory, &record)?;
+        pir_publication::records::persist(
+            &directory.join(transparent_shared::publication::PREPARATION_FILE),
+            &preparation,
+        )?;
+        pir_publication::records::persist(
             &directory.join(transparent_shared::publication::RESTORE_FILE),
-            &serde_json::to_vec(&record)?,
+            &record,
         )?;
     }
     publication::write_durable(
@@ -86,6 +98,19 @@ pub(super) async fn activate_history(
         if authority.0.epoch.load(Ordering::Acquire) != epoch {
             return Err("reorg raced the public pointer commit".into());
         }
+        if let Some(distribution) = &candidate.distribution {
+            if distribution.requires_validation()
+                && lists_failed(
+                    &integrity_failures(&config.publication_root)?,
+                    distribution.inventory(),
+                )
+            {
+                return Err("inherited preparation cannot clear an integrity failure".into());
+            }
+            // Recheck prepared identities under the final activation gate.
+            let record = distribution.restore_record(true, config.recent_from, height, &hash)?;
+            distribution.preparation_record(&publication.directory, &record)?;
+        }
         crate::storage::layout::complete(&config.publication_root, "transparent_history")?;
         publication::write_durable(
             &config.publication_root.join("active.json"),
@@ -102,8 +127,8 @@ pub(super) async fn activate_history(
             .store(u64::MAX, Ordering::Release);
         authority.0.withdrawn.store(false, Ordering::Release);
         authority.0.integrity_failed.store(false, Ordering::Release);
-        // Preparation verified these bytes; a restored predecessor's
-        // validation is obsolete and releases its directory.
+        // The successor replaces the running job. Completed per-artifact
+        // validation remains in the validator for the next inventory.
         authority.0.validation.cancel();
         // Freshly prepared bytes listed as a failed artifact was are verified
         // replacements; other recorded failures remain.
@@ -150,9 +175,10 @@ pub(super) async fn activate_history(
         status["freshness_seconds"] = freshness.into();
         status.as_object_mut().unwrap().remove("publication_error");
         status.as_object_mut().unwrap().remove("restored");
-        // Preparation ran both phases over these exact bytes before activation.
+        // Inherited producer preparation is not fresh validation.
         for phase in ["integrity_validation", "correctness_validation"] {
-            status[phase] = serde_json::json!({"state":"passed","source":"preparation",
+            status[phase] = serde_json::json!({"state":if background.is_some() { "pending" } else { "passed" },
+                "source":if background.is_some() { "background" } else { "preparation" },
                 "publication":{"height":height,"hash":hash},
                 "map_sha256":publication.map_sha256,
                 "inventory_sha256":authority.0.active.read().unwrap().distribution.as_ref().map(|d| d.sha256().to_string())});
@@ -175,6 +201,31 @@ pub(super) async fn activate_history(
         });
         tracing::info!(%cycle, "publication cycle");
         status["last_cycle"] = cycle;
+    }
+    if let Some(validation) = background {
+        let distribution = authority
+            .0
+            .active
+            .read()
+            .unwrap()
+            .distribution
+            .clone()
+            .ok_or("activated publication has no distribution")?;
+        authority
+            .0
+            .validation
+            .submit(crate::history::validator::Job {
+                identity: crate::history::validator::Identity {
+                    directory: publication.directory.clone(),
+                    map_sha256: publication.map_sha256.clone(),
+                    inventory_sha256: distribution.sha256().into(),
+                    height,
+                    hash: hash.clone(),
+                    epoch,
+                },
+                inventory: distribution.inventory().clone(),
+                validation,
+            });
     }
     authority
         .0

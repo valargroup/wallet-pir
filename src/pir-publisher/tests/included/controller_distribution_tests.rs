@@ -2167,7 +2167,8 @@ async fn a_result_about_a_superseded_publication_changes_nothing() {
         &other,
         Event::Integrity(Err(
             transparent_shared::publication::IntegrityError::Mismatch {
-                path: artifact.path.clone(),
+                // The same stored bytes may appear under a new revision path.
+                path: format!("prior-revision/{}", artifact.path),
                 expected_sha256: artifact.sha256.clone(),
                 found_sha256: Some("11".repeat(32)),
                 reason: "changed".into(),

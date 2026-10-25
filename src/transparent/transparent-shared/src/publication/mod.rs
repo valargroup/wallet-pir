@@ -41,6 +41,8 @@ pub use artifacts::{digest, open_artifact, record_received_file, safe_path, veri
 mod finalization;
 use finalization::plan;
 pub use finalization::Finalized;
+mod preparation;
+pub use preparation::{PreparationRecord, PreparationReuse, PREPARATION_FILE};
 mod restoration;
 pub use restoration::{RestoreExpectation, RestoreRecord, Restored, RESTORE_FILE, RESTORE_SCHEMA};
 mod validation;

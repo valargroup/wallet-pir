@@ -9,8 +9,15 @@ pub struct Finalized {
     pub(super) bytes: Vec<u8>,
     pub(super) sha256: String,
     pub(super) files: BTreeMap<String, (PathBuf, u64)>,
+    pub(super) inherited_preparation: bool,
+    pub(super) prepared_files: Option<BTreeMap<String, FileIdentity>>,
 }
 impl Finalized {
+    /// Whether any bodies still owe independent validation after a restart.
+    pub fn requires_validation(&self) -> bool {
+        self.inherited_preparation
+    }
+
     pub fn inventory(&self) -> &Inventory {
         &self.inventory
     }
@@ -53,8 +60,8 @@ impl Finalized {
             &|| false,
         )
     }
-    /// Finalize an inventory, reusing only native runtimes whose exact bytes
-    /// this process already loaded and self-checked. Every artifact is rehashed.
+    /// Finalize an inventory using unchanged process-local checks or explicitly
+    /// inherited publisher preparation. Changed files are hashed and checked.
     pub fn prepare_reusing(
         root: &Path,
         set: &ShardSet,
@@ -77,9 +84,8 @@ impl Finalized {
     ) -> Result<Self, Error> {
         Self::prepare_holdings(root, set, recent_from_height, full, checked, stop)
     }
-    /// A table whose bytes `set` verified in this process, and whose file is
-    /// unchanged since, is listed with that verified digest instead of being
-    /// hashed again; any other file is hashed.
+    /// List unchanged tables from the set's process-local verification or local
+    /// publisher preparation. Every other file follows ordinary verification.
     fn prepare_holdings(
         root: &Path,
         set: &ShardSet,
@@ -95,7 +101,10 @@ impl Finalized {
         checked.bytes_reused = 0;
         let mut passed = BTreeMap::new();
         let mut evidence = BTreeMap::new();
+        let mut preparation = BTreeMap::new();
         let mut files = BTreeMap::new();
+        let mut prepared_files = BTreeMap::new();
+        let mut inherited_preparation = false;
         let Plan {
             mut inventory,
             mut pending,
@@ -109,11 +118,19 @@ impl Finalized {
                 *known = path
                     .file_name()
                     .and_then(|name| name.to_str())
-                    .and_then(|name| checked.evidence.get(name))
+                    .and_then(|name| {
+                        checked
+                            .evidence
+                            .get(name)
+                            .or_else(|| checked.preparation.get(name))
+                    })
                     .map(|(sha256, bytes, stamp)| Known {
                         sha256: sha256.clone(),
                         bytes: *bytes,
                         stamp: *stamp,
+                        prepared: checked
+                            .preparation
+                            .contains_key(path.file_name().and_then(|n| n.to_str()).unwrap_or("")),
                     });
             }
         }
@@ -129,7 +146,9 @@ impl Finalized {
                 stamp,
                 settled,
                 read,
+                prepared,
             } = listed;
+            inherited_preparation |= prepared;
             if read {
                 checked.bytes_hashed += artifact.bytes;
             } else {
@@ -147,12 +166,14 @@ impl Finalized {
                     physical.clone(),
                     stamp,
                     settled,
+                    prepared,
                 );
                 runtimes.insert(path.clone(), runtime);
             }
             if full || artifact.kind.local() {
                 files.insert(artifact.sha256.clone(), (physical, artifact.bytes));
             }
+            prepared_files.insert(artifact.path.clone(), stamp);
             inventory.artifacts.push(artifact);
         }
         // Keep native loads sequential to bound resident runtime memory.
@@ -162,12 +183,17 @@ impl Finalized {
                 .and_then(|name| name.to_str())
                 .ok_or("non-UTF8 runtime name")?
                 .to_owned();
-            let (sha256, file, physical, stamp, settled) =
+            let (sha256, file, physical, stamp, settled, prepared) =
                 runtimes.remove(&path).ok_or("unhashed runtime")?;
             let probe = file.try_clone()?;
             // The derived name binds parameters and source; the whole-file
             // digest binds the exact bytes checked by a previous inventory.
-            if previous.get(&name) == Some(&sha256) {
+            if previous.get(&name) == Some(&sha256)
+                || checked
+                    .preparation
+                    .get(&name)
+                    .is_some_and(|(digest, _, identity)| digest == &sha256 && *identity == stamp)
+            {
                 checked.reused += 1;
             } else {
                 if stop() {
@@ -181,12 +207,19 @@ impl Finalized {
             // what its path names, is finalized or vouched for later.
             stamp.check(&physical, &probe)?;
             if settled {
-                evidence.insert(
+                let target = if prepared {
+                    &mut preparation
+                } else {
+                    &mut evidence
+                };
+                target.insert(
                     name.clone(),
                     (sha256.clone(), probe.metadata()?.len(), stamp),
                 );
             }
-            passed.insert(name, sha256);
+            if !prepared {
+                passed.insert(name, sha256);
+            }
         }
         inventory.artifacts.sort_by(|a, b| a.path.cmp(&b.path));
         inventory.validate(&inventory.network, &inventory.genesis_hash)?;
@@ -195,11 +228,14 @@ impl Finalized {
         let sha256 = digest(&bytes);
         checked.passed = passed;
         checked.evidence = evidence;
+        checked.preparation = preparation;
         Ok(Self {
             inventory,
             bytes,
             sha256,
             files,
+            prepared_files: Some(prepared_files),
+            inherited_preparation,
         })
     }
 }

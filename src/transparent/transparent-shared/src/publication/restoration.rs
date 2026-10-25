@@ -195,6 +195,8 @@ impl Finalized {
                 bytes,
                 sha256,
                 files,
+                prepared_files: None,
+                inherited_preparation: true,
             },
             validation: Validation {
                 root: root.to_path_buf(),

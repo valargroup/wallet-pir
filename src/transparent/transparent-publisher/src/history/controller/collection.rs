@@ -36,6 +36,7 @@ pub(super) fn collect_candidates(config: &Config, authority: &Authority) -> Resu
     }
     // Stored segments and runtimes no remaining publication links.
     let collected = crate::history::store::collect(&config.publication_root)?;
+    authority.0.validation.collected(&config.publication_root);
     if collected != Default::default() {
         tracing::info!(?collected, "collected unreferenced stored objects");
     }

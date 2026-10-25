@@ -68,3 +68,6 @@ tower = { version = "0.5", features = ["util"], optional = true }
 pir-service-discovery = { version = "1.0.0", path = "../../shared/pir-service-discovery", optional = true }
 pir-query-server = { path = "../../pir-query-server", optional = true, features = ["transparent-history", "transparent-detail"] }
 zakura-pir-client = { version = "=0.0.1-rc2", default-features = false, optional = true }
+
+[dev-dependencies]
+pir-publication = { path = "../../shared/pir-publication", features = ["test-support"] }

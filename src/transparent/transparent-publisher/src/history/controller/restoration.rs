@@ -16,8 +16,7 @@ pub(super) fn lists_failed(
 ) -> bool {
     inventory.artifacts.iter().any(|a| {
         failures.iter().any(|f| {
-            (f.path == a.path && f.expected_sha256 == a.sha256)
-                || f.found_sha256.as_deref() == Some(a.sha256.as_str())
+            (f.expected_sha256 == a.sha256) || f.found_sha256.as_deref() == Some(a.sha256.as_str())
         })
     })
 }
@@ -307,5 +306,46 @@ pub(super) fn validation_event(
             v["state"] = "pending".into();
             v["reason"] = error.to_string().into();
         }),
+    }
+}
+
+/// Restore only producer-local preparation after the completion and authority
+/// records passed their existing checks. Invalid sidecars never bootstrap.
+pub(super) fn restore_preparation(
+    config: &Config,
+    public: &Public,
+    restored: &transparent_shared::publication::Restored,
+) -> Option<transparent_shared::publication::PreparationReuse> {
+    use transparent_shared::publication::{RestoreRecord, PREPARATION_FILE, RESTORE_FILE};
+    let root = &public.publication.directory;
+    if root.parent() != Some(config.publication_root.as_path()) {
+        return None;
+    }
+    let restore = || -> Result<_, BoxError> {
+        let completion: RestoreRecord =
+            serde_json::from_slice(&pir_publication::records::read_bounded(
+                &root.join(RESTORE_FILE),
+                transparent_shared::publication::MAX_METADATA_BYTES,
+            )?)?;
+        let saved = match pir_publication::records::read_bounded(
+            &root.join(PREPARATION_FILE),
+            transparent_shared::publication::MAX_METADATA_BYTES,
+        ) {
+            Ok(bytes) => Some(bytes),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error.into()),
+        };
+        let preparation = restored.publisher_preparation(&completion, saved.as_deref())?;
+        if saved.is_none() {
+            pir_publication::records::persist(&root.join(PREPARATION_FILE), &preparation.record)?;
+        }
+        Ok(preparation)
+    };
+    match restore() {
+        Ok(preparation) => Some(preparation),
+        Err(error) => {
+            tracing::warn!(%error, "publisher preparation cannot be reused; verifying in foreground");
+            None
+        }
     }
 }

@@ -2,6 +2,7 @@
 //! publications hash, what a restart after an interrupted cycle keeps, and
 //! what candidate collection may remove.
 use super::*;
+use std::collections::BTreeSet;
 use std::os::unix::fs::MetadataExt;
 use transparent_shared::history::shardset::OBJECT_STORE;
 use transparent_shared::publication::Kind;
@@ -53,6 +54,12 @@ impl Follow {
         let Restore::Restored(found) = restore else {
             return (authority, false);
         };
+        if let Some(preparation) =
+            restore_preparation(&self.config, &authority.0.active.read().unwrap(), &found)
+        {
+            *authority.0.prepared_set.lock().unwrap() = Some(preparation.tables);
+            *authority.0.checked_runtimes.lock().unwrap() = preparation.runtimes;
+        }
         let transparent_shared::publication::Restored {
             finalized,
             validation,
@@ -394,6 +401,9 @@ enum Interrupt {
     /// Once the candidate is stored and its inventory prepared, before
     /// activation writes its completion evidence.
     BeforeCompletion,
+    /// A durable preparation or completion write refused activation.
+    PreparationWrite,
+    CompletionWrite,
     /// Once activation wrote the candidate's completion evidence and
     /// `activation.json`, before the active pointer moves.
     AfterActivationIntent,
@@ -403,9 +413,8 @@ enum Interrupt {
 /// saved active publication still has every object it links, and so does an
 /// activation's pending candidate. Collection after the restart removes none
 /// of them. The restarted process publishes the same height again, finding
-/// the interrupted cycle's objects already stored, and still reads every
-/// table and runtime it lists: stored objects, links and saved records are
-/// never taken as verified bytes.
+/// the interrupted cycle's objects already stored. Only the completed active
+/// predecessor supplies reusable preparation; incomplete candidates do not.
 async fn interrupted_publication_restarts_from_complete_state(interrupt: Interrupt) {
     let follow = follow_fixture().await;
     let config = &follow.config;
@@ -414,8 +423,7 @@ async fn interrupted_publication_restarts_from_complete_state(interrupt: Interru
     follow.cycle(&first).await;
     let active = first.0.active.read().unwrap().publication.clone();
     assert_eq!(active.height, 4);
-    // Settled: only the absence of this process's evidence makes the
-    // restarted one read them again.
+    // Let completed objects settle before interrupting their successor.
     std::thread::sleep(std::time::Duration::from_millis(1100));
     follow.advance(&first, 1).await;
     let before = candidates(config);
@@ -445,6 +453,40 @@ async fn interrupted_publication_restarts_from_complete_state(interrupt: Interru
                 panic!("a prepared candidate expected");
             };
             drop(ready);
+        }
+        Interrupt::PreparationWrite | Interrupt::CompletionWrite => {
+            let Input::Work(work) = acquire_history(config, &follow.client, &follow.store, &first)
+                .await
+                .unwrap()
+            else {
+                panic!("new durable work expected")
+            };
+            let Input::Work(ready) = prepare_follow(config, &follow.client, &first, work)
+                .await
+                .unwrap()
+            else {
+                panic!("a prepared candidate expected")
+            };
+            let filename = if interrupt == Interrupt::PreparationWrite {
+                transparent_shared::publication::PREPARATION_FILE
+            } else {
+                transparent_shared::publication::RESTORE_FILE
+            };
+            let path = ready
+                .candidate()
+                .candidate
+                .publication
+                .directory
+                .join(filename);
+            let _writer = pir_publication::records::test_support::record_writer(&path, |_, _| {
+                Err(std::io::Error::other(
+                    "interrupted durable preparation write",
+                ))
+            });
+            let error = ready.commit().await.unwrap_err();
+            assert!(error
+                .to_string()
+                .contains("interrupted durable preparation write"));
         }
         Interrupt::AfterActivationIntent => {
             super::super::INTERRUPT_AFTER_INTENT
@@ -509,19 +551,6 @@ async fn interrupted_publication_restarts_from_complete_state(interrupt: Interru
             "{record}"
         );
     }
-    // ...and still read every byte it lists in this cycle: it verified
-    // every table, hashed and self-checked every runtime, and listed from
-    // evidence only tables its own verification had just hashed.
-    assert_eq!(
-        counter(&record, &["verification", "bytes_reused"]),
-        0,
-        "{record}"
-    );
-    assert_eq!(
-        counter(&record, &["inventory", "runtimes_reused"]),
-        0,
-        "{record}"
-    );
     let inventory = restarted
         .0
         .active
@@ -530,32 +559,38 @@ async fn interrupted_publication_restarts_from_complete_state(interrupt: Interru
         .distribution
         .clone()
         .unwrap();
-    let runtime_bytes: u64 = inventory
+    let runtime_count = inventory
         .inventory()
         .artifacts
         .iter()
         .filter(|a| matches!(a.kind, Kind::RecentRuntime | Kind::ArchiveRuntime))
-        .map(|a| a.bytes)
-        .sum();
+        .count() as u64;
     assert_eq!(
-        counter(&record, &["inventory", "runtimes_loaded"]),
-        inventory
-            .inventory()
-            .artifacts
-            .iter()
-            .filter(|a| matches!(a.kind, Kind::RecentRuntime | Kind::ArchiveRuntime))
-            .count() as u64,
+        counter(&record, &["inventory", "runtimes_loaded"])
+            + counter(&record, &["inventory", "runtimes_reused"]),
+        runtime_count,
         "{record}"
     );
-    assert!(
-        counter(&record, &["inventory", "bytes_hashed"]) >= runtime_bytes,
-        "{record}"
-    );
-    assert!(
-        counter(&record, &["inventory", "bytes_reused"])
-            <= counter(&record, &["verification", "bytes_hashed"]),
-        "{record}"
-    );
+    if restored {
+        // The completed predecessor remains reusable; interrupted new work
+        // never supplies a preparation receipt for its incomplete candidate.
+        assert!(
+            counter(&record, &["verification", "bytes_reused"]) > 0,
+            "{record}"
+        );
+    } else {
+        // Unresolved activation intent still forces the ordinary recovery path.
+        assert_eq!(
+            counter(&record, &["verification", "bytes_reused"]),
+            0,
+            "{record}"
+        );
+        assert_eq!(
+            counter(&record, &["inventory", "runtimes_reused"]),
+            0,
+            "{record}"
+        );
+    }
     follow.server.abort();
 }
 
@@ -572,6 +607,16 @@ async fn a_publication_interrupted_before_completion_restarts_complete() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_publication_interrupted_after_its_activation_intent_restarts_complete() {
     interrupted_publication_restarts_from_complete_state(Interrupt::AfterActivationIntent).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_preparation_record_write_preserves_the_completed_predecessor() {
+    interrupted_publication_restarts_from_complete_state(Interrupt::PreparationWrite).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_completion_record_write_preserves_the_completed_predecessor() {
+    interrupted_publication_restarts_from_complete_state(Interrupt::CompletionWrite).await;
 }
 
 /// Copies a candidate as links: symbolic links keep their targets and
@@ -712,5 +757,575 @@ async fn collection_keeps_every_object_an_active_pending_or_validating_publicati
             .collect::<std::collections::BTreeSet<_>>(),
         linked
     );
+    follow.server.abort();
+}
+
+/// Empty process memory and unfinished background validation must not cause
+/// another scan or self-check of unchanged, completed publisher objects.
+async fn restart_with_pending_validation(bootstrap: bool) {
+    let follow = follow_fixture_with_rows(true).await;
+    let authority = follow.authority(Default::default());
+    follow.ingest(&authority).await;
+    follow.cycle(&authority).await;
+    let old = authority.0.active.read().unwrap().clone();
+    let previous = old.distribution.as_ref().unwrap().inventory();
+    let objects: BTreeSet<_> = previous
+        .artifacts
+        .iter()
+        .map(|a| (a.sha256.clone(), a.bytes))
+        .collect();
+    if bootstrap {
+        std::fs::remove_file(
+            old.publication
+                .directory
+                .join(transparent_shared::publication::PREPARATION_FILE),
+        )
+        .unwrap();
+    }
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    let (restarted, restored) = follow.restart();
+    assert!(restored);
+    assert!(
+        restarted.0.prepared_set.lock().unwrap().is_some(),
+        "bootstrap={bootstrap}"
+    );
+    assert!(
+        !restarted.0.validation.held().is_empty(),
+        "validation is still pending"
+    );
+    follow.advance(&restarted, 1).await;
+    let record = follow.cycle(&restarted).await;
+    let active = restarted.0.active.read().unwrap().clone();
+    assert_eq!(active.publication.height, 5);
+    let artifacts = &active.distribution.as_ref().unwrap().inventory().artifacts;
+    let new_runtimes: Vec<_> = artifacts
+        .iter()
+        .filter(|a| {
+            matches!(a.kind, Kind::RecentRuntime | Kind::ArchiveRuntime)
+                && !objects.contains(&(a.sha256.clone(), a.bytes))
+        })
+        .collect();
+    assert_eq!(
+        counter(&record, &["inventory", "runtimes_loaded"]),
+        new_runtimes.len() as u64,
+        "{record}"
+    );
+    let expected_hashed: u64 = artifacts
+        .iter()
+        .filter(|a| a.kind == Kind::Metadata || !objects.contains(&(a.sha256.clone(), a.bytes)))
+        .map(|a| a.bytes)
+        .sum();
+    assert_eq!(
+        counter(&record, &["inventory", "bytes_hashed"]),
+        expected_hashed,
+        "{record}"
+    );
+    let (tables, _) = links(&active.publication.directory);
+    let unprepared_table_bytes: u64 = tables
+        .values()
+        .filter(|object| !objects.contains(&(name_of(object), object.bytes)))
+        .map(|object| object.bytes)
+        .sum();
+    assert_eq!(counter(&record, &["verification", "bytes_hashed"]), unprepared_table_bytes,
+        "only changed tables or retained tables outside the completed inventory may be hashed: {record}");
+    assert!(
+        counter(&record, &["verification", "bytes_reused"]) > 0,
+        "{record}"
+    );
+    assert!(!restarted.0.validation.held().is_empty());
+    let status = restarted.0.status.read().unwrap();
+    assert_eq!(status["integrity_validation"]["state"], "pending");
+    assert_eq!(status["correctness_validation"]["state"], "pending");
+    follow.server.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn restart_reuses_completed_objects_before_background_validation() {
+    restart_with_pending_validation(false).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn bootstrap_reuses_completed_objects_before_background_validation() {
+    restart_with_pending_validation(true).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn invalid_preparation_records_do_not_bootstrap_over_their_errors() {
+    let follow = follow_fixture().await;
+    let authority = follow.authority(Default::default());
+    follow.ingest(&authority).await;
+    follow.cycle(&authority).await;
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    let active = authority.0.active.read().unwrap().clone();
+    let path = active
+        .publication
+        .directory
+        .join(transparent_shared::publication::PREPARATION_FILE);
+    let original = std::fs::read(&path).unwrap();
+    for (field, value) in [
+        (
+            "semantics",
+            serde_json::json!("unsupported preparation semantics"),
+        ),
+        ("completion_sha256", serde_json::json!("00".repeat(32))),
+        ("files", serde_json::Value::Null),
+    ] {
+        let mut record: serde_json::Value = serde_json::from_slice(&original).unwrap();
+        record[field] = value;
+        std::fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
+        let (restarted, restored) = follow.restart();
+        assert!(
+            restored,
+            "invalid preparation does not invalidate valid completion"
+        );
+        assert!(
+            restarted.0.prepared_set.lock().unwrap().is_none(),
+            "invalid {field} must verify"
+        );
+    }
+    std::fs::remove_file(path).unwrap();
+    let (restarted, restored) = follow.restart();
+    assert!(restored);
+    assert!(
+        restarted.0.prepared_set.lock().unwrap().is_some(),
+        "only absence allows first adoption"
+    );
+    follow.server.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn replacement_and_changed_change_time_require_preparation_of_that_object() {
+    use std::os::unix::fs::{FileExt, PermissionsExt};
+    use transparent_shared::publication::{
+        Finalized, RestoreRecord, PREPARATION_FILE, RESTORE_FILE,
+    };
+    let follow = follow_fixture().await;
+    let authority = follow.authority(Default::default());
+    follow.ingest(&authority).await;
+    follow.cycle(&authority).await;
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    let active = authority.0.active.read().unwrap().clone();
+    let root = &active.publication.directory;
+    let Restore::Restored(restored) = restore_public(&follow.config, &active).unwrap() else {
+        panic!("completed")
+    };
+    let record: RestoreRecord =
+        serde_json::from_slice(&std::fs::read(root.join(RESTORE_FILE)).unwrap()).unwrap();
+    let saved = std::fs::read(root.join(PREPARATION_FILE)).unwrap();
+    let runtime = restored
+        .finalized
+        .inventory()
+        .artifacts
+        .iter()
+        .find(|a| a.kind == Kind::RecentRuntime)
+        .unwrap();
+    let physical = root.join(&runtime.path).canonicalize().unwrap();
+    let bytes = std::fs::read(&physical).unwrap();
+    let metadata: u64 = restored
+        .finalized
+        .inventory()
+        .artifacts
+        .iter()
+        .filter(|a| a.kind == Kind::Metadata)
+        .map(|a| a.bytes)
+        .sum();
+    // Replacing an inode with identical bytes still requires a hash and self-check.
+    let next = physical.with_extension("replacement");
+    std::fs::write(&next, &bytes).unwrap();
+    std::fs::set_permissions(&next, std::fs::Permissions::from_mode(0o444)).unwrap();
+    std::fs::rename(next, &physical).unwrap();
+    let mut reuse = restored
+        .publisher_preparation(&record, Some(&saved))
+        .unwrap();
+    Finalized::prepare_reusing(
+        root,
+        &reuse.tables,
+        follow.config.recent_from,
+        true,
+        &mut reuse.runtimes,
+    )
+    .unwrap();
+    assert_eq!(reuse.runtimes.loaded, 1);
+    assert_eq!(reuse.runtimes.bytes_hashed, metadata + runtime.bytes);
+    // A same-size write cannot hide by restoring the modification timestamp.
+    let modified = std::fs::metadata(&physical).unwrap().modified().unwrap();
+    std::fs::set_permissions(&physical, std::fs::Permissions::from_mode(0o644)).unwrap();
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&physical)
+        .unwrap();
+    file.write_all_at(&[bytes[64] ^ 1], 64).unwrap();
+    file.set_times(std::fs::FileTimes::new().set_modified(modified))
+        .unwrap();
+    std::fs::set_permissions(&physical, std::fs::Permissions::from_mode(0o444)).unwrap();
+    let mut reuse = restored
+        .publisher_preparation(&record, Some(&saved))
+        .unwrap();
+    assert!(Finalized::prepare_reusing(
+        root,
+        &reuse.tables,
+        follow.config.recent_from,
+        true,
+        &mut reuse.runtimes
+    )
+    .is_err());
+    assert!(
+        restored.finalized.preparation_record(root, &record).is_ok(),
+        "bootstrap records metadata; background verification remains required"
+    );
+    follow.server.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn background_validation_keeps_completed_artifacts_across_successors() {
+    use transparent_shared::publication::{
+        CheckedRuntimes, CorrectnessError, IntegrityError, Verified,
+    };
+    let follow = follow_fixture_with_rows(true).await;
+    let authority = follow.authority(Default::default());
+    follow.ingest(&authority).await;
+    follow.cycle(&authority).await;
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    let initial = authority.0.active.read().unwrap().clone();
+    let distribution = initial.distribution.as_ref().unwrap();
+    let mut inventory = distribution.inventory().clone();
+    let prefix = &initial.filters.map().shards[0].manifest_digest;
+    let first_shard = inventory
+        .artifacts
+        .iter()
+        .find(|a| {
+            a.path.starts_with(prefix) && matches!(a.kind, Kind::RecentTable | Kind::ArchiveTable)
+        })
+        .unwrap()
+        .clone();
+    inventory
+        .artifacts
+        .sort_by_key(|a| a.path != first_shard.path);
+    let mut known = Verified::default();
+    let validation = distribution
+        .validation(
+            &initial.publication.directory,
+            follow.config.recent_from,
+            true,
+        )
+        .unwrap();
+    let calls = std::cell::Cell::new(0u64);
+    let first_reads = first_shard.bytes.div_ceil(1 << 20) + 1;
+    let stopped = validation.integrity_continuing(&inventory, &mut known, &|| {
+        let call = calls.get();
+        calls.set(call + 1);
+        call >= first_reads
+    });
+    assert!(matches!(stopped, Err(IntegrityError::Stopped)));
+    known.retain_stored(&follow.config.publication_root);
+    let (restarted, restored) = follow.restart();
+    assert!(restored);
+    follow.advance(&restarted, 1).await;
+    follow.cycle(&restarted).await;
+    let current = restarted.0.active.read().unwrap().clone();
+    let distribution = current.distribution.as_ref().unwrap();
+    let inventory = distribution.inventory();
+    assert!(inventory
+        .artifacts
+        .iter()
+        .any(|a| a.path == first_shard.path && a.sha256 == first_shard.sha256));
+    let validation = distribution
+        .validation(
+            &current.publication.directory,
+            follow.config.recent_from,
+            true,
+        )
+        .unwrap();
+    let verified = validation
+        .integrity_continuing(inventory, &mut known, &|| false)
+        .unwrap();
+    let total: u64 = inventory.artifacts.iter().map(|a| a.bytes).sum();
+    assert!(
+        verified.hashed <= total - first_shard.bytes,
+        "completed artifact was read again"
+    );
+    let mut checks = CheckedRuntimes::default();
+    let memory = Arc::new(transparent_shared::runtime::memory::WorkMemory::default());
+    let calls = std::cell::Cell::new(0);
+    let stopped = validation.correctness_continuing(
+        inventory,
+        &verified,
+        &memory,
+        &|| {
+            let call = calls.get();
+            calls.set(call + 1);
+            call >= 1
+        },
+        &mut checks,
+    );
+    assert!(matches!(stopped, Err(CorrectnessError::Stopped)));
+    checks.retain_stored(&follow.config.publication_root);
+    let completed = validation
+        .correctness_continuing(inventory, &verified, &memory, &|| false, &mut checks)
+        .unwrap();
+    assert_eq!(
+        completed.reused, 1,
+        "completed runtime self-check must survive cancellation"
+    );
+    let mut foreign = inventory.clone();
+    foreign.genesis_hash = "00".repeat(32);
+    let mut other = known.clone();
+    let verified_foreign = validation
+        .integrity_continuing(&foreign, &mut other, &|| false)
+        .unwrap();
+    assert_eq!(
+        verified_foreign.hashed, total,
+        "changed chain context discards prior checks"
+    );
+    let mut other_checks = checks.clone();
+    let foreign_checks = validation
+        .correctness_continuing(
+            &foreign,
+            &verified_foreign,
+            &memory,
+            &|| false,
+            &mut other_checks,
+        )
+        .unwrap();
+    assert_eq!(
+        foreign_checks.reused, 0,
+        "runtime checks cannot cross semantic contexts"
+    );
+    for _ in 0..3 {
+        follow.advance(&restarted, 1).await;
+        follow.cycle(&restarted).await;
+        let current = restarted.0.active.read().unwrap().clone();
+        let distribution = current.distribution.as_ref().unwrap();
+        let validation = distribution
+            .validation(
+                &current.publication.directory,
+                follow.config.recent_from,
+                true,
+            )
+            .unwrap();
+        let verified = validation
+            .integrity_continuing(distribution.inventory(), &mut known, &|| false)
+            .unwrap();
+        let total: u64 = distribution
+            .inventory()
+            .artifacts
+            .iter()
+            .map(|a| a.bytes)
+            .sum();
+        assert!(
+            verified.hashed < total,
+            "unchanged artifacts keep their completed hashes"
+        );
+        let checked = validation
+            .correctness_continuing(
+                distribution.inventory(),
+                &verified,
+                &memory,
+                &|| false,
+                &mut checks,
+            )
+            .unwrap();
+        assert!(
+            checked.reused > 0,
+            "continuous publication cannot discard completed archive checks"
+        );
+    }
+    // A later write invalidates even completed background hash evidence.
+    let current = restarted.0.active.read().unwrap().clone();
+    let distribution = current.distribution.as_ref().unwrap();
+    let artifact = distribution
+        .inventory()
+        .artifacts
+        .iter()
+        .find(|a| a.path == first_shard.path)
+        .unwrap();
+    let physical = current
+        .publication
+        .directory
+        .join(&artifact.path)
+        .canonicalize()
+        .unwrap();
+    use std::os::unix::fs::{FileExt, PermissionsExt};
+    std::fs::set_permissions(&physical, std::fs::Permissions::from_mode(0o644)).unwrap();
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&physical)
+        .unwrap();
+    let mut byte = [0];
+    file.read_exact_at(&mut byte, 0).unwrap();
+    file.write_all_at(&[byte[0] ^ 1], 0).unwrap();
+    std::fs::set_permissions(&physical, std::fs::Permissions::from_mode(0o444)).unwrap();
+    let validation = distribution
+        .validation(
+            &current.publication.directory,
+            follow.config.recent_from,
+            true,
+        )
+        .unwrap();
+    assert!(
+        matches!(
+            validation.integrity_continuing(distribution.inventory(), &mut known, &|| false),
+            Err(IntegrityError::Mismatch { .. })
+        ),
+        "completed hashes do not hide later corruption"
+    );
+    follow.server.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn bootstrap_corruption_is_found_after_a_successor_activates_and_stays_withdrawn() {
+    use crate::history::validator::{Event, Identity};
+    use std::os::unix::fs::{FileExt, PermissionsExt};
+    use transparent_shared::publication::{IntegrityError, PREPARATION_FILE};
+    let follow = follow_fixture_with_rows(true).await;
+    let authority = follow.authority(Default::default());
+    follow.ingest(&authority).await;
+    follow.cycle(&authority).await;
+    let old = authority.0.active.read().unwrap().clone();
+    let distribution = old.distribution.as_ref().unwrap();
+    let prefix = &old.filters.map().shards[0].manifest_digest;
+    let artifact = distribution
+        .inventory()
+        .artifacts
+        .iter()
+        .find(|a| {
+            a.path.starts_with(prefix) && matches!(a.kind, Kind::RecentTable | Kind::ArchiveTable)
+        })
+        .unwrap()
+        .clone();
+    let physical = old
+        .publication
+        .directory
+        .join(&artifact.path)
+        .canonicalize()
+        .unwrap();
+    std::fs::set_permissions(&physical, std::fs::Permissions::from_mode(0o644)).unwrap();
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&physical)
+        .unwrap();
+    let mut byte = [0];
+    file.read_exact_at(&mut byte, 0).unwrap();
+    file.write_all_at(&[byte[0] ^ 1], 0).unwrap();
+    std::fs::set_permissions(&physical, std::fs::Permissions::from_mode(0o444)).unwrap();
+    std::fs::remove_file(old.publication.directory.join(PREPARATION_FILE)).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    let (restarted, restored) = follow.restart();
+    assert!(
+        restored,
+        "first adoption trusts completed publisher preparation"
+    );
+    follow.advance(&restarted, 1).await;
+    follow.cycle(&restarted).await;
+    let current = restarted.0.active.read().unwrap().clone();
+    assert_eq!(current.publication.height, 5);
+    assert!(!restarted.0.withdrawn.load(Ordering::Acquire));
+    let current_distribution = current.distribution.as_ref().unwrap();
+    let validation = current_distribution
+        .validation(
+            &current.publication.directory,
+            follow.config.recent_from,
+            true,
+        )
+        .unwrap();
+    let failure = validation
+        .integrity(current_distribution.inventory(), None, &|| false)
+        .unwrap_err();
+    assert!(matches!(failure, IntegrityError::Mismatch { .. }));
+    let identity = Identity {
+        directory: old.publication.directory.clone(),
+        map_sha256: old.publication.map_sha256.clone(),
+        inventory_sha256: distribution.sha256().into(),
+        height: old.publication.height,
+        hash: old.publication.hash.clone(),
+        epoch: 0,
+    };
+    validation_event(
+        &follow.config.publication_root,
+        &restarted,
+        &identity,
+        Event::Integrity(Err(failure)),
+    );
+    assert!(restarted.0.withdrawn.load(Ordering::Acquire));
+    assert_eq!(
+        integrity_failures(&follow.config.publication_root)
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(matches!(
+        restore_public(&follow.config, &current).unwrap(),
+        Restore::Failed(_)
+    ));
+    follow.server.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn preparation_refuses_truncation_and_retargeted_store_links() {
+    use transparent_shared::publication::{RestoreRecord, PREPARATION_FILE, RESTORE_FILE};
+    let follow = follow_fixture().await;
+    let authority = follow.authority(Default::default());
+    follow.ingest(&authority).await;
+    follow.cycle(&authority).await;
+    let active = authority.0.active.read().unwrap().clone();
+    let root = &active.publication.directory;
+    let Restore::Restored(restored) = restore_public(&follow.config, &active).unwrap() else {
+        panic!("completed")
+    };
+    let completion: RestoreRecord =
+        serde_json::from_slice(&std::fs::read(root.join(RESTORE_FILE)).unwrap()).unwrap();
+    let saved = std::fs::read(root.join(PREPARATION_FILE)).unwrap();
+    let artifact = restored
+        .finalized
+        .inventory()
+        .artifacts
+        .iter()
+        .find(|a| a.kind == Kind::RecentRuntime)
+        .unwrap();
+    let link = root.join(&artifact.path);
+    let target = std::fs::read_link(&link).unwrap();
+    std::fs::remove_file(&link).unwrap();
+    // Even a controlled store target must be the artifact's own digest.
+    let wrong = restored
+        .finalized
+        .inventory()
+        .artifacts
+        .iter()
+        .find(|a| matches!(a.kind, Kind::RecentTable | Kind::ArchiveTable))
+        .unwrap();
+    std::os::unix::fs::symlink(
+        Path::new("..").join(OBJECT_STORE).join(&wrong.sha256),
+        &link,
+    )
+    .unwrap();
+    assert!(restored
+        .publisher_preparation(&completion, Some(&saved))
+        .is_err());
+    std::fs::remove_file(&link).unwrap();
+    std::os::unix::fs::symlink(follow.config.rpc_cookie.clone(), &link).unwrap();
+    assert!(restored
+        .publisher_preparation(&completion, Some(&saved))
+        .is_err());
+    std::fs::remove_file(&link).unwrap();
+    std::os::unix::fs::symlink(target, &link).unwrap();
+    let physical = link.canonicalize().unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&physical, std::fs::Permissions::from_mode(0o644)).unwrap();
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&physical)
+        .unwrap()
+        .set_len(artifact.bytes - 1)
+        .unwrap();
+    assert!(
+        restore_public(&follow.config, &active).is_err(),
+        "invalid completion still refuses startup"
+    );
+    assert!(restored
+        .publisher_preparation(&completion, Some(&saved))
+        .is_err());
     follow.server.abort();
 }
