@@ -495,7 +495,7 @@ fn collect_saved(root: &Path) -> Result<(), Error> {
             keep.insert(root.join(first));
         }
     }
-    if !crate::transparent::history::live::collect_publications(root, &keep)? {
+    if !crate::transparent::source_collection::collect_publications(root, &keep)? {
         return Err("publication collection deferred; staging paused".into());
     }
     // A retained map demonstrates the cache's hard-link mode. With no trees

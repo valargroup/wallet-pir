@@ -1,5 +1,6 @@
 use super::*;
 use transparent_shared::publication::Eligibility;
+use transparent_shared::tx_detail::set::MAP_FILE;
 
 fn live(root: &Path) -> DisplayLive {
     DisplayLive::new(
@@ -86,4 +87,100 @@ fn empty_revocation_does_not_delay_recovery() {
     .unwrap();
     assert_eq!(saved(root.path()).revision, 0);
     assert!(saved(root.path()).digests.is_empty());
+}
+
+#[tokio::test]
+async fn failed_sync_collects_old_downloads_but_preserves_restart_inputs() {
+    use crate::synchronization::SyncTask;
+    use std::os::unix::fs::symlink;
+    let root = tempfile::tempdir().unwrap();
+    let root = root.path().canonicalize().unwrap();
+    let objects = root.join("objects");
+    let catalog = root.join(".sources");
+    std::fs::create_dir(&objects).unwrap();
+    std::fs::create_dir(&catalog).unwrap();
+    let stage = |n: u64| {
+        let digest = format!("{n:064x}");
+        let object = objects.join(&digest);
+        std::fs::write(&object, b"downloaded bytes").unwrap();
+        let source = catalog.join(&digest);
+        std::fs::create_dir(&source).unwrap();
+        std::fs::hard_link(&object, source.join("rows.bin")).unwrap();
+        let directory = root.join(format!("staging-{n}-100"));
+        std::fs::create_dir(&directory).unwrap();
+        symlink(format!("../.sources/{digest}"), directory.join(&digest)).unwrap();
+        std::fs::hard_link(&object, directory.join(MAP_FILE)).unwrap();
+        std::fs::File::open(&directory)
+            .unwrap()
+            .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(100 + n))
+            .unwrap();
+        directory
+    };
+    for n in 0..9 {
+        stage(n);
+    }
+    let saved = root.join("staging-0-100");
+    persist(
+        &root.join("active.json"),
+        &DisplayPublication {
+            directory: saved.clone(),
+            map_sha256: "44".repeat(32),
+        },
+    )
+    .unwrap();
+    let orphan = objects.join("ff".repeat(32));
+    std::fs::write(&orphan, b"unused download").unwrap();
+    let foreign = root.join("operator-backup");
+    std::fs::create_dir(&foreign).unwrap();
+    let mut sync = DisplaySync::new(
+        Config {
+            publisher: "https://127.0.0.1:1".into(),
+            network: "main".into(),
+            genesis_hash: "22".repeat(32),
+            directory: root.clone(),
+            cache_bytes: 1 << 20,
+            max_download_bytes: 1 << 20,
+            roots: Vec::new(),
+        },
+        crate::transparent::config::ServiceConfig::default(),
+    )
+    .unwrap();
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(root.join(".sources.lock"))
+        .unwrap();
+    lock.lock().unwrap();
+    assert!(sync
+        .collect()
+        .await
+        .unwrap_err()
+        .to_string()
+        .contains("collection deferred"));
+    assert!(orphan.exists());
+    assert!(root.join("staging-1-100").exists());
+    drop(lock);
+    for end in [9, 12] {
+        if end == 12 {
+            for n in 9..12 {
+                stage(n);
+            }
+        }
+        // Discovery fails, but the failed pass must still reclaim space.
+        assert!(sync.synchronize().await.is_err());
+        assert_eq!(
+            std::fs::read(saved.join(MAP_FILE)).unwrap(),
+            b"downloaded bytes"
+        );
+        assert!(foreign.exists());
+        assert!(!orphan.exists());
+        for n in 1..end {
+            let keep = n >= end - 3;
+            assert_eq!(root.join(format!("staging-{n}-100")).exists(), keep);
+            assert_eq!(catalog.join(format!("{n:064x}")).exists(), keep);
+            assert_eq!(objects.join(format!("{n:064x}")).exists(), keep);
+        }
+    }
 }

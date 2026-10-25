@@ -427,6 +427,14 @@ before installing this source or updating production state.
 
 ### Recover transaction-detail query-cache capacity
 
+The HTTPS transaction-detail worker collects obsolete publication trees, their
+unreferenced shared revisions, and downloaded objects. It preserves active,
+prepared, retained and request-held publications, plus the saved predecessor
+before the first activation after restart. Collection runs before another
+download and after failed synchronization attempts. Check collection logs and
+filesystem free space to verify reclamation; hard-linked directory sizes do not
+measure reclaimable bytes.
+
 Use `wallet-pir-deploy.py cache-storage-plan` and `cache-storage-prune` to
 retire an explicitly selected, unused HTTPS cache beside the installed worker's
 active cache. Cleanup checks configuration, process handles, mappings and active

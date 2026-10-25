@@ -41,7 +41,6 @@ pub(crate) fn remove_partials(objects: &std::path::Path) -> Result<(), Error> {
 /// and runs this between stages; the catalog lock still defers it while a
 /// stage links sources. Returns the files and bytes freed, or `None` when
 /// deferred or skipped.
-#[cfg(any(test, feature = "transparent-history"))]
 pub(crate) fn collect_objects(
     root: &std::path::Path,
     linked: &std::path::Path,

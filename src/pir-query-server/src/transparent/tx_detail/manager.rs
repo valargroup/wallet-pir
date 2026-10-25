@@ -122,7 +122,7 @@ impl DisplaySync {
             Vec::new(),
             None,
         )?
-        .retain_directory_owner(lock.clone());
+        .own_source_directory(config.directory.clone(), lock.clone());
         Ok(Self {
             config,
             source,
@@ -183,8 +183,17 @@ impl DisplaySync {
         }
         Ok(current)
     }
+    /// Reclaim obsolete downloads even when the next publication cannot be fetched.
+    async fn collect(&self) -> Result<(), Error> {
+        let reply = self.live.command(DisplayCommand::Collect).await?;
+        if reply["source_collection_deferred"] != false {
+            return Err("display source collection deferred; download paused".into());
+        }
+        Ok(())
+    }
     async fn update(&mut self) -> Result<serde_json::Value, Error> {
         let current = self.observe().await?;
+        self.collect().await?;
         crate::transparent::validation::repair_failed(&mut self.source, &self.config.directory)
             .await;
         if self.current.as_ref() == Some(&current) {
@@ -207,7 +216,7 @@ impl DisplaySync {
             }
         };
         self.activate(&current, publication).await?;
-        self.live.command(DisplayCommand::Collect).await?;
+        self.collect().await?;
         self.current = Some(current.clone());
         Ok(
             serde_json::json!({"unchanged":false,"revision":current.revision,"downloaded_bytes":self.source.downloaded()}),
@@ -383,17 +392,20 @@ impl crate::synchronization::SyncTask for DisplaySync {
     type Report = serde_json::Value;
     type Error = Error;
     async fn synchronize(&mut self) -> Result<Self::Report, Error> {
-        // Every pass, unchanged ones included, rechecks the publisher's contract
-        // version before any product request.
-        if let Err(error) = self.source.discover().await {
-            *self.synchronization.write().unwrap() =
-                serde_json::json!({"state":"refused","error":error.to_string()});
-            return Err(error);
-        }
         self.source.reset_budget();
         *self.synchronization.write().unwrap() = serde_json::json!({"state":"synchronizing"});
-        self.live.command(DisplayCommand::Collect).await?;
-        let result = self.update().await;
+        let result = async {
+            self.source.discover().await?;
+            self.update().await
+        }
+        .await;
+        if result.is_err() {
+            // A refusal must not leave obsolete downloads growing indefinitely.
+            // Preserve the original authority error when maintenance also fails.
+            if let Err(error) = self.collect().await {
+                tracing::warn!(%error, "display source collection deferred after failed synchronization");
+            }
+        }
         match &result {
             Ok(report) => {
                 *self.synchronization.write().unwrap() =

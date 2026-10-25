@@ -33,6 +33,7 @@ pub mod request;
 #[cfg(feature = "transparent-history")]
 pub mod routing;
 mod source;
+mod source_collection;
 #[cfg(feature = "transparent-detail")]
 pub mod tx_detail;
 mod validation;

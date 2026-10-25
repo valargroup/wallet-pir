@@ -129,6 +129,7 @@ struct Inner {
     /// nothing on disk is removed: a root shared with the controller or
     /// another worker is not this worker's to collect.
     collect_roots: Vec<PathBuf>,
+    source_root: Option<PathBuf>,
     active: RwLock<Option<Active>>,
     serving: AtomicBool,
     retired: RwLock<Vec<Active>>,
@@ -271,6 +272,7 @@ impl DisplayLive {
             retain,
             record,
             collect_roots,
+            source_root: None,
             active: RwLock::new(initial.map(|(state, publication)| Active { state, publication })),
             serving: AtomicBool::new(false),
             retired: RwLock::new(Vec::new()),
@@ -288,11 +290,11 @@ impl DisplayLive {
         })))
     }
 
-    /// Retain the managed root through routers, admitted requests and blocking activation.
-    pub(crate) fn retain_directory_owner(mut self, owner: Arc<std::fs::File>) -> Self {
-        Arc::get_mut(&mut self.0)
-            .expect("new serving owner is exclusively held")
-            ._directory_owner = Some(owner);
+    /// Own downloaded publications through routers, requests and blocking activation.
+    pub(crate) fn own_source_directory(mut self, root: PathBuf, owner: Arc<std::fs::File>) -> Self {
+        let inner = Arc::get_mut(&mut self.0).expect("new serving owner is exclusively held");
+        inner.source_root = Some(root);
+        inner._directory_owner = Some(owner);
         self
     }
     /// Exact anchors of active and retained revisions, for live publisher checks.
@@ -825,6 +827,7 @@ impl DisplayLive {
             let unpublished_from = active
                 .as_ref()
                 .map(|a| first_unpublished_seal(&a.state.set().map));
+            let has_active = active.is_some();
             let kept_snapshots = retired.len();
             drop(staged);
             drop(in_stage);
@@ -833,6 +836,57 @@ impl DisplayLive {
             drop(candidate);
             let collected_snapshots = dropped.len();
             drop(dropped);
+            let mut source_collection_deferred = false;
+            if let Some(root) = &inner.source_root {
+                // Before the first activation, preserve the saved predecessor for
+                // restart recovery without granting it permission to serve.
+                if !has_active {
+                    match std::fs::read(&inner.record) {
+                        Ok(bytes) => {
+                            let saved: DisplayPublication =
+                                serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+                            let directory = std::fs::canonicalize(saved.directory)
+                                .map_err(|e| e.to_string())?;
+                            if !directory.starts_with(root) || directory == *root {
+                                return Err(
+                                    "saved display publication is outside its source directory"
+                                        .into(),
+                                );
+                            }
+                            keep_dirs.insert(directory);
+                        }
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                        Err(error) => return Err(error.to_string()),
+                    }
+                }
+                source_collection_deferred =
+                    !crate::transparent::source_collection::collect_publications(root, &keep_dirs)
+                        .map_err(|e| e.to_string())?;
+                if !source_collection_deferred {
+                    let linked = keep_dirs
+                        .iter()
+                        .map(|dir| dir.join(MAP_FILE))
+                        .find(|map| map.is_file())
+                        .or_else(|| {
+                            std::fs::read_dir(root)
+                                .ok()?
+                                .filter_map(Result::ok)
+                                .find_map(|entry| {
+                                    let map = entry.path().join(MAP_FILE);
+                                    (entry.file_type().ok()?.is_dir() && map.is_file())
+                                        .then_some(map)
+                                })
+                        });
+                    let collected = match linked {
+                        Some(map) => crate::transparent::objects::collect_objects(root, &map),
+                        None => crate::transparent::objects::collect_orphan_objects(root),
+                    }
+                    .map_err(|e| e.to_string())?;
+                    if let Some((files, bytes)) = collected.filter(|(files, _)| *files > 0) {
+                        tracing::info!(files, bytes, "unused display downloads collected");
+                    }
+                }
+            }
             let disk = inner.runtime.cache.prune_disk(&keys)?;
             let mut removed = Vec::new();
             for root in &inner.collect_roots {
@@ -849,6 +903,7 @@ impl DisplayLive {
                 "collected_snapshots": collected_snapshots,
                 "disk_freed_bytes": disk.unwrap_or(0),
                 "disk_collection_deferred": disk.is_none(),
+                "source_collection_deferred": source_collection_deferred,
             })))
         })
         .await
@@ -1153,6 +1208,104 @@ mod tests {
         let removed = collect_directories(root.path(), &keep, &BTreeSet::new(), Some(3)).unwrap();
         assert_eq!(removed.len(), 2);
         assert!(!staged_dir.exists() && !awaiting.exists());
+    }
+
+    #[tokio::test]
+    async fn managed_collection_keeps_active_and_held_publications() {
+        use transparent_shared::tx_detail::synth::{self, ShardSpec};
+        let store = tempfile::tempdir().unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        let owner = Arc::new(std::fs::File::create(root.join("bootstrap.lock")).unwrap());
+        let live = DisplayLive::new(
+            DisplayRuntime::new(crate::transparent::config::ServiceConfig::default(), None),
+            DisplayRole::Combined,
+            3,
+            root.join("active.json"),
+            Vec::new(),
+            None,
+        )
+        .unwrap()
+        .own_source_directory(root.clone(), owner);
+        let params = transparent_shard::display::DisplaySealParams {
+            n_archive: 1,
+            n_recent: 1,
+            archive_target: 1,
+            recent_window: 1,
+            reorg_margin: 1,
+        };
+        let mut held = None;
+        let mut expected = String::new();
+        for n in 0..12 {
+            let shard = synth::write_shard(
+                store.path(),
+                &ShardSpec {
+                    shard_id: 0,
+                    start_height: 1,
+                    end_height: 10 + n,
+                    sealed: false,
+                    revision: n as u32,
+                    supersedes: String::new(),
+                    parent_manifest_digest: String::new(),
+                    n_buckets: 1,
+                    archive_target: 1,
+                    geometry: &transparent_shard::display::TXID_2K8,
+                },
+                &synth::records(3, 10),
+            )
+            .unwrap();
+            let (candidate, map_sha256) =
+                synth::write_candidate(store.path(), &params, &[shard], &n.to_string()).unwrap();
+            let path = root.join(format!("staging-{n}-100"));
+            std::fs::rename(candidate, &path).unwrap();
+            live.command(DisplayCommand::Prepare {
+                expected: expected.clone(),
+                publication: DisplayPublication {
+                    directory: path.clone(),
+                    map_sha256: map_sha256.clone(),
+                },
+            })
+            .await
+            .unwrap();
+            live.command(DisplayCommand::Activate {
+                expected,
+                map_sha256: map_sha256.clone(),
+            })
+            .await
+            .unwrap();
+            expected = map_sha256;
+            if n == 0 {
+                held = Some(
+                    live.0
+                        .active
+                        .read()
+                        .unwrap()
+                        .as_ref()
+                        .unwrap()
+                        .state
+                        .clone(),
+                );
+            }
+            assert_eq!(
+                live.command(DisplayCommand::Collect).await.unwrap()["source_collection_deferred"],
+                false
+            );
+            assert!(path.join(MAP_FILE).is_file());
+            assert!(root.join("staging-0-100").join(MAP_FILE).is_file());
+        }
+        assert_eq!(held.as_ref().unwrap().set().map.shards[0].end_height, 10);
+        drop(held);
+        live.command(DisplayCommand::Collect).await.unwrap();
+        assert!(!root.join("staging-0-100").exists());
+        assert!(root.join("staging-11-100").join(MAP_FILE).is_file());
+        assert!(
+            std::fs::read_dir(&root)
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter(|entry| entry.file_name().to_string_lossy().starts_with("staging-"))
+                .count()
+                <= 7
+        );
     }
 
     /// A stage holds its lock through verification and cold builds; the
