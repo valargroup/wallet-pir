@@ -21,8 +21,11 @@ def run_pool(programs, workers, heavy_limit, invoke, *, tolerate=lambda error: F
     """Run in queue order, starting a memory-heavy program only while a heavy slot is free.
 
     A later light program may start ahead of a waiting heavy one, so the pool
-    stays busy without overlapping more heavy fixtures than fit. Returns the
-    errors `tolerate` accepted; any other error cancels the rest and is raised.
+    stays busy without overlapping more heavy fixtures than fit. A free heavy
+    slot goes to the waiting heavy program with the most cases: serialized
+    heavy programs are the critical path, and the longest should start first.
+    Returns the errors `tolerate` accepted; any other error cancels the rest
+    and is raised.
     """
     pending = list(programs)
     running = {}
@@ -32,8 +35,10 @@ def run_pool(programs, workers, heavy_limit, invoke, *, tolerate=lambda error: F
             while pending or running:
                 heavy = sum(running.values())
                 while len(running) < workers:
+                    waiting = [i for i, program in enumerate(pending) if program.get('heavy')]
+                    largest = max(waiting, key=lambda i: pending[i].get('case_count', 0), default=None)
                     index = next((i for i, program in enumerate(pending)
-                                  if not program.get('heavy') or heavy < heavy_limit), None)
+                                  if not program.get('heavy') or (heavy < heavy_limit and i == largest)), None)
                     if index is None:
                         break
                     program = pending.pop(index)
@@ -97,6 +102,7 @@ def execute(programs, jobs, *, budget=False, test_threads=1, heavy_slots=None):
         finally:
             print('CI_TEST_PROGRAM ' + json.dumps(dict(
                 package=program['package'], executable=Path(program['executable']).name,
+                cases=program.get('case_count'), heavy=bool(program.get('heavy')),
                 seconds=round(time.monotonic() - started, 3), passed=passed)), flush=True)
 
     def run_concurrent(selected, workers):

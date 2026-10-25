@@ -193,6 +193,14 @@ class FastBuildTests(unittest.TestCase):
         # Light programs start while the heavy ones wait for the single slot.
         self.assertLess(order.index('light0'), order.index('heavy1'))
 
+    def test_a_free_heavy_slot_goes_to_the_heavy_program_with_most_cases(self):
+        import unit_tests
+        order = []
+        programs = [dict(name='short', heavy=True, case_count=3), dict(name='long', heavy=True, case_count=90),
+                    dict(name='middle', heavy=True, case_count=40)]
+        unit_tests.run_pool(programs, 1, 1, lambda program: order.append(program['name']))
+        self.assertEqual(order, ['long', 'middle', 'short'])
+
     def test_pool_raises_the_first_error_unless_tolerated(self):
         import unit_tests
 
