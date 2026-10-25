@@ -2787,7 +2787,6 @@ dependencies = [
  "axum",
  "hex",
  "pir-publication",
- "pir-query-server",
  "reqwest",
  "serde",
  "serde_json",
