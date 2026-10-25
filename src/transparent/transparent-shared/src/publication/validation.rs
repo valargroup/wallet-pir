@@ -380,7 +380,7 @@ impl Validation {
 /// inventory. Names and whole-file digests are derived again on every prepare.
 #[derive(Clone, Debug, Default)]
 pub struct CheckedRuntimes {
-    context: Option<[String; 4]>,
+    pub(crate) context: Option<[String; 4]>,
     pub(crate) passed: BTreeMap<String, String>,
     /// Publisher-owned preparation; kept distinct from checks by this process.
     pub(crate) preparation: BTreeMap<String, (String, u64, FileIdentity)>,
