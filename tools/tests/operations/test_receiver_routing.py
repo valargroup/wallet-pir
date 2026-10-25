@@ -89,6 +89,9 @@ class ReceiverRouting(unittest.TestCase):
         result = self.deploy(routing)
         self.assertEqual(result['phase'], 'committed')
         self.assertIn('reverse_proxy https://wallet-pir-query-01.valargroup.dev', self.host.read('coordinator', CONFIG))
+        self.assertIn('header_up Host {upstream_hostport}', self.host.read('coordinator', CONFIG))
+        self.assertEqual(candidate(self.host.read('coordinator', CONFIG), routing.request),
+                         self.host.read('coordinator', CONFIG))
         self.host.failure = 'exact'
         with self.assertRaises(DeployError):
             self.deploy(routing)

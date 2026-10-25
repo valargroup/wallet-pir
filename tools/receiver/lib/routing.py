@@ -21,7 +21,8 @@ from wallet_pir_ops.deploy.transaction import FINAL, Journal
 SERVICE = 'receiver-routing'
 CONFIG = '/etc/caddy/Caddyfile'
 RECEIVER = 'receiver-pir.valargroup.dev'
-WALLET = re.compile(r'(?m)^([ \t]*handle @wallet \{\n[ \t]*reverse_proxy )([^\s{}]+)(\n[ \t]*\})')
+WALLET = re.compile(r'(?m)^([ \t]*handle @wallet \{\n[ \t]*reverse_proxy )([^\s{}]+)'
+                    r'((?: \{\n[ \t]*header_up Host \{upstream_hostport\}\n[ \t]*\})?\n[ \t]*\})')
 
 
 def digest(text):
@@ -85,7 +86,12 @@ def candidate(text, request):
         require(len(matches) == 1 and matches[0][2] in (request['publisher_listen'], request['query_origin']),
                 'wallet upstream differs from the predecessor and candidate')
         require('/provider/receiver/v1/*' in site, 'prepare HTTPS distribution before switching wallets')
-        site = WALLET.sub(lambda match: match[1] + request['query_origin'] + match[3], site)
+        def wallet_proxy(match):
+            indent = match[1].rsplit('\n', 1)[1].removesuffix('reverse_proxy ')
+            closing = match[3].rsplit('\n', 1)[1]
+            return (match[1] + request['query_origin'] + ' {\n' + indent
+                    + '  header_up Host {upstream_hostport}\n' + indent + '}\n' + closing)
+        site = WALLET.sub(wallet_proxy, site)
     after = text[:start] + site + text[end:]
     return after
 
