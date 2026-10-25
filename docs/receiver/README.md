@@ -44,6 +44,19 @@ the guard continues checking served anchors throughout both phases. This
 standard-path adapter adds no HTTP source. The shared acquisition seam accepts
 product work without owning a store, protocol, queue or authority ([lifecycle boundaries](../enhance/architecture.md#ingestion-application)).
 
+## Publisher distribution
+
+The root-managed publisher exposes Receiver material under `/provider/receiver/v1/`.
+Its `current` envelope, `objects/<digest>` downloads, and `authority/check`
+operation use the shared publication authority contract. The deployment edge
+must terminate HTTPS; these provider operations are separate from wallet routes.
+
+A distribution binds payment and witness rows and setup to their session manifests,
+plus shard filters and rolling block-filter batches. Rolling filters can advance
+before a new directory finishes preparing. Unchanged sealed files reuse exact-file
+verification; changed files are checked again. Publication, withdrawal, and restart
+recovery advance durable authority, and a downloaded object never authorizes serving.
+
 ## Node RPC policy
 
 The current indexer source uses the server-only chain adapter with

@@ -21,6 +21,8 @@ qualification-tests = []
 
 [dependencies]
 pir-pipeline = { path = "../../shared/pir-pipeline" }
+pir-publication = { path = "../../shared/pir-publication" }
+tokio-util = { version = "0.7", features = ["io"] }
 axum = "0.7"
 clap = { version = "4", features = ["derive", "env"] }
 hex = "0.4"

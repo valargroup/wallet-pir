@@ -148,6 +148,11 @@ async fn run<E: PublisherExecutor + IngestionExecutor>(
         .filter(|key| !key.is_empty());
     let _lock = pir_pipeline::service::lock(&args.data_dir)?;
     let rpc = NodeClient::new(args.rpc_url[0].clone(), args.cookie.as_deref())?;
+    let distribution = crate::distribution::Distribution::open(
+        args.data_dir.clone(),
+        rpc.clone(),
+        args.retention_seconds,
+    )?;
     let genesis = Network::Mainnet.genesis_hash();
     rpc.check_network(genesis).await?;
     let boundary = blocks::boundary(&rpc, args.start_height - 1).await?;
@@ -173,12 +178,17 @@ async fn run<E: PublisherExecutor + IngestionExecutor>(
         }
     }
     let _fence = Fence(publications.clone());
+    distribution.attach(&publications);
     let reads = crate::near::Reads::default();
     let mut tasks = pir_pipeline::service::Tasks::default();
     let app = receiver_pir_server::router_with_health(publications.clone(), {
         let reads = reads.clone();
         std::sync::Arc::new(move || reads.health())
-    });
+    })
+    .nest(
+        receiver_pir_server::distribution::PREFIX.trim_end_matches('/'),
+        distribution.router(),
+    );
     if let Some(key) = args.near_key.clone() {
         let path = args.data_dir.join(application::PROVIDERS);
         let since = args
@@ -210,6 +220,8 @@ async fn run<E: PublisherExecutor + IngestionExecutor>(
         providers,
         publications: publications.clone(),
         state: application::State::default(),
+        distribution,
+        executor: executor.clone(),
     };
     let guard = spawn_guard(publications, feed.clone(), stop.clone());
     tasks.own(&guard);
@@ -280,7 +292,7 @@ async fn guard(publications: Publications, mut feed: ChainFeed, stop: Shutdown) 
     }
 }
 
-struct Writer {
+struct Writer<E> {
     config: application::Config,
     rpc: NodeClient,
     store: Store,
@@ -288,6 +300,8 @@ struct Writer {
     providers: PayoutStore,
     publications: Publications,
     state: application::State,
+    distribution: crate::distribution::Distribution,
+    executor: E,
 }
 fn block(tip: &Checkpoint) -> BlockId {
     BlockId {
@@ -295,7 +309,7 @@ fn block(tip: &Checkpoint) -> BlockId {
         hash: hash::display(&tip.hash),
     }
 }
-impl Ingestion for Writer {
+impl<E: PublisherExecutor> Ingestion for Writer<E> {
     type Error = pir_pipeline::publisher::Error;
     fn target_height(&self, tip: u64) -> u64 {
         tip.saturating_sub(u64::from(self.config.depth))
@@ -326,10 +340,14 @@ impl Ingestion for Writer {
             .config
             .history_revision
             .max(self.store.history_revision()?);
+        if revision > self.publications.history_revision() {
+            self.distribution.withdraw()?;
+        }
         crate::revision::advance(&mut self.store, Some(&self.publications), revision)?;
         Ok(())
     }
     async fn withdraw_above(&mut self, _: Option<&BlockId>) -> Result<()> {
+        self.distribution.withdraw()?;
         self.publications.revoke();
         Ok(())
     }
@@ -377,6 +395,7 @@ impl Ingestion for Writer {
             &mut self.providers,
             &self.publications,
             &mut self.state,
+            Some((&self.distribution, &self.executor)),
         )
         .await
     }
@@ -398,7 +417,10 @@ mod tests {
         }
     }
 
-    fn writer(directory: &std::path::Path, config: receiver_store::Config) -> Writer {
+    fn writer(
+        directory: &std::path::Path,
+        config: receiver_store::Config,
+    ) -> Writer<pir_pipeline::engine::PublisherEngine> {
         let start = config.start_height;
         let (store, _) = receiver_store::open_in(directory, config, true).unwrap();
         let tip = store.tip().unwrap();
@@ -409,6 +431,13 @@ mod tests {
             providers: PayoutStore::open(":memory:").unwrap(),
             publications: Publications::default(),
             state: application::State::default(),
+            executor: pir_pipeline::engine::PublisherEngine,
+            distribution: crate::distribution::Distribution::open(
+                directory.into(),
+                NodeClient::new("http://127.0.0.1:1".into(), None).unwrap(),
+                600,
+            )
+            .unwrap(),
             config: application::Config {
                 data_dir: directory.into(),
                 min_rows: 8192,

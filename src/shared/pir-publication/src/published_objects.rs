@@ -46,8 +46,12 @@ impl PublishedObjectStore {
     /// under that name are verified rather than rewritten. Storing does not
     /// authorize serving.
     pub fn store(&self, bytes: &[u8]) -> io::Result<ObjectReference> {
+        self.store_stream(bytes)
+    }
+    /// Install a large object without buffering its entire contents.
+    pub fn store_stream(&self, input: impl io::Read) -> io::Result<ObjectReference> {
         self.installer
-            .install_stream(bytes, &|| false)
+            .install_stream(input, &|| false)
             .map(|installed| installed.reference)
             .map_err(io::Error::other)
     }
@@ -61,6 +65,27 @@ impl PublishedObjectStore {
         activatable_until_ms: u64,
         now_ms: u64,
     ) -> io::Result<()> {
+        self.retain(objects, activatable_until_ms, now_ms, false)
+    }
+    /// Replace the current publication, keeping its objects until the new
+    /// publication's retention deadline. Consumers may have captured the old
+    /// pointer immediately before replacement, even if it was current for a
+    /// long time. Older predecessors keep their existing deadlines.
+    pub fn retain_replacement(
+        &self,
+        objects: impl IntoIterator<Item = ObjectReference>,
+        predecessor_until_ms: u64,
+        now_ms: u64,
+    ) -> io::Result<()> {
+        self.retain(objects, predecessor_until_ms, now_ms, true)
+    }
+    fn retain(
+        &self,
+        objects: impl IntoIterator<Item = ObjectReference>,
+        activatable_until_ms: u64,
+        now_ms: u64,
+        replacement: bool,
+    ) -> io::Result<()> {
         let objects: BTreeSet<String> = objects.into_iter().map(|object| object.sha256).collect();
         if !objects.iter().all(|name| is_object_digest(name)) {
             return Err(io::Error::new(
@@ -73,7 +98,14 @@ impl PublishedObjectStore {
             activatable_until_ms,
         };
         let mut retained = self.retained.write().unwrap();
-        let mut updated: Vec<_> = retained
+        let mut previous = retained.clone();
+        if replacement {
+            if let Some(current) = previous.last_mut() {
+                current.activatable_until_ms =
+                    current.activatable_until_ms.max(activatable_until_ms);
+            }
+        }
+        let mut updated: Vec<_> = previous
             .iter()
             .filter(|old| old.activatable_until_ms >= now_ms && old.objects != next.objects)
             .cloned()
@@ -128,6 +160,28 @@ fn write_retention_record(directory: &Path, name: &str, bytes: &[u8]) -> io::Res
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn replacement_retention_starts_when_the_predecessor_leaves_current() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = PublishedObjectStore::open(dir.path().into()).unwrap();
+        let first = store.store(b"long-lived current").unwrap();
+        store.retain_replacement([first.clone()], 100, 0).unwrap();
+        let second = store.store(b"replacement").unwrap();
+        store
+            .retain_replacement([second.clone()], 300, 200)
+            .unwrap();
+        assert!(store.open_retained(&first.sha256).is_ok());
+        drop(store);
+        let store = PublishedObjectStore::open(dir.path().into()).unwrap();
+        let third = store.store(b"third").unwrap();
+        store.retain_replacement([third], 350, 250).unwrap();
+        assert!(store.open_retained(&first.sha256).is_ok());
+        let fourth = store.store(b"fourth").unwrap();
+        store.retain_replacement([fourth], 410, 310).unwrap();
+        assert!(store.open_retained(&first.sha256).is_err());
+        assert!(store.open_retained(&second.sha256).is_ok());
+    }
 
     #[test]
     fn only_retained_objects_are_served_and_kept() {

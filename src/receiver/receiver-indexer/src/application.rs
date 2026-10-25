@@ -218,13 +218,14 @@ pub struct Collected<'a> {
 /// Prepare from the root scheduler's committed checkpoint, without polling a
 /// tip or reconciling a second time. The independent canonical guard remains
 /// active while this operation prepares and atomically installs its candidate.
-pub(crate) async fn publish_committed(
+pub(crate) async fn publish_committed<E: pir_pipeline::publisher::PublisherExecutor>(
     args: &Config,
     rpc: &NodeClient,
     store: &mut Store,
     providers: &mut PayoutStore,
     serving: &Publications,
     state: &mut State,
+    distribution: Option<(&crate::distribution::Distribution, &E)>,
 ) -> Result<()> {
     let genesis = store.config().genesis;
     let tip = store.tip()?;
@@ -233,6 +234,9 @@ pub(crate) async fn publish_committed(
     }
     let epoch = serving.epoch();
     publish_filters(args, rpc, store, serving, genesis, &tip, epoch).await?;
+    if let Some((distribution, executor)) = distribution {
+        distribution.export(serving, executor).await?;
+    }
     if serving.ready_at().is_some() {
         return Ok(());
     }
@@ -249,7 +253,11 @@ pub(crate) async fn publish_committed(
         history_revision,
     }
     .publish(providers, state)
-    .await
+    .await?;
+    if let Some((distribution, executor)) = distribution {
+        distribution.export(serving, executor).await?;
+    }
+    Ok(())
 }
 
 /// Reconcile and commit validated blocks, revoking served sessions before rewind.
