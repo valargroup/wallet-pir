@@ -3,6 +3,7 @@ use crate::status::routes::{provider_commit, provider_pin};
 use crate::synchronization::{publication_lifecycle::PublicationLifecycleError, SyncTask};
 use axum::extract::{Path, State};
 use axum::{
+    body::Bytes,
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
     routing::{get, post},
@@ -27,7 +28,7 @@ struct Origin {
     replayed_check: RwLock<Option<Vec<u8>>>,
     version: RwLock<String>,
     /// Objects served by digest; any other id serves a non-inventory.
-    objects: RwLock<std::collections::HashMap<String, Vec<u8>>>,
+    objects: RwLock<std::collections::HashMap<String, Bytes>>,
     /// Every object id requested, in order.
     requested_objects: RwLock<Vec<String>>,
     /// An envelope published once the named object is requested.
@@ -217,7 +218,7 @@ async fn setup() -> (
                     pause.resume.notified().await;
                 }
                 let served = objects.objects.read().unwrap().get(&id).cloned();
-                served.unwrap_or_else(|| b"not an inventory".to_vec())
+                served.unwrap_or_else(|| Bytes::from_static(b"not an inventory"))
             }
         }),
     );
@@ -738,23 +739,42 @@ fn publish_inventory(origin: &Origin, inventory: &mut Inventory) -> ObjectRefere
         .objects
         .write()
         .unwrap()
-        .insert(object.sha256.clone(), bytes);
+        .insert(object.sha256.clone(), bytes.into());
     object
 }
-/// Store prepared `generation`'s objects at the origin. The objects do not
-/// depend on the observation time, so a slow export cannot age the inventory.
+/// Share immutable material bytes while giving each publisher its own object map.
+/// Publication metadata is copied from this case's generation, and every
+/// consumer still downloads and verifies objects into a fresh writable cache.
 fn export(origin: &Origin, generation: &Generation) -> Inventory {
-    generation
-        .export_prepared(|bytes| {
-            let object = ObjectReference::for_bytes(bytes);
-            origin
-                .objects
-                .write()
-                .unwrap()
-                .insert(object.sha256.clone(), bytes.to_vec());
-            Ok(object)
-        })
+    struct Material {
+        inventory: Inventory,
+        objects: std::collections::HashMap<String, Bytes>,
+    }
+    type Key = ([u8; 32], [u8; 32]);
+    static CACHE: OnceLock<Mutex<std::collections::HashMap<Key, Material>>> = OnceLock::new();
+    let manifest = generation.manifest();
+    let mut cache = CACHE.get_or_init(Default::default).lock().unwrap();
+    let material = cache
+        .entry((manifest.rows_digest, manifest.public_digest))
+        .or_insert_with(|| {
+            let mut objects = std::collections::HashMap::new();
+            let inventory = generation
+                .export_prepared(|bytes| {
+                    let object = ObjectReference::for_bytes(bytes);
+                    objects.insert(object.sha256.clone(), Bytes::copy_from_slice(bytes));
+                    Ok(object)
+                })
+                .unwrap();
+            Material { inventory, objects }
+        });
+    origin
+        .objects
+        .write()
         .unwrap()
+        .extend(material.objects.clone());
+    let mut inventory = material.inventory.clone();
+    inventory.manifest = manifest.clone();
+    inventory
 }
 fn committed(pass: PublicationPass<u64>) -> (u64, PeerHandover) {
     match pass {
@@ -822,7 +842,7 @@ async fn expired_inventory_keeps_the_status_poll_cadence() {
         .objects
         .write()
         .unwrap()
-        .insert(expired_object.sha256.clone(), expired_bytes);
+        .insert(expired_object.sha256.clone(), expired_bytes.into());
     *source.current.write().unwrap() = publishing(&expired, &expired_object);
     let mut refreshed = active;
     refreshed.manifest.generation = 5;
@@ -921,7 +941,7 @@ async fn status_polling_reserves_time_for_a_fresh_handover() {
             .objects
             .write()
             .unwrap()
-            .insert(object.sha256.clone(), bytes);
+            .insert(object.sha256.clone(), bytes.into());
         *source.current.write().unwrap() = publishing(&active, &object);
         service.state.lock().await.controller = Some(Controller::new(Generation::public_only(
             active.manifest.clone(),

@@ -89,7 +89,9 @@ sends it over HTTP and compares the complete answer. Large unit executables
 use up to three disjoint groups of exact discovered case names inside the same
 three-process limit; each group keeps fixture reuse and serial case deadlines.
 Status cases stay together in one exclusive process and share prepared material
-across publication identities. Splitting those cases copies their large native
+and exported object bytes across publication identities. Each publisher still
+has its own object map, and each consumer downloads into its own writable cache.
+Splitting those cases copies their large native
 fixtures and can exhaust the runner's memory limit. Receiver's encrypted HTTP
 smoke and focused storage, witness and cache-budget units stay in fast feedback.
 Full publication reload/restart, staged loading and witness-finality campaigns
