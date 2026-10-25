@@ -86,6 +86,8 @@ class Coordinator(FakeFleet):
             from tools.enhance.lib.deploy_prerequisites import PROGRAM
             if argv[2] in (PROGRAM, CONTROL):
                 return super().run(host, argv, timeout)
+        if argv[1:] == ['--contract-info']:
+            return super().run(host, argv, timeout)
         self.runs.append((host, argv))
         if argv[:2] == ['stat', '-c']:
             return 0, '644:0:0\n'
