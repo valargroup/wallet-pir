@@ -308,12 +308,13 @@ impl Receiver {
         let mut absent = common::receiver();
         absent[0] ^= 1;
         assert!(session.page(absent, 0).await.unwrap().is_none());
-        let blocks = self.chain.blocks.lock().unwrap();
-        let leaves: Vec<_> = blocks[..=(height - activation()) as usize]
-            .iter()
-            .flat_map(|b| b.commitments())
-            .collect();
-        drop(blocks);
+        let leaves: Vec<_> = {
+            let blocks = self.chain.blocks.lock().unwrap();
+            blocks[..=(height - activation()) as usize]
+                .iter()
+                .flat_map(|b| b.commitments())
+                .collect()
+        };
         let expected = zakura_pir_publisher::receiver::witness::payloads(&leaves, &[1]).unwrap();
         assert_eq!(
             session.witness(record.ordinal).await.unwrap(),
