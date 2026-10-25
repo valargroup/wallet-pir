@@ -454,8 +454,49 @@ class UnifiedCampaignTests(unittest.TestCase):
             binary.chmod(0o700)
             _, case, ignored = campaign.CASES['unified']
             self.assertFalse(ignored)
-            self.assertEqual(campaign.run_case(binary, case, ignored, root, os.environ.copy(), 10), 0)
-            self.assertEqual(campaign.run_case(binary, case, True, root, os.environ.copy(), 10), 1)
+            with patch.object(campaign.os, 'killpg', side_effect=PermissionError('expired group')):
+                self.assertEqual(campaign.run_case(binary, case, ignored, root, os.environ.copy(), 10), 0)
+                self.assertEqual(campaign.run_case(binary, case, True, root, os.environ.copy(), 10), 1)
+
+    def test_timed_out_case_still_terminates_its_running_group(self):
+        import importlib.util
+        path = ROOT / 'tools/transparent/scripts/unified-http-sync-campaign.py'
+        spec = importlib.util.spec_from_file_location('unified_campaign', path)
+        campaign = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(campaign)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            binary = root / 'fixture-tests'
+            binary.write_text('#!' + sys.executable + '\nimport time\ntime.sleep(30)\n')
+            binary.chmod(0o700)
+            with patch.object(campaign.os, 'killpg', wraps=os.killpg) as terminate:
+                with self.assertRaises(subprocess.TimeoutExpired):
+                    campaign.run_case(binary, 'slow_case', False, root, os.environ.copy(), 0.2)
+                self.assertEqual(terminate.call_args_list[0].args[1], campaign.signal.SIGTERM)
+
+    def test_later_case_exception_cannot_record_an_earlier_success(self):
+        import importlib.util
+        path = ROOT / 'tools/transparent/scripts/unified-http-sync-campaign.py'
+        spec = importlib.util.spec_from_file_location('unified_campaign', path)
+        campaign = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(campaign)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            binaries = dict.fromkeys(['pir-publisher', 'pir-query-server', campaign.TEST,
+                                     'transparent_provider_installation', 'frozen-provider-client'], root / 'binary')
+            with patch.object(sys, 'argv', ['campaign', '--output', str(root)]), \
+                 patch.object(campaign, 'build', return_value=binaries), \
+                 patch.object(campaign, 'digest', return_value='f' * 64), \
+                 patch.object(campaign.platform, 'platform', return_value='fixture'), \
+                 patch.object(campaign.platform, 'machine', return_value='fixture'), \
+                 patch.object(campaign.subprocess, 'check_output', side_effect=[SHA, b'']), \
+                 patch.object(campaign.subprocess, 'run'), \
+                 patch.object(campaign, 'run_case', side_effect=[0, PermissionError('expired group')]):
+                with self.assertRaises(PermissionError):
+                    campaign.main()
+            results = list(root.glob('*/result.json'))
+            self.assertEqual(len(results), 1)
+            self.assertNotEqual(json.loads(results[0].read_text())['exit_code'], 0)
 
 
 if __name__ == '__main__':

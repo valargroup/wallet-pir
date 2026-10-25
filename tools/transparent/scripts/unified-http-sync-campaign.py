@@ -60,15 +60,18 @@ def run_case(binary, case, ignored, output, env, timeout):
         try:
             code = process.wait(timeout=timeout)
         finally:
-            try:
-                os.killpg(process.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
-            try:
-                process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                os.killpg(process.pid, signal.SIGKILL)
-                process.wait()
+            # Completed tests own their normal fixture cleanup. After reaping
+            # the leader, its numeric process-group id may no longer be ours.
+            if process.poll() is None:
+                try:
+                    os.killpg(process.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    os.killpg(process.pid, signal.SIGKILL)
+                    process.wait()
     if code == 0 and not re.search(r"^test result: ok\. 1 passed; 0 failed;", path.read_text(), re.MULTILINE):
         with path.open("a") as log:
             log.write("Campaign refused: the selected test did not report exactly one passed case.\n")
@@ -112,8 +115,9 @@ def main():
         binaries.update(tests)
         if client is not None:
             binaries["frozen-provider-client"] = client
-            subprocess.run([sys.executable, str(FROZEN / "verify-sources.py"), "--output", str(output / "frozen-client-provenance")],
-                           cwd=ROOT, check=True, stdout=(output / "verify-sources.log").open("w"), stderr=subprocess.STDOUT)
+            with (output / "verify-sources.log").open("w") as verification_log:
+                subprocess.run([sys.executable, str(FROZEN / "verify-sources.py"), "--output", str(output / "frozen-client-provenance")],
+                               cwd=ROOT, check=True, stdout=verification_log, stderr=subprocess.STDOUT)
         manifest["binaries"] = {name: {"path": str(path), "sha256": digest(path)} for name, path in binaries.items()}
         (output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
         env = dict(os.environ, WALLET_PIR_PUBLISHER_BIN=str(binaries["pir-publisher"]),
@@ -129,6 +133,10 @@ def main():
                 break
     except subprocess.TimeoutExpired:
         code = 124
+    except BaseException:
+        # A later failure or interruption cannot inherit an earlier case's success.
+        code = 1
+        raise
     finally:
         result = {"exit_code": code, "seconds": time.monotonic() - started, "source_sha": source,
                   "production_snapshot_qualification": "not_executed", "original_application_qualification": "not_executed"}
