@@ -71,7 +71,11 @@ impl PublicationAdapter for Adapter {
     ) -> Result<PublicationPlan<()>, Error> {
         unreachable!("the test commits directly")
     }
-    async fn load(&mut self, _candidate: (), _cache: &ObjectCache) -> Result<(), Error> {
+    async fn load(
+        &mut self,
+        _candidate: (),
+        _objects: pir_publication::VerifiedObjects,
+    ) -> Result<(), Error> {
         unreachable!("the test commits directly")
     }
     async fn rebind(
@@ -135,7 +139,7 @@ fn store(cache: &ObjectCache, bytes: &[u8]) -> ObjectReference {
 
 struct Fixture {
     _root: tempfile::TempDir,
-    lifecycle: PublicationLifecycle<Adapter>,
+    lifecycle: EnvelopeConsumer<Adapter>,
     cache: ObjectCache,
     installed: Arc<AtomicUsize>,
     releases: Arc<AtomicUsize>,
@@ -169,7 +173,7 @@ async fn fixture() -> Fixture {
         revocations: Arc::default(),
         admission_closed: Arc::default(),
     };
-    let mut lifecycle = PublicationLifecycle::new(adapter, source, floor, cache.clone()).unwrap();
+    let mut lifecycle = EnvelopeConsumer::new(adapter, source, floor, cache.clone()).unwrap();
     lifecycle.persist_floor().await.unwrap();
     Fixture {
         _root: root,
@@ -270,7 +274,10 @@ async fn a_pass_cancelled_during_peer_release_completes_on_the_next_pass() {
     assert_eq!(installed.load(Ordering::SeqCst), 1);
     assert_eq!(releases.load(Ordering::SeqCst), 1);
     assert!(lifecycle.pending_completion.is_some());
-    assert_eq!(lifecycle.retained_views.views(), [ViewIdentity([9; 32])]);
+    assert_eq!(
+        lifecycle.retained_views.collectable_beyond(),
+        Some(objects(&[&kept]))
+    );
     assert!(cache.verified_cached(&stale).unwrap().is_none());
     assert!(cache.verified_cached(&kept).unwrap().is_some());
 
@@ -336,7 +343,10 @@ async fn held_views_survive_refreshes_until_their_deadline_passes() {
     lifecycle.commit(ViewIdentity([99; 32]), ()).await.unwrap();
     assert!(cache.verified_cached(&held).unwrap().is_none());
     assert!(cache.verified_cached(&material).unwrap().is_some());
-    assert_eq!(lifecycle.retained_views.views(), [ViewIdentity([99; 32])]);
+    assert_eq!(
+        lifecycle.retained_views.collectable_beyond(),
+        Some(objects(&[&last, &material]))
+    );
 }
 
 /// A peer release answered pending stays owed: each later pass releases

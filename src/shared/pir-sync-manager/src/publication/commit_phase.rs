@@ -1,11 +1,12 @@
 //! Fencing, floor persistence, commit and retention: every step that changes
 //! durable state or what may serve.
 use super::{
-    durable_operation::{run_commit, CommitOutcome, DurableOutcome, OwnedCommit},
-    PeerHandover, PublicationAdapter, PublicationLifecycle, PublicationLifecycleError,
+    durable_operation::{DurableOutcome, OwnedCommit},
+    EnvelopeConsumer, PeerHandover, PublicationAdapter, PublicationLifecycleError,
 };
+use crate::Error;
+use pir_pipeline::consumer::durable::{run_commit, CommitOutcome};
 use pir_publication::ViewIdentity;
-use pir_sync_manager::Error;
 use std::{future::Future, io, time::SystemTime};
 
 /// A commit that installed and has not finished completing: the adapter
@@ -17,7 +18,7 @@ pub(super) struct PendingCompletion<R, V> {
     collection_failure: Option<io::Error>,
 }
 
-impl<A: PublicationAdapter> PublicationLifecycle<A> {
+impl<A: PublicationAdapter> EnvelopeConsumer<A> {
     /// Revoke serving under the commit fence, so no commit that started
     /// earlier can install afterwards. Returns the views that were serving.
     pub(super) async fn fence_serving(&mut self) -> Vec<ViewIdentity> {
@@ -108,6 +109,11 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
                             close.await;
                         })
                         .await;
+                } else {
+                    // Successful writes must release unused owner actions
+                    // before notifying the waiter that settlement is complete.
+                    drop(revoke);
+                    drop(close);
                 }
                 DurableOutcome::FloorWritten(written)
             })

@@ -1,6 +1,6 @@
 //! Which cached objects each committed view references, kept while the
 //! product still needs the view.
-use pir_publication::ViewIdentity;
+use crate::ViewIdentity;
 use std::{
     collections::{BTreeMap, BTreeSet},
     time::SystemTime,
@@ -19,7 +19,7 @@ pub enum ViewRequirement {
 /// The objects of every committed view the product still needs, and whether
 /// that mapping covers every needed view.
 #[derive(Debug, Default, PartialEq, Eq)]
-pub(super) struct RetainedViews {
+pub struct RetainedViews {
     views: BTreeMap<ViewIdentity, BTreeSet<String>>,
     /// A needed view this lifecycle never committed, such as one the product
     /// installed from local state before its first commit. Its objects are
@@ -32,7 +32,7 @@ impl RetainedViews {
     /// it and every view `required` still names at `now`. A required view this
     /// lifecycle never committed keeps every cached object until no longer
     /// required; see [`Self::collectable_beyond`].
-    pub(super) fn after_commit(
+    pub fn after_commit(
         &self,
         committed: ViewIdentity,
         objects: BTreeSet<String>,
@@ -67,12 +67,8 @@ impl RetainedViews {
     }
     /// The objects collection must keep, or `None` when a required view's
     /// objects are unknown and nothing may be collected.
-    pub(super) fn collectable_beyond(&self) -> Option<BTreeSet<String>> {
+    pub fn collectable_beyond(&self) -> Option<BTreeSet<String>> {
         (!self.unknown_view_required).then(|| self.views.values().flatten().cloned().collect())
-    }
-    #[cfg(test)]
-    pub(super) fn views(&self) -> Vec<ViewIdentity> {
-        self.views.keys().copied().collect()
     }
 }
 

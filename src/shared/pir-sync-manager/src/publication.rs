@@ -1,12 +1,8 @@
-//! The one publication lifecycle every query-server product runs against its
-//! publisher: observe -> fence -> plan -> fetch -> load -> revalidate -> commit
-//! -> retain.
-//!
-//! The engine owns transport, the durable [`AuthorityFloor`], the object cache,
-//! the authority-check protocol and every ordering rule. A product supplies a
-//! [`PublicationAdapter`] whose hooks return typed decisions and perform only
-//! product material operations (parse an inventory, load a generation, install
-//! it); no hook runs its own synchronize, download or persistence loop.
+//! The existing HTTPS publication-envelope protocol as services for
+//! `pir_pipeline::consumer::ConsumerEngine`. This module supplies discovery,
+//! source-bound floors, object transfer, authority queries and durable owner
+//! actions. The transport-neutral engine owns phase ordering and loaded work.
+//! Product adapters retain material formats, authority subjects and serving policy.
 //!
 //! Ordering guarantees:
 //! - Negative evidence (withdrawal, a new recovery epoch, a non-authoritative
@@ -35,34 +31,27 @@ mod commit_phase;
 mod completion_tests;
 mod durable_operation;
 mod envelope_observation;
-mod object_fetch;
-mod retention;
 
-use crate::synchronization::SyncTask;
+pub use crate::objects::ObjectFetcher;
+use crate::{Error, HttpsSource};
 use commit_phase::PendingCompletion;
-pub use durable_operation::PreparedCommit;
-use durable_operation::{CommitFence, DurableOutcome, OwnedOperationSlot};
-pub use object_fetch::ObjectFetcher;
+use durable_operation::DurableOutcome;
+pub use pir_pipeline::consumer::durable::PreparedCommit;
+use pir_pipeline::consumer::durable::{CommitFence, OwnedOperationSlot};
+use pir_pipeline::{
+    consumer::{
+        Consumer, ConsumerEngine, ConsumerPass, DeferralReason, PeerHandover, PeerReservation,
+    },
+    Input,
+};
+use pir_publication::RetainedViews;
+pub use pir_publication::ViewRequirement;
 use pir_publication::{
-    AuthorityFloor, ObjectCache, ObjectReference, PublicationEnvelope, ViewIdentity,
+    AuthorityFloor, ObjectCache, ObjectReference, PublicationEnvelope, VerifiedObjects,
+    ViewIdentity,
 };
-use pir_sync_manager::{Error, HttpsSource};
-use retention::RetainedViews;
-pub use retention::ViewRequirement;
 use serde::{de::DeserializeOwned, Serialize};
-use std::{
-    collections::BTreeSet,
-    fmt,
-    future::Future,
-    time::{Duration, Instant},
-};
-
-/// Expected coordination outcomes, distinct from transport or validation errors.
-#[derive(Clone, Copy, Debug)]
-pub enum DeferralReason {
-    AuthorityAdvanced,
-    PeerAdvanced,
-}
+use std::{collections::BTreeSet, fmt, future::Future, time::Duration};
 
 /// Product hooks for one query-server role.
 pub trait PublicationAdapter: Send {
@@ -73,16 +62,16 @@ pub trait PublicationAdapter: Send {
     /// A positive answer confirms the subject only at the publisher's check;
     /// how long a view may then serve stays the adapter's own freshness rule
     /// (for Status, the manifest's observation age at admission).
-    type AuthoritySubject: PartialEq + Serialize + DeserializeOwned + Send + Sync;
+    type AuthoritySubject: Clone + PartialEq + Serialize + DeserializeOwned + Send + Sync;
     /// What the adapter keeps about a view once it is installed (for Status,
     /// the inventory whose material may later be re-identified).
     type InstalledView: Send + 'static;
     /// Planned material whose objects the engine fetches before loading.
-    type Candidate: Send;
+    type Candidate: Send + Sync;
     /// Material loaded from verified objects, ready to install.
-    type Loaded: Send + 'static;
+    type Loaded: Send + Sync + 'static;
     /// What a committed pass reports, for example the serving generation.
-    type Report: Clone + Send + 'static;
+    type Report: Clone + Send + Sync + 'static;
 
     /// Product checks of an envelope's scope and descriptor. The engine has
     /// already checked the shared fields; succession against the floor is the
@@ -123,11 +112,11 @@ pub trait PublicationAdapter: Send {
         envelope: &Envelope<Self>,
         objects: &mut ObjectFetcher<'_>,
     ) -> impl Future<Output = Result<PublicationPlan<Self::Candidate>, Error>> + Send;
-    /// Load a candidate whose required objects are verified in `cache`.
+    /// Load from the exact checked files obtained for this candidate.
     fn load(
         &mut self,
         candidate: Self::Candidate,
-        cache: &ObjectCache,
+        objects: VerifiedObjects,
     ) -> impl Future<Output = Result<Self::Loaded, Error>> + Send;
     /// Re-identify `loaded` under the re-observed `envelope` when that
     /// publishes the same reusable material under new metadata, as a
@@ -166,6 +155,14 @@ pub trait PublicationAdapter: Send {
     }
     /// Timing of a completed phase; phase names are fixed by the engine.
     fn phase_finished(&mut self, _phase: &'static str, _elapsed: Duration) {}
+    /// Reserve the selected view before transfer. Products without peers do
+    /// not acquire a promise. Reservation grants no serving authority.
+    fn reserve_candidate(
+        &mut self,
+        _candidate: &Self::Candidate,
+    ) -> impl Future<Output = Result<PeerReservation, Error>> + Send {
+        async { Ok(PeerReservation::Reserved) }
+    }
     /// Reserve `loaded` with a dependent peer before committing (for a Status
     /// router, the worker's matching generation).
     fn reserve_peer(
@@ -209,7 +206,7 @@ pub trait PublicationAdapter: Send {
     /// Observe the outcome of a pass, for status and logging.
     fn pass_finished(
         &mut self,
-        _result: &Result<PublicationPass<Self::Report>, Error>,
+        _result: &Result<ConsumerPass<Self::Report>, Error>,
     ) -> impl Future<Output = ()> + Send {
         async {}
     }
@@ -229,31 +226,6 @@ pub enum PublicationPlan<C> {
         identity: ViewIdentity,
         required_objects: Vec<ObjectReference>,
     },
-}
-
-/// Whether a dependent peer accepted a reservation.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PeerReservation {
-    Reserved,
-    /// The peer already moved to a newer publication; retry next pass.
-    PeerAdvanced,
-}
-
-/// Whether a dependent peer acknowledged a commit.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PeerHandover {
-    Complete,
-    Pending,
-}
-
-/// The outcome of one successful pass.
-#[derive(Debug)]
-pub enum PublicationPass<R> {
-    /// A candidate committed; `handover` reports the dependent peer.
-    Committed { report: R, handover: PeerHandover },
-    /// Nothing committed this pass: withdrawn, a newer envelope appeared during
-    /// the authority check, or the plan deferred.
-    Deferred { report: R },
 }
 
 /// Distinct lifecycle refusals.
@@ -312,7 +284,7 @@ impl fmt::Display for AuthorityAdvanced {
 impl std::error::Error for AuthorityAdvanced {}
 
 /// Owns one role's publication source, floor, cache and adapter.
-pub struct PublicationLifecycle<A: PublicationAdapter> {
+pub struct EnvelopeConsumer<A: PublicationAdapter> {
     adapter: A,
     source: HttpsSource,
     floor: AuthorityFloor<A::Descriptor>,
@@ -328,25 +300,12 @@ pub struct PublicationLifecycle<A: PublicationAdapter> {
     pending_completion: Option<PendingCompletion<A::Report, A::InstalledView>>,
     /// The latest commit whose peer release answered pending.
     owed_peer_release: Option<A::Report>,
-    /// At most one loaded candidate, never serialized or authorized by cache
-    /// presence. Only an opted-in adapter can reuse it after a conflict.
-    pending_loaded: Option<A::Loaded>,
+    /// The first observation distinguishes a changing authority from refusal.
+    first_observation: Option<Envelope<A>>,
+    observation_fenced: bool,
 }
 
-impl<A: PublicationAdapter> PublicationLifecycle<A> {
-    #[cfg(all(test, feature = "receiver"))]
-    pub(crate) async fn check_serving_proofs(
-        &mut self,
-        subjects: Vec<(ViewIdentity, A::AuthoritySubject)>,
-    ) -> Result<(), Error> {
-        let envelope = self.observe_envelope().await?;
-        self.check_authority(&envelope, subjects).await
-    }
-    #[cfg(all(test, feature = "receiver"))]
-    pub(crate) fn view_was_invalidated(&self, identity: ViewIdentity) -> bool {
-        self.floor.is_invalidated(&identity)
-    }
-
+impl<A: PublicationAdapter> EnvelopeConsumer<A> {
     /// `floor` was opened for `source`'s origin, namespace and chain; `cache`
     /// is exclusively owned by this role.
     pub fn new(
@@ -372,7 +331,8 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
             durable_operation: OwnedOperationSlot::new(),
             pending_completion: None,
             owed_peer_release: None,
-            pending_loaded: None,
+            first_observation: None,
+            observation_fenced: false,
         })
     }
     pub fn adapter(&self) -> &A {
@@ -382,159 +342,176 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
         &self.floor
     }
 
-    async fn run_pass(&mut self) -> Result<PublicationPass<A::Report>, Error> {
-        self.settle_durable_operation().await?;
-        self.source.discover().await?;
-        self.source.reset_budget();
-        // Observe and fence.
-        let envelope = self.observe_envelope().await?;
-        self.retain_resumable();
-        if !envelope.eligible {
-            return Ok(self.deferred().await);
-        }
-        let serving = self.adapter.serving_subjects(&envelope).await;
-        if !serving.is_empty() {
-            self.check_authority(&envelope, serving).await?;
-        }
-        // Finish existing prepared work before selecting a newer candidate.
-        if self.pending_loaded.is_none() {
-            let started = Instant::now();
-            let mut objects = ObjectFetcher::new(&mut self.source, &self.cache);
-            let (candidate, identity, required_objects) =
-                match self.adapter.plan(&envelope, &mut objects).await? {
-                    PublicationPlan::Deferred => {
-                        return Ok(PublicationPass::Deferred {
-                            report: self.adapter.serving_report().await,
-                        })
-                    }
-                    PublicationPlan::Candidate {
-                        candidate,
-                        identity,
-                        required_objects,
-                    } => (candidate, identity, required_objects),
-                };
-            if self.floor.is_invalidated(&identity) {
-                return Err(Box::new(PublicationLifecycleError::CandidateInvalidated));
-            }
-            for object in &required_objects {
-                objects.fetch(object).await?;
-            }
-            self.adapter.phase_finished("fetch", started.elapsed());
-            let started = Instant::now();
-            self.pending_loaded = Some(self.adapter.load(candidate, &self.cache).await?);
-            self.adapter.phase_finished("load", started.elapsed());
-        }
-        // Reusing work never reuses its authority answer.
-        let started = Instant::now();
-        let latest = self.observe_envelope().await?;
-        if !latest.eligible {
-            return Err(Box::new(PublicationLifecycleError::WithdrawnBeforeCommit));
-        }
-        let mut objects = ObjectFetcher::new(&mut self.source, &self.cache);
-        let Some(loaded) = self.pending_loaded.take() else {
-            // Re-observation fenced the candidate while it was loading.
-            self.adapter
-                .deferred(DeferralReason::AuthorityAdvanced)
-                .await;
-            return Ok(self.deferred().await);
-        };
-        let loaded = self.adapter.rebind(&latest, loaded, &mut objects).await?;
-        self.pending_loaded = Some(loaded);
-        let validation = {
-            let loaded = self
-                .pending_loaded
-                .as_ref()
-                .expect("a candidate was rebound");
-            self.adapter.revalidate(&latest, loaded)
-        };
-        let (identity, subject) = match validation {
-            Ok(checked) => checked,
-            // A newer envelope superseded the candidate; nothing was
-            // activated, so retry at the normal cadence.
-            Err(_) if latest != envelope => return Err(Box::new(AuthorityAdvanced)),
-            Err(error) => return Err(error),
-        };
-        self.adapter.phase_finished("revalidate", started.elapsed());
-        let mut subjects = vec![(identity, subject)];
-        subjects.extend(
-            self.adapter
-                .serving_subjects(&latest)
-                .await
-                .into_iter()
-                .filter(|(serving, _)| *serving != identity),
-        );
-        let started = Instant::now();
-        self.check_authority(&latest, subjects).await?;
-        self.adapter.phase_finished("authority", started.elapsed());
-        let loaded = self
-            .pending_loaded
-            .as_ref()
-            .expect("the candidate is pending");
-        if self.adapter.reserve_peer(loaded).await? == PeerReservation::PeerAdvanced {
-            // The peer no longer promises these bytes. Follow its new view
-            // rather than repeatedly retrying an unavailable reservation.
-            self.pending_loaded = None;
-            self.adapter.deferred(DeferralReason::PeerAdvanced).await;
-            return Ok(self.deferred().await);
-        }
-        let loaded = self
-            .pending_loaded
-            .take()
-            .expect("the candidate is reserved");
-        let started = Instant::now();
-        let (report, handover) = self.commit(identity, loaded).await?;
-        self.adapter.phase_finished("commit", started.elapsed());
-        Ok(PublicationPass::Committed { report, handover })
-    }
-
-    fn retain_resumable(&mut self) {
-        let keep = self
-            .pending_loaded
-            .as_ref()
-            .zip(self.floor.envelope())
-            .is_some_and(|(loaded, envelope)| {
-                self.adapter
-                    .resumable_view(loaded, envelope)
-                    .is_some_and(|identity| !self.floor.is_invalidated(&identity))
-            });
-        if !keep {
-            self.pending_loaded = None;
-        }
-    }
-
-    async fn deferred(&mut self) -> PublicationPass<A::Report> {
-        PublicationPass::Deferred {
-            report: self.adapter.serving_report().await,
-        }
+    /// Construct the shared transport-neutral engine for this envelope source.
+    pub fn open(
+        adapter: A,
+        source: HttpsSource,
+        floor: AuthorityFloor<A::Descriptor>,
+        cache: ObjectCache,
+    ) -> Result<ConsumerEngine<Self>, Error> {
+        Ok(ConsumerEngine::new(Self::new(
+            adapter, source, floor, cache,
+        )?))
     }
 }
 
-impl<A: PublicationAdapter> SyncTask for PublicationLifecycle<A> {
-    type Report = PublicationPass<A::Report>;
-    type Error = Error;
+/// Selected inventory and its verified transfer requirements. Kept together so
+/// products cannot substitute a different identity after planning.
+pub struct SelectedPublication<C> {
+    candidate: C,
+    required_objects: Vec<ObjectReference>,
+}
 
-    async fn synchronize(&mut self) -> Result<Self::Report, Error> {
-        self.adapter.pass_started().await;
-        let result = match self.run_pass().await {
-            // A newer envelope won the authority check. Nothing was activated;
-            // retry at the normal cadence instead of transport backoff.
-            Err(error) if error.is::<AuthorityAdvanced>() => {
-                self.retain_resumable();
-                self.adapter
-                    .deferred(DeferralReason::AuthorityAdvanced)
-                    .await;
-                Ok(self.deferred().await)
+impl<A: PublicationAdapter> Consumer for EnvelopeConsumer<A> {
+    type Observation = Envelope<A>;
+    type Candidate = SelectedPublication<A::Candidate>;
+    type Loaded = A::Loaded;
+    type Artifacts = VerifiedObjects;
+    type Validation = (ViewIdentity, A::AuthoritySubject);
+    type Report = A::Report;
+
+    async fn settle(&mut self) -> Result<(), Error> {
+        self.settle_durable_operation().await?;
+        self.source.discover().await?;
+        self.source.reset_budget();
+        self.first_observation = None;
+        Ok(())
+    }
+    async fn observe(&mut self) -> Result<Self::Observation, Error> {
+        let observed = self.observe_envelope().await?;
+        if self.first_observation.is_some() && !observed.eligible {
+            return Err(Box::new(PublicationLifecycleError::WithdrawnBeforeCommit));
+        }
+        self.first_observation
+            .get_or_insert_with(|| observed.clone());
+        Ok(observed)
+    }
+    fn eligible(&self, observed: &Self::Observation) -> bool {
+        observed.eligible
+    }
+    fn invalidates_preparation(&self, _: &Self::Observation) -> bool {
+        self.observation_fenced
+    }
+    fn keep_loaded(&self, loaded: &A::Loaded) -> bool {
+        self.floor.envelope().is_some_and(|envelope| {
+            self.adapter.resumable_view(loaded, envelope)
+                .is_some_and(|identity| !self.floor.is_invalidated(&identity))
+        })
+    }
+    async fn check_serving(&mut self, observed: &Self::Observation) -> Result<(), Error> {
+        let subjects = self.adapter.serving_subjects(observed).await;
+        if !subjects.is_empty() {
+            self.check_authority(observed, subjects).await?;
+        }
+        Ok(())
+    }
+    async fn select(
+        &mut self,
+        observed: &Self::Observation,
+    ) -> Result<Input<Self::Candidate>, Error> {
+        let mut objects = ObjectFetcher::new(&mut self.source, &self.cache);
+        match self.adapter.plan(observed, &mut objects).await? {
+            PublicationPlan::Deferred => Ok(Input::Deferred),
+            PublicationPlan::Candidate {
+                candidate,
+                identity,
+                required_objects,
+            } => {
+                if self.floor.is_invalidated(&identity) {
+                    return Err(Box::new(PublicationLifecycleError::CandidateInvalidated));
+                }
+                Ok(Input::Work(SelectedPublication {
+                    candidate,
+                    required_objects,
+                }))
             }
-            Err(error) => {
-                self.pending_loaded = None;
-                Err(error)
+        }
+    }
+    async fn reserve(&mut self, selected: &Self::Candidate) -> Result<PeerReservation, Error> {
+        self.adapter.reserve_candidate(&selected.candidate).await
+    }
+    async fn obtain(&mut self, selected: &Self::Candidate) -> Result<VerifiedObjects, Error> {
+        let mut fetcher = ObjectFetcher::new(&mut self.source, &self.cache);
+        let mut artifacts = VerifiedObjects::default();
+        for object in &selected.required_objects {
+            artifacts.insert(fetcher.fetch(object).await?);
+        }
+        Ok(artifacts)
+    }
+    async fn load(
+        &mut self,
+        selected: Self::Candidate,
+        artifacts: VerifiedObjects,
+    ) -> Result<A::Loaded, Error> {
+        self.adapter.load(selected.candidate, artifacts).await
+    }
+    async fn rebind(
+        &mut self,
+        observed: &Self::Observation,
+        loaded: A::Loaded,
+    ) -> Result<A::Loaded, Error> {
+        let mut objects = ObjectFetcher::new(&mut self.source, &self.cache);
+        self.adapter.rebind(observed, loaded, &mut objects).await
+    }
+    fn validate(
+        &self,
+        observed: &Self::Observation,
+        loaded: &A::Loaded,
+    ) -> Result<Self::Validation, Error> {
+        match self.adapter.revalidate(observed, loaded) {
+            Ok(checked) => Ok(checked),
+            Err(_) if Some(observed) != self.first_observation.as_ref() => {
+                Err(Box::new(AuthorityAdvanced))
             }
-            result => result,
-        };
-        self.adapter.pass_finished(&result).await;
-        result
+            Err(error) => Err(error),
+        }
+    }
+    async fn authorize(
+        &mut self,
+        observed: &Self::Observation,
+        checked: &Self::Validation,
+    ) -> Result<(), Error> {
+        let mut subjects = vec![(checked.0, checked.1.clone())];
+        subjects.extend(
+            self.adapter
+                .serving_subjects(observed)
+                .await
+                .into_iter()
+                .filter(|(identity, _)| *identity != checked.0),
+        );
+        self.check_authority(observed, subjects).await
+    }
+    async fn confirm(&mut self, loaded: &A::Loaded) -> Result<PeerReservation, Error> {
+        self.adapter.reserve_peer(loaded).await
+    }
+    async fn commit(
+        &mut self,
+        loaded: A::Loaded,
+        checked: Self::Validation,
+    ) -> Result<(A::Report, PeerHandover), Error> {
+        EnvelopeConsumer::commit(self, checked.0, loaded).await
+    }
+    async fn serving_report(&mut self) -> A::Report {
+        self.adapter.serving_report().await
+    }
+    fn deferral(&self, error: &Error) -> Option<DeferralReason> {
+        error
+            .is::<AuthorityAdvanced>()
+            .then_some(DeferralReason::AuthorityAdvanced)
+    }
+    async fn deferred(&mut self, reason: DeferralReason) {
+        self.adapter.deferred(reason).await;
     }
     fn terminal(&self, error: &Error) -> bool {
-        pir_sync_manager::is_incompatible(error.as_ref())
+        crate::is_incompatible(error.as_ref())
+    }
+    fn phase_finished(&mut self, phase: &'static str, elapsed: Duration) {
+        self.adapter.phase_finished(phase, elapsed);
+    }
+    async fn pass_started(&mut self) {
+        self.adapter.pass_started().await;
+    }
+    async fn pass_finished(&mut self, result: &Result<ConsumerPass<A::Report>, Error>) {
+        self.adapter.pass_finished(result).await;
     }
 }

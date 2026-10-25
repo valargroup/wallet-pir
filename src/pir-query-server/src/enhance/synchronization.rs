@@ -80,7 +80,7 @@ pub const STEADY_POLL: Duration = Duration::from_secs(5);
 pub const RECOVERY_WINDOW: Duration = Duration::from_secs(300);
 
 /// Converts expected deferrals into successful, deferred passes for
-/// [`crate::synchronization::SyncManager`], and chooses the following wait. Genuine
+/// [`pir_pipeline::consumer::polling::SyncManager`], and chooses the following wait. Genuine
 /// failures pass through unchanged and keep the manager's exponential backoff.
 #[derive(Default)]
 pub struct Pacing {
@@ -971,7 +971,7 @@ mod tests {
         }
     }
     impl std::error::Error for Stop {}
-    impl crate::synchronization::SyncTask for Scripted {
+    impl pir_pipeline::consumer::polling::SyncTask for Scripted {
         type Report = Option<Deferral>;
         type Error = Error;
         async fn synchronize(&mut self) -> Result<Option<Deferral>, Error> {
@@ -993,7 +993,7 @@ mod tests {
     /// Whole seconds between consecutive pass starts (jitter is below one second).
     async fn gaps(outcomes: Vec<Result<(), Error>>) -> Vec<u64> {
         let started = Arc::new(Mutex::new(Vec::new()));
-        let manager = crate::synchronization::SyncManager::new(Scripted {
+        let manager = pir_pipeline::consumer::polling::SyncManager::new(Scripted {
             outcomes: outcomes.into(),
             started: started.clone(),
             pacing: Pacing::default(),

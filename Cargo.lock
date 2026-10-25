@@ -2369,6 +2369,8 @@ name = "pir-sync-manager"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "pir-pipeline",
+ "pir-publication",
  "pir-service-discovery",
  "reqwest",
  "rustls",

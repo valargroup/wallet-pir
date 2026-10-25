@@ -144,31 +144,13 @@ pub(super) async fn provider_pin(
     state
         .router_holds
         .retain(|generation| generation.manifest().fresh(now_ms()).is_ok());
-    let committed = state.router_committed;
-    if committed == Some(id) {
-        // A delayed retry for the serving view cannot cancel its successor.
-        return Ok(Json(true));
-    }
-    if state
+    match state
         .router_holds
-        .iter()
-        .any(|held| held.manifest().generation > generation.manifest().generation)
+        .reserve(id, generation, |held| held.manifest().generation)
     {
-        return Err(StatusCode::CONFLICT);
+        pir_pipeline::consumer::PeerReservation::Reserved => Ok(Json(true)),
+        pir_pipeline::consumer::PeerReservation::PeerAdvanced => Err(StatusCode::CONFLICT),
     }
-    state.router_holds.retain(|generation| {
-        let held = generation.manifest().id();
-        Some(held) == committed || held == id
-    });
-    if state
-        .router_holds
-        .iter()
-        .any(|generation| generation.manifest().id() == id)
-    {
-        return Ok(Json(true));
-    }
-    state.router_holds.push(generation);
-    Ok(Json(true))
 }
 pub(super) async fn provider_commit(
     State(service): State<Service>,
@@ -191,21 +173,11 @@ pub(super) async fn provider_commit(
         .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
     let generation = controller.resolve(id)?;
     controller.check(&generation)?;
-    if !state
-        .router_holds
-        .iter()
-        .any(|generation| generation.manifest().id() == id)
-    {
-        return Err(StatusCode::CONFLICT);
+    if state.router_holds.acknowledge(&id) {
+        Ok(Json(true))
+    } else {
+        Err(StatusCode::CONFLICT)
     }
-    if state.router_committed == Some(id) {
-        return Ok(Json(true));
-    }
-    state
-        .router_holds
-        .retain(|generation| generation.manifest().id() == id);
-    state.router_committed = Some(id);
-    Ok(Json(true))
 }
 
 async fn worker_query(State(service): State<Service>, body: Bytes) -> Result<Vec<u8>, StatusCode> {

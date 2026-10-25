@@ -48,6 +48,21 @@ impl FileIdentity {
         Ok(())
     }
 
+    /// Carry verified bytes across our own rename, which can change ctime.
+    /// The opened and named inode, length and modification time must agree.
+    /// Call only around a rename of a sealed file with no outstanding writer.
+    pub(crate) fn after_rename(&self, path: &Path, file: &File) -> Result<Self, ObjectFileError> {
+        let current = Self::capture(path, file)?;
+        if self.device != current.device
+            || self.inode != current.inode
+            || self.bytes != current.bytes
+            || self.modified != current.modified
+        {
+            return Err(ObjectFileError::FileChanged(path.to_path_buf()));
+        }
+        Ok(current)
+    }
+
     /// Both timestamps must predate the read by more than one second, the
     /// coarsest filesystem timestamp tick supported by publisher evidence.
     pub fn settled_before(&self, started: SystemTime) -> bool {

@@ -1,13 +1,7 @@
-//! Application synchronization: complete, sequential publication passes with
-//! failure backoff, and the shared publication lifecycle that Status applies.
+//! Complete sequential publication passes with product-owned pacing.
 //!
-//! HTTPS transfer, discovery and transport limits stay in `pir-sync-manager`;
-//! this module decides when passes run and in what order publication state
-//! changes. [`publication_lifecycle`] owns envelope succession, durable floors,
-//! object transfer and commit ordering; products supply material hooks. A
-//! successful poll confers no permission to serve.
-#[cfg(any(feature = "status", feature = "receiver"))]
-pub mod publication_lifecycle;
+//! The consumer engine owns phase ordering; this module only schedules complete
+//! non-overlapping passes and never grants serving authority.
 
 use std::{
     future::Future,

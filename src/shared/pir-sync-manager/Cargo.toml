@@ -7,6 +7,8 @@ description = "HTTPS transport, publisher discovery and transfer limits without 
 publish = false
 
 [dependencies]
+pir-pipeline = { path = "../pir-pipeline" }
+pir-publication = { path = "../pir-publication" }
 bytes = "1"
 pir-service-discovery = { version = "1.0.0", path = "../pir-service-discovery" }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }

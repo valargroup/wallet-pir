@@ -1,6 +1,5 @@
 use super::*;
 use crate::status::routes::{provider_commit, provider_pin};
-use crate::synchronization::{publication_lifecycle::PublicationLifecycleError, SyncTask};
 use axum::extract::{Path, State};
 use axum::{
     body::Bytes,
@@ -9,9 +8,11 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use pir_pipeline::consumer::polling::SyncTask;
 use pir_publication::{
     conditional_token, SubjectAnswer, AUTHORITY_CHECK_PATH, CURRENT_PATH, OBJECTS_PATH,
 };
+use pir_sync_manager::publication::PublicationLifecycleError;
 use status_shared::protocol::{MAX_AGE_MS, PROTOCOL};
 use std::fs;
 use std::sync::{
@@ -99,10 +100,10 @@ fn role_config(role: Role, state_dir: std::path::PathBuf, tls: &tls::Tls) -> Rol
 fn saved_floor(service: &Service) -> serde_json::Value {
     serde_json::from_slice(&fs::read(service.state_dir.join(FLOOR_FILE)).unwrap()).unwrap()
 }
-fn deferred(pass: PublicationPass<u64>) -> u64 {
+fn deferred(pass: ConsumerPass<u64>) -> u64 {
     match pass {
-        PublicationPass::Deferred { report } => report,
-        PublicationPass::Committed { .. } => panic!("the fixture never commits"),
+        ConsumerPass::Deferred { report } => report,
+        ConsumerPass::Committed { .. } => panic!("the fixture never commits"),
     }
 }
 async fn setup() -> (
@@ -341,8 +342,8 @@ async fn a_refuted_anchor_leaves_other_status_sessions_available() {
         // The fixture has no prepared candidate, but the real HTTPS authority
         // exchange must apply its negative answer before that download fails.
         assert!(task.synchronize().await.is_err());
-        assert!(task.floor().is_invalidated(&view(refuted)));
-        assert!(!task.floor().is_invalidated(&view(unaffected)));
+        assert!(task.context().floor().is_invalidated(&view(refuted)));
+        assert!(!task.context().floor().is_invalidated(&view(unaffected)));
         assert_eq!(
             controller.check(&controller.resolve(refuted.id()).unwrap()),
             Err(StatusCode::GONE)
@@ -371,7 +372,7 @@ async fn a_refuted_anchor_leaves_other_status_sessions_available() {
         }
         let reopened: AuthorityFloor<StatusDescriptor> = AuthorityFloor::open(
             service.state_dir.join(FLOOR_FILE),
-            task.floor().source().clone(),
+            task.context().floor().source().clone(),
         )
         .unwrap();
         assert!(reopened.is_invalidated(&view(refuted)));
@@ -389,10 +390,13 @@ async fn skipped_withdrawal_fences_old_answers_before_candidate_download() {
     source.current.write().unwrap().sequence += 1;
     assert!(task.synchronize().await.is_err());
     assert!(service.serving().await.is_err());
-    assert!(task.floor().is_invalidated(&ViewIdentity(active_id)));
+    assert!(task
+        .context()
+        .floor()
+        .is_invalidated(&ViewIdentity(active_id)));
     let reopened: AuthorityFloor<StatusDescriptor> = AuthorityFloor::open(
         service.state_dir.join(FLOOR_FILE),
-        task.floor().source().clone(),
+        task.context().floor().source().clone(),
     )
     .unwrap();
     assert!(reopened.is_invalidated(&ViewIdentity(active_id)));
@@ -406,6 +410,7 @@ async fn ordinary_https_failure_preserves_a_still_fresh_view() {
     assert!(task.synchronize().await.is_err());
     assert!(service.serving().await.is_ok());
     assert!(!task
+        .context()
         .floor()
         .is_invalidated(&ViewIdentity(serving_manifest_id(&service).await)));
     server.abort();
@@ -433,7 +438,7 @@ async fn withdrawn_view_does_not_block_downloading_a_same_epoch_successor() {
         .join("objects")
         .join(object.sha256)
         .is_file());
-    assert!(task.floor().is_invalidated(&ViewIdentity(old)));
+    assert!(task.context().floor().is_invalidated(&ViewIdentity(old)));
     assert!(service.serving().await.is_err());
     server.abort();
 }
@@ -626,7 +631,7 @@ async fn a_new_router_attempt_replaces_an_abandoned_hold_without_releasing_the_s
         .invalidate_views(vec![ViewIdentity(newest_id)])
         .await;
     assert!(service.state.lock().await.router_holds.is_empty());
-    assert_eq!(service.state.lock().await.router_committed, None);
+    assert_eq!(service.state.lock().await.router_holds.acknowledged(), None);
     server.abort();
 }
 
@@ -738,9 +743,11 @@ async fn incompatible_discovery_stops_polling_without_observing_product_state() 
     *origin.version.write().unwrap() = "999.0.0".into();
     let error = task.synchronize().await.unwrap_err();
     assert!(task.terminal(&error));
-    assert!(task.floor().envelope().is_none());
+    assert!(task.context().floor().envelope().is_none());
     assert!(!service.state_dir.join(FLOOR_FILE).exists());
-    let returned = crate::synchronization::SyncManager::new(task).run().await;
+    let returned = pir_pipeline::consumer::polling::SyncManager::new(task)
+        .run()
+        .await;
     assert!(pir_sync_manager::is_incompatible(returned.as_ref()));
     server.abort();
 }
@@ -768,7 +775,7 @@ async fn ordinary_discovery_failure_is_retryable_and_never_renews_freshness() {
     let error = task.synchronize().await.unwrap_err();
     assert!(!task.terminal(&error));
     assert_eq!(observed_ms(&service).await, before);
-    assert!(task.floor().envelope().is_none());
+    assert!(task.context().floor().envelope().is_none());
     server.abort();
 }
 
@@ -806,9 +813,12 @@ async fn a_new_publication_during_authority_check_retries_without_renewing_the_o
             .manifest(),
         &before
     );
-    assert!(!task.floor().is_invalidated(&ViewIdentity(before.id())));
+    assert!(!task
+        .context()
+        .floor()
+        .is_invalidated(&ViewIdentity(before.id())));
     assert_eq!(
-        task.floor().envelope().unwrap(),
+        task.context().floor().envelope().unwrap(),
         &*source.current.read().unwrap()
     );
     // The next attempt really runs; its invalid fixture must still be refused.
@@ -822,7 +832,7 @@ async fn withdrawal_during_authority_check_fences_the_old_view_before_deferring(
     source.advance_during_check.store(true, Ordering::SeqCst);
     source.withdraw_during_check.store(true, Ordering::SeqCst);
     deferred(task.synchronize().await.unwrap());
-    assert!(!task.floor().envelope().unwrap().eligible);
+    assert!(!task.context().floor().envelope().unwrap().eligible);
     assert!(service.serving().await.is_err());
     server.abort();
 }
@@ -835,7 +845,7 @@ async fn a_failed_floor_save_blocks_progress_until_the_same_floor_is_saved() {
     let (_root, service, mut task, source, _tls, server) = setup().await;
     // The fixture inventory is malformed, but the floor is made durable.
     assert!(task.synchronize().await.is_err());
-    assert!(task.floor().is_durable());
+    assert!(task.context().floor().is_durable());
     let active_id = serving_manifest_id(&service).await;
     let floor_path = service.state_dir.join(FLOOR_FILE);
     // A non-empty directory replaces the floor file, so the rename fails.
@@ -846,22 +856,25 @@ async fn a_failed_floor_save_blocks_progress_until_the_same_floor_is_saved() {
     // Negative evidence under the unchanged pointer cannot be saved.
     source.canonical.store(false, Ordering::SeqCst);
     assert!(task.synchronize().await.is_err());
-    assert!(task.floor().is_invalidated(&ViewIdentity(active_id)));
-    assert!(!task.floor().is_durable());
+    assert!(task
+        .context()
+        .floor()
+        .is_invalidated(&ViewIdentity(active_id)));
+    assert!(!task.context().floor().is_durable());
     assert!(service.state.lock().await.poisoned);
 
     // The identical pointer still makes no progress while the save fails.
     source.canonical.store(true, Ordering::SeqCst);
     let error = task.synchronize().await.unwrap_err();
     assert!(error.is::<std::io::Error>(), "{error}");
-    assert!(!task.floor().is_durable());
+    assert!(!task.context().floor().is_durable());
 
     // Once the filesystem is repaired, the same pointer saves the floor first.
     fs::remove_dir_all(&floor_path).unwrap();
     assert!(task.synchronize().await.is_err()); // The inventory is still malformed.
-    assert!(task.floor().is_durable());
+    assert!(task.context().floor().is_durable());
     let reopened: AuthorityFloor<StatusDescriptor> =
-        AuthorityFloor::open(floor_path, task.floor().source().clone()).unwrap();
+        AuthorityFloor::open(floor_path, task.context().floor().source().clone()).unwrap();
     assert!(reopened.is_invalidated(&ViewIdentity(active_id)));
     let mut older = pointer();
     older.sequence -= 1;
@@ -915,10 +928,10 @@ fn export(origin: &Origin, generation: &Generation) -> Inventory {
     inventory.manifest = manifest.clone();
     inventory
 }
-fn committed(pass: PublicationPass<u64>) -> (u64, PeerHandover) {
+fn committed(pass: ConsumerPass<u64>) -> (u64, PeerHandover) {
     match pass {
-        PublicationPass::Committed { report, handover } => (report, handover),
-        PublicationPass::Deferred { report } => panic!("deferred at generation {report}"),
+        ConsumerPass::Committed { report, handover } => (report, handover),
+        ConsumerPass::Deferred { report } => panic!("deferred at generation {report}"),
     }
 }
 
@@ -957,7 +970,7 @@ async fn expired_inventory_keeps_the_status_poll_cadence() {
         active.manifest.clone(),
         Arc::new(Vec::new()),
     )));
-    let task = PublicationLifecycle::new(
+    let task = EnvelopeConsumer::open(
         StatusPublication {
             service: service.clone(),
             loaded_inventory: Some(active.clone()),
@@ -966,7 +979,7 @@ async fn expired_inventory_keeps_the_status_poll_cadence() {
         super::super::source(&role_config(Role::Worker, service.state_dir.clone(), &tls)).unwrap(),
         AuthorityFloor::open(
             service.state_dir.join(FLOOR_FILE),
-            task.floor().source().clone(),
+            task.context().floor().source().clone(),
         )
         .unwrap(),
         ObjectCache::open(service.state_dir.join("objects")).unwrap(),
@@ -1006,7 +1019,7 @@ async fn expired_inventory_keeps_the_status_poll_cadence() {
         passes: usize,
     }
     impl SyncTask for Polling {
-        type Report = PublicationPass<u64>;
+        type Report = ConsumerPass<u64>;
         type Error = Error;
         async fn synchronize(&mut self) -> Result<Self::Report, Error> {
             if self.passes == 2 {
@@ -1015,8 +1028,8 @@ async fn expired_inventory_keeps_the_status_poll_cadence() {
             self.passes += 1;
             let result = self.task.synchronize().await;
             self.outcomes.lock().unwrap().push(match &result {
-                Ok(PublicationPass::Deferred { .. }) => "deferred",
-                Ok(PublicationPass::Committed { .. }) => "committed",
+                Ok(ConsumerPass::Deferred { .. }) => "deferred",
+                Ok(ConsumerPass::Committed { .. }) => "committed",
                 Err(_) => "error",
             });
             result
@@ -1044,7 +1057,7 @@ async fn expired_inventory_keeps_the_status_poll_cadence() {
         outcomes: outcomes.clone(),
         passes: 0,
     };
-    let error = crate::synchronization::SyncManager::new(polling)
+    let error = pir_pipeline::consumer::polling::SyncManager::new(polling)
         .with_success_interval(Duration::from_secs(1))
         .run()
         .await;
@@ -1086,7 +1099,7 @@ async fn status_polling_reserves_time_for_a_fresh_handover() {
             active.manifest.clone(),
             Arc::new(Vec::new()),
         )));
-        let task = PublicationLifecycle::new(
+        let task = EnvelopeConsumer::open(
             StatusPublication {
                 service: service.clone(),
                 loaded_inventory: Some(active.clone()),
@@ -1096,7 +1109,7 @@ async fn status_polling_reserves_time_for_a_fresh_handover() {
                 .unwrap(),
             AuthorityFloor::open(
                 service.state_dir.join(FLOOR_FILE),
-                original.floor().source().clone(),
+                original.context().floor().source().clone(),
             )
             .unwrap(),
             ObjectCache::open(service.state_dir.join("objects")).unwrap(),
@@ -1204,7 +1217,7 @@ async fn retention_wait_polls_promptly_without_loading_a_third_material() {
     service.state.lock().await.controller = Some(controller.clone());
     let object = publish_inventory(&source, &mut next);
     *source.current.write().unwrap() = publishing(&next, &object);
-    let task = PublicationLifecycle::new(
+    let task = EnvelopeConsumer::open(
         StatusPublication {
             service: service.clone(),
             loaded_inventory: Some(active),
@@ -1213,7 +1226,7 @@ async fn retention_wait_polls_promptly_without_loading_a_third_material() {
         super::super::source(&role_config(Role::Worker, service.state_dir.clone(), &tls)).unwrap(),
         AuthorityFloor::open(
             service.state_dir.join(FLOOR_FILE),
-            original.floor().source().clone(),
+            original.context().floor().source().clone(),
         )
         .unwrap(),
         ObjectCache::open(service.state_dir.join("objects")).unwrap(),
@@ -1576,7 +1589,7 @@ async fn candidate_deferred_by_an_advance() -> AdvancedCandidate {
     source.advance_during_check.store(true, Ordering::SeqCst);
     assert_eq!(deferred(task.synchronize().await.unwrap()), 0);
     assert!(worker.state.lock().await.controller.is_none());
-    assert_eq!(task.floor().envelope().unwrap().sequence, 8);
+    assert_eq!(task.context().floor().envelope().unwrap().sequence, 8);
     AdvancedCandidate {
         _root: root,
         _tls: tls,
@@ -1642,6 +1655,7 @@ async fn a_candidate_requires_live_authority_before_activation() {
     );
     assert!(worker.state.lock().await.controller.is_none());
     assert!(!task
+        .context()
         .floor()
         .is_invalidated(&ViewIdentity(inventory.manifest.id())));
     *source.replayed_check.write().unwrap() = None;
@@ -1649,7 +1663,7 @@ async fn a_candidate_requires_live_authority_before_activation() {
     source.advance_during_check.store(true, Ordering::SeqCst);
     source.withdraw_during_check.store(true, Ordering::SeqCst);
     deferred(task.synchronize().await.unwrap());
-    assert!(!task.floor().envelope().unwrap().eligible);
+    assert!(!task.context().floor().envelope().unwrap().eligible);
     assert!(worker.state.lock().await.controller.is_none());
 
     // The same material republished under a live answer does activate.
@@ -1710,7 +1724,7 @@ async fn a_metadata_refresh_during_the_load_commits_the_loaded_material_as_lates
     assert_eq!(committed(task.synchronize().await.unwrap()).0, 5);
     assert!(source.publish_on_request.read().unwrap().is_none());
     assert_eq!(serving_manifest_id(&worker).await, refreshed.manifest.id());
-    assert_eq!(task.floor().envelope().unwrap().sequence, 8);
+    assert_eq!(task.context().floor().envelope().unwrap().sequence, 8);
     server.abort();
 }
 
@@ -1786,7 +1800,7 @@ async fn changed_material_during_loading_still_allows_forward_progress() {
 
     assert_eq!(committed(task.synchronize().await.unwrap()).0, 4);
     assert_eq!(serving_manifest_id(&worker).await, inventory.manifest.id());
-    assert_eq!(task.floor().envelope().unwrap().sequence, 8);
+    assert_eq!(task.context().floor().envelope().unwrap().sequence, 8);
     assert_eq!(
         worker
             .state
@@ -1931,7 +1945,7 @@ async fn changed_material_during_loading_still_allows_forward_progress() {
     assert_eq!(serving_manifest_id(&worker).await, newest.manifest.id());
     assert!(source.publish_on_request.read().unwrap().is_none());
     assert_eq!(
-        task.floor().envelope().unwrap().sequence,
+        task.context().floor().envelope().unwrap().sequence,
         if cfg!(feature = "native-reinspiring") {
             11
         } else {
@@ -2114,10 +2128,7 @@ async fn prepared_candidate_proof_binds_inventory_source_fence_and_original_age(
         generation,
         observed: observed.clone(),
     };
-    assert_eq!(
-        task.adapter().resumable_view(&loaded, &observed),
-        Some(view(&loaded.inventory.manifest))
-    );
+    assert_eq!(task.context().adapter().resumable_view(&loaded, &observed), Some(view(&loaded.inventory.manifest)));
     for field in ["source", "withdrawal", "epoch", "sequence", "eligible"] {
         let mut changed = observed.clone();
         match field {
@@ -2129,13 +2140,13 @@ async fn prepared_candidate_proof_binds_inventory_source_fence_and_original_age(
             _ => unreachable!(),
         }
         assert!(
-            task.adapter().resumable_view(&loaded, &changed).is_none(),
+            task.context().adapter().resumable_view(&loaded, &changed).is_none(),
             "{field}"
         );
     }
     let valid = loaded.inventory_object.clone();
     loaded.inventory_object = ObjectReference::for_bytes(b"another inventory");
-    assert!(task.adapter().resumable_view(&loaded, &observed).is_none());
+    assert!(!task.context().adapter().can_resume(&loaded, &observed));
     loaded.inventory_object = valid;
     // Give the expired inventory a matching original envelope as well: the
     // freshness check must still refuse it rather than renewing its timestamp.
@@ -2147,10 +2158,10 @@ async fn prepared_candidate_proof_binds_inventory_source_fence_and_original_age(
             .inventory
             .publication_reference(&loaded.inventory_object),
     );
-    assert!(task
+    assert!(!task
+        .context()
         .adapter()
-        .resumable_view(&loaded, &loaded.observed)
-        .is_none());
+        .can_resume(&loaded, &loaded.observed));
     assert!(worker.state.lock().await.controller.is_none());
     server.abort();
 }
@@ -2287,7 +2298,16 @@ async fn router_rebinds_loaded_material_to_its_workers_fresh_metadata() {
         );
         assert_eq!(worker.state.lock().await.router_holds.len(), 1);
         assert_eq!(
-            worker.state.lock().await.router_holds[0].manifest().id(),
+            worker
+                .state
+                .lock()
+                .await
+                .router_holds
+                .iter()
+                .next()
+                .unwrap()
+                .manifest()
+                .id(),
             expected.manifest.id()
         );
         server.abort();
@@ -2340,7 +2360,7 @@ async fn router_defers_when_worker_advanced_past_the_observed_envelope() {
     .unwrap();
     let pass = task.synchronize().await;
     assert!(
-        matches!(pass, Ok(PublicationPass::Deferred { .. })),
+        matches!(pass, Ok(ConsumerPass::Deferred { .. })),
         "{pass:?}"
     );
     assert!(router.serving().await.is_err());

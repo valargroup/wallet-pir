@@ -423,3 +423,6 @@ pub mod ingestion;
 
 /// The one publication and ingestion executor injected into every product.
 pub mod engine;
+
+/// Shared publication consumption and sequential polling.
+pub mod consumer;

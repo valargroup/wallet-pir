@@ -300,11 +300,10 @@ Cargo package names and standalone commands are preserved. See the
 
 `pir-sync-manager` is the internal HTTPS transport and discovery library under
 `src/shared/`; it accounts all consumed response bytes against one attempt
-budget. The query server's `synchronization` module (`pir_query_server::synchronization`)
+budget. The shared `pir-pipeline` consumer polling module
 schedules complete passes sequentially with bounded backoff; Enhance,
 Transparent history, transaction-detail and Status supply its product tasks.
-Neither grants serving authority by itself. Its `publication_lifecycle`
-module runs the shared publication lifecycle over the transport-free
+Neither grants serving authority by itself. The transport-neutral `ConsumerEngine` runs the shared publication lifecycle with the HTTPS envelope adapter in `pir-sync-manager` and the transport-free
 `pir-publication` contract (object references, pointer succession, durable
 floors, object cache and publisher object store); Status is its first adopter,
 and other products still keep their own replay records and promotion. Product

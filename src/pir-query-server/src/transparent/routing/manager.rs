@@ -28,7 +28,7 @@ use transparent_shared::{
 
 /// Transparent publication policy hosted by the shared synchronization loop.
 pub struct Manager {
-    sync: crate::synchronization::SyncManager<HistorySync>,
+    sync: pir_pipeline::consumer::polling::SyncManager<HistorySync>,
 }
 impl Manager {
     /// Check publisher discovery, then open the provider root. An unreachable or
@@ -36,7 +36,9 @@ impl Manager {
     pub async fn new(config: Config, service: ServiceConfig) -> Result<Self, Error> {
         crate::transparent::source::discover(&config).await?;
         Ok(Self {
-            sync: crate::synchronization::SyncManager::new(HistorySync::new(config, service)?),
+            sync: pir_pipeline::consumer::polling::SyncManager::new(HistorySync::new(
+                config, service,
+            )?),
         })
     }
     /// Hold and verify every shard locally, including archive runtimes.
@@ -516,7 +518,7 @@ fn collect_saved(root: &Path) -> Result<(), Error> {
     }
     Ok(())
 }
-impl crate::synchronization::SyncTask for HistorySync {
+impl pir_pipeline::consumer::polling::SyncTask for HistorySync {
     type Report = Progress;
     type Error = Error;
     fn started(&mut self) {

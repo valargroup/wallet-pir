@@ -2,7 +2,7 @@
 //! worker serves, pinning it during the authority check, and releasing the pin.
 use super::super::{serving, Service};
 use crate::status::peers::ProviderStatus;
-use crate::synchronization::publication_lifecycle::{PeerHandover, PeerReservation};
+use pir_pipeline::consumer::{PeerHandover, PeerReservation};
 use pir_publication::ObjectReference;
 use pir_sync_manager::Error;
 use status_shared::{now_ms, protocol::Manifest, publication::METADATA_LIMIT};
