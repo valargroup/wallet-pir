@@ -217,7 +217,7 @@ async fn a_registered_publication_requires_completed_and_current_preparation() {
         ) -> Result<pir_pipeline::publisher::PublicationInput<ExampleWork>, Self::Error> {
             Ok(self.0.take().map_or(
                 pir_pipeline::publisher::PublicationInput::Unchanged,
-                pir_pipeline::Input::Work,
+                pir_pipeline::publisher::PublicationInput::NewMaterial,
             ))
         }
         async fn wait(&mut self) -> Result<(), Self::Error> {
