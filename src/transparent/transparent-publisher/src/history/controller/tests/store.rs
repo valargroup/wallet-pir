@@ -1175,7 +1175,7 @@ async fn background_validation_keeps_completed_artifacts_across_successors() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn bootstrap_corruption_is_found_after_a_successor_activates_and_stays_withdrawn() {
+async fn bootstrap_corruption_withdraws_until_a_verified_replacement_is_published() {
     use crate::history::validator::{Event, Identity};
     use std::os::unix::fs::{FileExt, PermissionsExt};
     use transparent_shared::publication::{IntegrityError, PREPARATION_FILE};
@@ -1260,6 +1260,21 @@ async fn bootstrap_corruption_is_found_after_a_successor_activates_and_stays_wit
         restore_public(&follow.config, &current).unwrap(),
         Restore::Failed(_)
     ));
+    // Restoring the correct stored bytes lets an ordinarily verified successor
+    // recover without inheriting preparation from the withdrawn publication.
+    let mut repaired = std::fs::read(&physical).unwrap();
+    repaired[0] = byte[0];
+    let replacement = physical.with_extension("repair");
+    std::fs::write(&replacement, repaired).unwrap();
+    std::fs::set_permissions(&replacement, std::fs::Permissions::from_mode(0o444)).unwrap();
+    std::fs::rename(replacement, &physical).unwrap();
+    follow.advance(&restarted, 1).await;
+    follow.cycle(&restarted).await;
+    assert_eq!(restarted.0.active.read().unwrap().publication.height, 6);
+    assert!(!restarted.0.withdrawn.load(Ordering::Acquire));
+    assert!(integrity_failures(&follow.config.publication_root)
+        .unwrap()
+        .is_empty());
     follow.server.abort();
 }
 

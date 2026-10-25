@@ -94,6 +94,9 @@ mismatch is recorded in `integrity-failures.json` and withdraws every
 publication listing those bytes, in this and later processes, until freshly
 verified replacement bytes are published; `recorded` is false in its status
 when the record could not be made durable, so only this process withdraws it.
+After a confirmed integrity failure, the next candidate uses ordinary
+preparation so inherited evidence cannot clear the failure or block recovery
+with verified replacement bytes.
 Completion and failure records are synced with their directory before they are
 acted on. Withdrawing the publisher's own
 routes would leave the router proxying setup and query requests to workers

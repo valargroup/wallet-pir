@@ -32,6 +32,13 @@ impl<'a> HistoryPreparation<'a> {
         recent_from: Option<u64>,
     ) -> Self {
         authority.0.foreground.fetch_add(1, Ordering::AcqRel);
+        // Recovery from confirmed corrupt bytes needs ordinary preparation.
+        // Inherited evidence must neither clear the failure nor keep a fully
+        // checked replacement from recovering the withdrawn publication.
+        if authority.0.integrity_failed.load(Ordering::Acquire) {
+            *authority.0.prepared_set.lock().unwrap() = None;
+            *authority.0.checked_runtimes.lock().unwrap() = Default::default();
+        }
         Self {
             config,
             rpc,
