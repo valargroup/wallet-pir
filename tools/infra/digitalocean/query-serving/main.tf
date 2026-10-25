@@ -16,9 +16,12 @@ resource "digitalocean_droplet" "query" {
   tags       = [digitalocean_tag.query.name]
   monitoring = true
   ipv6       = true
-  user_data = templatefile("${path.module}/cloud-init.yaml.tftpl", {
-    hostname    = var.hostname
-    volume_name = "${local.name}-data"
+  user_data = templatefile("${path.module}/../apm-sidecar/user-data.tftpl", {
+    script = var.apm_sidecar_boot_script
+    cloud_config = templatefile("${path.module}/cloud-init.yaml.tftpl", {
+      hostname    = var.hostname
+      volume_name = "${local.name}-data"
+    })
   })
   lifecycle {
     ignore_changes = [user_data]

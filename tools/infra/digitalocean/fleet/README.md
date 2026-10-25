@@ -21,6 +21,15 @@ project-membership resource sets. `services.tf` passes shared references and
 `moves.tf` extracts the resources without changing their instance keys;
 `shared.tf` retains the earlier rename and archive-key move chains.
 
+`apm-sidecar.tf` takes the optional `apm_sidecar_boot = {url, sha256}`: a
+public `pir-apm-sidecar` binary every droplet this root and its service modules
+create installs at first boot, with its unit, through a second user_data part
+(`../apm-sidecar/user-data.tftpl`). It carries no key material; certificates
+are installed from Infisical afterwards, as
+[monitoring deployment](../../../../docs/enhance/observability-alerting.md#monitoring-deployment-and-rebuild)
+describes. Every droplet ignores user_data changes, so existing hosts are not
+changed; the separate worker-pool roots are not wired.
+
 `receiver.tf` holds the opt-in receiver
 directory Droplet and DNS record; import the existing Droplet and record as the
 [receiver deployment](../../../receiver/digitalocean/README.md#infrastructure)

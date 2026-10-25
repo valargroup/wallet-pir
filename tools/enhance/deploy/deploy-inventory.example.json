@@ -46,6 +46,9 @@
     },
     "transparent-txid-k8-01": {
       "address": "192.0.2.22"
+    },
+    "monitor-01": {
+      "address": "192.0.2.23"
     }
   },
   "services": {
@@ -423,6 +426,176 @@
             "timeout": 900
           }
         }
+      }
+    },
+    "apm": {
+      "roles": {
+        "central": [
+          {
+            "host": "coordinator",
+            "install": true,
+            "settings": {
+              "environment": {
+                "PIR_APM_ALERT_MODE": "shadow",
+                "PIR_APM_SCRAPE_URL": "http://127.0.0.1:8080",
+                "PIR_APM_PUBLISHER_URL": "http://127.0.0.1:18080",
+                "PIR_APM_CHAIN_RPC_URL": "http://127.0.0.1:8232",
+                "PIR_APM_PEER_STATUS_URL": "https://monitor-pir.valargroup.dev/monitor-status",
+                "PIR_APM_PUBLIC_URL": "https://enhance-pir.valargroup.dev/apm/"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "monitor": {
+      "roles": {
+        "checker": [
+          {
+            "host": "monitor-01",
+            "install": true,
+            "settings": {
+              "environment": {
+                "PIR_MONITOR_ORIGIN": "https://enhance-pir.valargroup.dev",
+                "PIR_MONITOR_APM_STATUS_URL": "https://enhance-pir.valargroup.dev/apm/monitor-status",
+                "PIR_MONITOR_ORACLE": "/etc/pir-monitor/oracle.json",
+                "PIR_MONITOR_ORACLE_SHA256": "0000000000000000000000000000000000000000000000000000000000000000",
+                "PIR_MONITOR_ALERT_MODE": "shadow",
+                "PIR_MONITOR_SERVICE_ALERT_MODE": "shadow"
+              },
+              "chain_rpc_cookie": true,
+              "service_probes": [
+                {
+                  "service": "receiver",
+                  "command": [
+                    "/opt/pir-monitor/receiver-probe",
+                    "--origin",
+                    "https://receiver-pir.valargroup.dev"
+                  ],
+                  "timeout_seconds": 30
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "apm-sidecar": {
+      "roles": {
+        "observer": [
+          {
+            "host": "coordinator",
+            "install": true,
+            "settings": {
+              "host_id": "coordinator",
+              "address": "10.10.0.10",
+              "units": [
+                "pir-publisher.service",
+                "pir-apm.service",
+                "caddy.service"
+              ],
+              "required_volumes": [
+                {
+                  "path": "/srv/zakura",
+                  "uuid": "00000000-0000-0000-0000-000000000001"
+                },
+                {
+                  "path": "/srv/transparent-activity",
+                  "uuid": "00000000-0000-0000-0000-000000000002"
+                },
+                {
+                  "path": "/srv/txid-display-genesis",
+                  "uuid": "00000000-0000-0000-0000-000000000003"
+                }
+              ]
+            }
+          },
+          {
+            "host": "worker-01",
+            "install": true,
+            "settings": {
+              "host_id": "worker-01",
+              "address": "10.10.0.11"
+            }
+          },
+          {
+            "host": "worker-02",
+            "install": true,
+            "settings": {
+              "host_id": "worker-02",
+              "address": "10.10.0.12"
+            }
+          },
+          {
+            "host": "router-01",
+            "install": true,
+            "settings": {
+              "host_id": "router-01",
+              "address": "10.10.0.13"
+            }
+          },
+          {
+            "host": "enhance-pir-gpu-01",
+            "install": true,
+            "settings": {
+              "host_id": "enhance-pir-gpu-01",
+              "address": "192.0.2.19",
+              "external": true
+            }
+          },
+          {
+            "host": "status-01",
+            "install": true,
+            "settings": {
+              "host_id": "status-01",
+              "address": "10.10.0.15"
+            }
+          },
+          {
+            "host": "receiver-01",
+            "install": true,
+            "settings": {
+              "host_id": "receiver-01",
+              "address": "10.10.0.16"
+            }
+          },
+          {
+            "host": "transparent-router-01",
+            "install": true,
+            "settings": {
+              "host_id": "transparent-router-01",
+              "address": "10.10.0.17"
+            }
+          },
+          {
+            "host": "transparent-v12-01",
+            "install": true,
+            "settings": {
+              "host_id": "transparent-v12-01",
+              "address": "10.10.0.18"
+            }
+          },
+          {
+            "host": "transparent-txid-k8-01",
+            "install": true,
+            "settings": {
+              "host_id": "transparent-txid-k8-01",
+              "address": "10.10.0.19"
+            }
+          },
+          {
+            "host": "monitor-01",
+            "install": true,
+            "settings": {
+              "host_id": "monitor-01",
+              "address": "10.10.0.20",
+              "units": [
+                "pir-monitor.service",
+                "caddy.service"
+              ]
+            }
+          }
+        ]
       }
     }
   },

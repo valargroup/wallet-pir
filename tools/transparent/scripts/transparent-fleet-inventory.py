@@ -188,6 +188,24 @@ def roster_view(inv):
     return roster
 
 
+def monitoring_view(inv):
+    """Every member's sidecar enrollment for the APM observer `roster`.
+
+    Retired members stay listed as retired: the actuator's deliberate
+    retirement is the explicit decommission that ends their monitoring.
+    Roles select the collector's main unit for each host's capacity snapshot.
+    """
+    view = []
+    for m in inv['members']:
+        entry = {'id': m['id'], 'intent': m['intent']}
+        if 'role' in m:
+            entry['role'] = m['role']
+        if m.get('monitoring') and m['intent'] in ROUTABLE:
+            entry['monitoring'] = m['monitoring']
+        view.append(entry)
+    return view
+
+
 def known_hosts_lines(inv):
     """Pinned keys of live members that carry one: every elastic replica and
     any archive owner a repartition enrolled. Other static hosts' keys are
@@ -201,11 +219,12 @@ def managed_key_hosts(inv):
 
 
 class Inventory:
-    def __init__(self, state_dir, roster_path=None, known_hosts=None):
+    def __init__(self, state_dir, roster_path=None, known_hosts=None, monitoring_path=None):
         self.root = Path(state_dir)
         self.path = self.root/'inventory.json'
         self.roster_path = Path(roster_path) if roster_path else None
         self.known_hosts = Path(known_hosts) if known_hosts else None
+        self.monitoring_path = Path(monitoring_path) if monitoring_path else None
 
     def load(self):
         value = json.loads(self.path.read_text())
@@ -256,6 +275,8 @@ class Inventory:
         """Regenerate the roster and elastic known-hosts from `inv`."""
         if self.roster_path:
             atomic_json(self.roster_path, roster_view(inv))
+        if self.monitoring_path:
+            atomic_json(self.monitoring_path, monitoring_view(inv))
         if self.known_hosts and self.known_hosts.exists():
             managed = managed_key_hosts(inv)
             kept = [line for line in self.known_hosts.read_text().splitlines()
@@ -587,7 +608,8 @@ def main(argv=None, probe=probe_standby, alive=probe_alive):
     back.add_argument('--force', action='store_true', help='restore although an old owner looks stopped')
     args = parser.parse_args(argv)
     config = json.loads(args.fleet_config.read_text())
-    inventory = Inventory(config['state_dir'], config['roster'], config.get('known_hosts'))
+    inventory = Inventory(config['state_dir'], config['roster'], config.get('known_hosts'),
+                          config.get('monitoring_roster'))
     state_dir = Path(config['state_dir'])
 
     if args.command == 'init':

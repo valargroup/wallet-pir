@@ -139,8 +139,15 @@ fn fresh(t: u64, now: u64) -> bool {
 
 pub fn start(dashboard: SharedDashboard, config: Config) -> Result<()> {
     let scaling = crate::scaling::Settings::from_env()?;
+    let observers = pir_apm::observers::from_env()?;
+    let observers_enabled = observers.is_some();
     let Some(path) = std::env::var_os("PIR_APM_STATE_PATH").map(PathBuf::from) else {
         anyhow::ensure!(!enabled(), "active alerting requires PIR_APM_STATE_PATH");
+        anyhow::ensure!(
+            observers.is_none(),
+            "{} requires PIR_APM_STATE_PATH",
+            pir_apm::observers::CONFIG_VAR
+        );
         anyhow::ensure!(
             scaling.is_none(),
             "{} requires PIR_APM_STATE_PATH",
@@ -203,6 +210,18 @@ pub fn start(dashboard: SharedDashboard, config: Config) -> Result<()> {
             eprintln!("durable Slack worker stopped; check state directory");
         }
     });
+    // Sidecar host checks are their own family, in the inventory's mode.
+    if let Some(observers) = observers {
+        let (path, environment) = (path.clone(), config.environment.clone());
+        let host_url = format!("{}/", url.trim_end_matches('/'));
+        tokio::spawn(async move {
+            if let Err(error) =
+                pir_apm::observers::run(observers, path, environment, host_url).await
+            {
+                eprintln!("host observer collection stopped: {error:#}");
+            }
+        });
+    }
     let eval_dashboard = dashboard.clone();
     let state_path = path.clone();
     let mut service_stores: BTreeMap<String, Store> = BTreeMap::new();
@@ -217,6 +236,14 @@ pub fn start(dashboard: SharedDashboard, config: Config) -> Result<()> {
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             interval.tick().await;
+            if observers_enabled {
+                // A failed or stalled observer task must also fail the public
+                // progress contract the independent monitor already checks.
+                eval_dashboard.write().await.monitoring.loops.insert(
+                    "host_observers".into(),
+                    pir_apm::observers::readiness().evaluated_at,
+                );
+            }
             let now = incidents::unix_time();
             let mut snapshot = eval_dashboard.read().await.clone();
             // Read delivery configuration before evaluating, including the first tick.
@@ -1014,6 +1041,9 @@ fn progress_ok(d: &DashboardData, now: u64) -> bool {
     if d.packing_enabled {
         required.push("routers");
     }
+    if d.monitoring.loops.contains_key("host_observers") {
+        required.push("host_observers");
+    }
     fresh(d.monitoring.evaluated_at, now)
         && (!d.quality.enabled
             || (fresh(d.quality.collected_at, now)
@@ -1049,6 +1079,19 @@ pub async fn status(State(d): State<SharedDashboard>) -> Json<serde_json::Value>
         serde_json::json!({"progress_ok":progress,"evaluated_at":d.monitoring.evaluated_at,"shadow":d.monitoring.shadow,"delivery":d.monitoring.delivery,"incidents":d.monitoring.incidents,"chain":d.monitoring.chain,"peer":d.monitoring.peer,"publication":d.monitoring.publication,"serving":serving,"quality":{"enabled":d.quality.enabled,"collected_at":d.quality.collected_at,"persisted_at":d.quality.persisted_at,"storage_error":d.quality.storage_error,"dropped_batches":d.quality.dropped_batches,"inventory_error":d.quality.inventory_error}}),
     )
 }
+/// Observer collection readiness: 200 while the latest poll round, at most 45
+/// seconds old, collected a fresh document from every expected host with the
+/// inventory whose `revision` it reports; the deployment checks both.
+pub async fn observers_ready() -> (StatusCode, Json<pir_apm::observers::Readiness>) {
+    let r = pir_apm::observers::readiness();
+    let code = if r.ready {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    };
+    (code, Json(r))
+}
+
 pub async fn readyz(State(d): State<SharedDashboard>) -> (StatusCode, Json<serde_json::Value>) {
     let d = d.read().await;
     let now = incidents::unix_time();
@@ -1114,6 +1157,62 @@ fn update_router_rates(d: &mut DashboardData, history: &mut RouterHistory, now: 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn observer_readiness_endpoint_expires_with_its_round() {
+        let now = incidents::unix_time();
+        let round = |at: u64| pir_apm::observers::Readiness {
+            configured: true,
+            ready: true,
+            rounds: 1,
+            expected_hosts: 1,
+            valid_hosts: 1,
+            evaluated_at: at,
+            valid_until: at + 45,
+            ..Default::default()
+        };
+        pir_apm::observers::set_readiness(round(now));
+        assert_eq!(observers_ready().await.0, StatusCode::OK);
+        pir_apm::observers::set_readiness(round(now - 60));
+        let (code, Json(r)) = observers_ready().await;
+        assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE);
+        assert!(!r.ready);
+
+        let mut d = view(now);
+        d.monitoring.evaluated_at = now;
+        d.monitoring.delivery.worker_at = now;
+        for name in ["coordinator", "entrypoints", "host_observers"] {
+            d.monitoring.loops.insert(name.into(), now);
+        }
+        assert!(progress_ok(&d, now));
+        d.monitoring.loops.insert("host_observers".into(), now - 60);
+        assert!(
+            !progress_ok(&d, now),
+            "stopped host collection must reach the independent monitor"
+        );
+        let shared = std::sync::Arc::new(tokio::sync::RwLock::new(d));
+        assert_eq!(status(State(shared.clone())).await.0["progress_ok"], false);
+        // A store-open failure can stop collection before its first heartbeat.
+        pir_apm::observers::set_readiness(Default::default());
+        let settings = serde_json::from_value(serde_json::json!({"mode":"shadow", "hosts":[],
+            "collector":{"cert":"unused", "key":"unused", "ca":"unused"}}))
+        .unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        assert!(pir_apm::observers::run(
+            settings,
+            directory.path().join("missing/state.db"),
+            "test".into(),
+            "".into()
+        )
+        .await
+        .is_err());
+        shared.write().await.monitoring.loops.insert(
+            "host_observers".into(),
+            pir_apm::observers::readiness().evaluated_at,
+        );
+        assert_eq!(status(State(shared)).await.0["progress_ok"], false);
+    }
+
     fn view(now: u64) -> DashboardData {
         let mut d = DashboardData::new(
             "test".into(),

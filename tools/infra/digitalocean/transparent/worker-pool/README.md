@@ -71,3 +71,12 @@ terraform test
 ```
 
 The provider lock pins the production root's DigitalOcean provider version.
+## Per-host monitoring
+
+Set `apm_sidecar_boot = { url = "https://<public-artifact>", sha256 = "<digest>" }`
+for the shared pinned first-boot installer. Existing hosts ignore user-data
+changes. `monitoring_enrollment_required` lists every new member: the fleet
+actuator must finish credential installation and explicit enrollment through
+the shared installer before accepting the member. Its `monitoring` configuration
+is required. Boot installation alone does not establish monitoring coverage,
+and Terraform carries no monitoring CA or notification credentials.

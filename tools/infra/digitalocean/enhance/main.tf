@@ -20,9 +20,12 @@ resource "digitalocean_droplet" "enhance_worker" {
   backups    = var.enable_backups
   ipv6       = true
 
-  user_data = templatefile("${path.module}/cloud-init-worker.yaml.tftpl", {
-    packages          = jsonencode(local.common_packages)
-    deploy_public_key = var.enhance_worker_deploy_public_key
+  user_data = templatefile("${path.module}/../apm-sidecar/user-data.tftpl", {
+    script = var.apm_sidecar_boot_script
+    cloud_config = templatefile("${path.module}/cloud-init-worker.yaml.tftpl", {
+      packages          = jsonencode(local.common_packages)
+      deploy_public_key = var.enhance_worker_deploy_public_key
+    })
   })
 
   lifecycle {
@@ -46,6 +49,13 @@ resource "digitalocean_droplet" "enhance_legacy_worker" {
   monitoring = true
   backups    = var.enable_backups
   ipv6       = true
+  user_data = var.apm_sidecar_boot_script == "" ? null : templatefile("${path.module}/../apm-sidecar/user-data.tftpl", {
+    cloud_config = templatefile("${path.module}/cloud-init-worker.yaml.tftpl", {
+      packages          = jsonencode(local.common_packages)
+      deploy_public_key = var.enhance_worker_deploy_public_key
+    })
+    script = var.apm_sidecar_boot_script
+  })
   lifecycle {
     ignore_changes = [user_data, image, ssh_keys, size]
   }
@@ -79,14 +89,17 @@ resource "digitalocean_droplet" "enhance_packing_router" {
   tags       = [digitalocean_tag.enhance_packing_router.name]
   monitoring = true
   ipv6       = true
-  user_data  = <<-YAML
-    #cloud-config
-    package_update: true
-    packages: [ca-certificates, curl, jq]
-    runcmd:
-      - [useradd, --system, --home-dir, /srv/enhance-pir-router, --shell, /usr/sbin/nologin, enhance-pir]
-      - [install, -d, -o, enhance-pir, -g, enhance-pir, /srv/enhance-pir-router]
-  YAML
+  user_data = templatefile("${path.module}/../apm-sidecar/user-data.tftpl", {
+    script       = var.apm_sidecar_boot_script
+    cloud_config = <<-YAML
+      #cloud-config
+      package_update: true
+      packages: [ca-certificates, curl, jq]
+      runcmd:
+        - [useradd, --system, --home-dir, /srv/enhance-pir-router, --shell, /usr/sbin/nologin, enhance-pir]
+        - [install, -d, -o, enhance-pir, -g, enhance-pir, /srv/enhance-pir-router]
+    YAML
+  })
   lifecycle {
     prevent_destroy = true
     ignore_changes  = [user_data]
@@ -105,9 +118,12 @@ resource "digitalocean_droplet" "enhance_pool_worker" {
   tags       = [digitalocean_tag.enhance_worker.name]
   monitoring = true
   ipv6       = true
-  user_data = templatefile("${path.module}/cloud-init-worker.yaml.tftpl", {
-    packages          = jsonencode(local.common_packages)
-    deploy_public_key = var.enhance_worker_deploy_public_key
+  user_data = templatefile("${path.module}/../apm-sidecar/user-data.tftpl", {
+    script = var.apm_sidecar_boot_script
+    cloud_config = templatefile("${path.module}/cloud-init-worker.yaml.tftpl", {
+      packages          = jsonencode(local.common_packages)
+      deploy_public_key = var.enhance_worker_deploy_public_key
+    })
   })
   lifecycle {
     prevent_destroy = true

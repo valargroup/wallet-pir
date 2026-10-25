@@ -92,7 +92,7 @@ class PlannerTests(unittest.TestCase):
 
     def test_leaf_reverse_dependencies_and_embedded_fixture(self):
         result = fast.plan(self.packages, ['src/shared/pir-apm/src/dashboard.rs'])
-        self.assertEqual(set(result['packages']), {'pir-apm', 'pir-monitor'})
+        self.assertEqual(set(result['packages']), {'pir-apm', 'pir-apm-sidecar', 'pir-monitor'})
         self.assertEqual(result['groups'], ['enhance'])
         self.assertEqual(result['helpers'], [])
         result = fast.plan(self.packages, ['src/enhance/enhance-publisher/tests/fixtures/README.md'])

@@ -44,3 +44,9 @@ variable "hostname" {
     error_message = "Use a dedicated wallet-pir-query-NN.valargroup.dev hostname."
   }
 }
+
+variable "apm_sidecar_boot_script" {
+  description = "Pinned sidecar installer rendered by the fleet; empty keeps the original cloud-config."
+  type        = string
+  default     = ""
+}

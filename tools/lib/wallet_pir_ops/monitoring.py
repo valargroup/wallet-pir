@@ -1,0 +1,550 @@
+"""Per-host APM observers rendered from the maintained deployment inventory.
+
+The deployment inventory (`/etc/wallet-pir/fleet.json`) is the one host list.
+Each managed host has an `apm-sidecar.observer` role entry whose settings name
+its private monitoring address, required volumes, units and hooks. From it:
+
+- `sidecar` renders the sidecar's unit and `/etc/pir-apm-sidecar/sidecar.json`
+  for the deploy engine (install, update, status and rollback under the lock);
+- `observers` renders the central APM's observer inventory, carrying each
+  host's expected TLS name, configuration digest and check names, so the APM
+  rejects a sidecar running any other configuration;
+- `coverage` compares provisioned hosts (Terraform outputs, declared external
+  hosts and the dynamic Transparent roster) and required volumes with that
+  enrollment, listing every missing declaration. Without every source it reports
+  `partial` and never claims full cloud coverage.
+
+Retired inventory hosts become explicit `decommissioned` entries, the only way
+the APM forgets an enrolled host.
+"""
+import hashlib
+import ipaddress
+import json
+import os
+from pathlib import Path
+import re
+
+from . import durable
+from .paths import ROOT
+from .role_config import RenderedRole, directory, render, settings_of
+
+TEMPLATE = ROOT / 'tools/deploy/monitoring/pir-apm-sidecar.service.in'
+CONFIG = '/etc/pir-apm-sidecar/sidecar.json'
+STATE = '/var/lib/pir-apm-sidecar/state.json'
+CREDENTIALS = '/etc/pir-apm-sidecar/credentials'
+COLLECTOR_IDENTITY = 'pir-apm-collector'
+TLS_DOMAIN = 'pir-monitoring'
+PORT = 9443
+SERVICE = 'apm-sidecar'
+ROLE = 'observer'
+# VPC and loopback ranges only; documentation and public ranges are refused.
+PRIVATE_NETWORKS = ('10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '127.0.0.0/8', 'fc00::/7', '::1/128')
+NAME = re.compile(r'^[a-z0-9@._:/-]{1,80}$')
+UUID = re.compile(r'^[0-9A-Fa-f-]{1,64}$')
+UNIT = re.compile(r'^[A-Za-z0-9@._-]+\.(service|socket|timer)$')
+# Every coordinator keeps its chain, activity and txid genesis data on separate volumes.
+COORDINATOR_VOLUMES = ('/srv/zakura', '/srv/transparent-activity', '/srv/txid-display-genesis')
+
+
+def tls_name(host_id):
+    """The DNS name the host's serving certificate carries and the APM expects."""
+    return '%s.%s' % (host_id, TLS_DOMAIN)
+
+
+def _volumes(value):
+    if not isinstance(value, list):
+        raise ValueError('required_volumes must be a list')
+    seen = set()
+    for volume in value:
+        if (not isinstance(volume, dict) or set(volume) != {'path', 'uuid'}
+                or not isinstance(volume['path'], str) or not volume['path'].startswith('/')
+                or volume['path'] == '/' or '..' in volume['path'] or volume['path'] in seen
+                or not re.fullmatch(r'[a-z0-9@._:/-]{1,128}', 'volume:' + volume['path'])
+                or not isinstance(volume['uuid'], str) or not UUID.match(volume['uuid'])):
+            raise ValueError('each required volume is a unique {"path", "uuid"} below / with a valid check identifier')
+        seen.add(volume['path'])
+    return value
+
+
+def _hooks(value):
+    if not isinstance(value, list) or len(value) > 16:
+        raise ValueError('hooks must be a list of at most 16')
+    for hook in value:
+        if (not isinstance(hook, dict) or not set(hook) <= {'name', 'argv', 'timeout_seconds'}
+                or not isinstance(hook.get('name'), str) or not re.fullmatch(r'[a-z0-9._-]{1,48}', hook['name'])
+                or not isinstance(hook.get('argv'), list) or not hook['argv']
+                or not all(isinstance(a, str) and a and not any(ord(c) < 32 for c in a) for a in hook['argv'])
+                or not hook['argv'][0].startswith('/')):
+            raise ValueError('each hook is {"name", "argv": [absolute executable, ...]} with fixed arguments')
+    return value
+
+
+def sidecar_document(settings):
+    """The sidecar configuration for one host, validated, as the file will hold it."""
+    config = settings_of(settings, ('host_id', 'address'),
+                         ('required_volumes', 'units', 'hooks', 'edge_metrics_url', 'port', 'health_port',
+                          'snapshot', 'external', 'bind_address'))
+    if not NAME.match(config['host_id']):
+        raise ValueError('host_id must be a lowercase monitoring name')
+    address = _address(config)
+    bind = ipaddress.ip_address(config.get('bind_address', str(address)))
+    if bind.is_unspecified or (bind != address and not config.get('external')):
+        raise ValueError('bind_address is a specific address, and differs from address only for external hosts')
+    port, health_port = config.get('port', PORT), config.get('health_port', PORT + 1)
+    if any(not isinstance(p, int) or not 1024 <= p <= 65535 for p in (port, health_port)):
+        raise ValueError('port and health_port must be unprivileged TCP ports')
+    units = config.get('units', [])
+    if not isinstance(units, list) or not all(isinstance(u, str) and UNIT.match(u) for u in units):
+        raise ValueError('units must be systemd unit names')
+    edge = config.get('edge_metrics_url')
+    if edge is not None and not re.fullmatch(r'http://127\.0\.0\.1:[0-9]{1,5}/[A-Za-z0-9/_-]*', edge):
+        raise ValueError('edge_metrics_url is a loopback HTTP URL')
+    document = {
+        'host_id': config['host_id'],
+        'listen': _endpoint(bind, port),
+        'tls': {'cert': 'server.pem', 'key': 'server.key', 'client_ca': 'monitoring-ca.pem',
+                'collector_identity': COLLECTOR_IDENTITY},
+        'required_volumes': _volumes(config.get('required_volumes', [])),
+        'units': units,
+        'hooks': _hooks(config.get('hooks', [])),
+        'state_path': STATE,
+    }
+    if health_port != PORT + 1:
+        # Only for disposable rehearsals: the descriptor's readiness URL uses the default.
+        document['health_listen'] = '127.0.0.1:%d' % health_port
+    if edge is not None:
+        document['edge_metrics_url'] = edge
+    return document
+
+
+def _private(address):
+    return any(address in ipaddress.ip_network(n) for n in PRIVATE_NETWORKS
+               if ipaddress.ip_network(n).version == address.version)
+
+
+def _address(config):
+    """The address the APM dials: private, or for `external: true` a reachable global one.
+
+    An external provider's host (an external GPU) has no VPC address; the APM
+    reaches it over the internet with the same CA, server-name and collector
+    authorization, so only the address rule differs.
+    """
+    address = ipaddress.ip_address(config['address'])
+    external = config.get('external', False)
+    if not isinstance(external, bool):
+        raise ValueError('external is true or false')
+    if external and (_private(address) or address.is_link_local or address.is_multicast
+                     or address.is_unspecified):
+        raise ValueError('an external sidecar is dialed at a global address')
+    if not external and not _private(address):
+        raise ValueError('a sidecar listens on its private address only, unless declared external')
+    return address
+
+
+def _endpoint(address, port):
+    return '%s:%d' % (address, port) if address.version == 4 else '[%s]:%d' % (address, port)
+
+
+def config_bytes(document):
+    """Exactly the bytes the deploy engine installs (role_config.render's encoding)."""
+    return (json.dumps(document, sort_keys=True, indent=2) + '\n').encode()
+
+
+def config_digest(document):
+    return 'sha256:' + hashlib.sha256(config_bytes(document)).hexdigest()
+
+
+def expected_checks(document):
+    """Check names the sidecar reports on every collection (pir-apm-sidecar `expected_checks`)."""
+    checks = ['memory', 'swap', 'filesystems', 'certificate']
+    checks += ['volume:' + v['path'] for v in document['required_volumes']]
+    for unit in document['units']:
+        kinds = ('active', 'restarts', 'oom') if unit.endswith('.service') else ('active',)
+        checks += ['unit:%s:%s' % (unit.lower(), kind) for kind in kinds]
+    checks += ['hook:' + h['name'] for h in document['hooks']]
+    if 'edge_metrics_url' in document:
+        checks.append('edge')
+    return checks
+
+
+def sidecar(settings, *, release, template=None):
+    """Render the sidecar unit and configuration for the deploy engine."""
+    document = sidecar_document(settings)
+    rendered = render(TEMPLATE.read_text() if template is None else template,
+                      directory(release) + '/pir-apm-sidecar', ['--config', CONFIG],
+                      {CONFIG: document})
+    if rendered.files[CONFIG].encode() != config_bytes(document):
+        raise ValueError('rendered sidecar configuration differs from its digest encoding')
+    return RenderedRole(rendered.unit, rendered.files, (), ('--config', CONFIG, '--check'))
+
+
+def observer_entries(inventory):
+    """`(inventory host, settings)` for every observer role in the deploy inventory."""
+    roles = inventory.get('services', {}).get(SERVICE, {}).get('roles', {}).get(ROLE, [])
+    entries = []
+    for entry in roles:
+        settings = entry.get('settings', {})
+        if settings.get('host_id') != entry.get('host'):
+            raise ValueError('observer on %s: settings.host_id must equal the inventory host name'
+                             % entry.get('host'))
+        if entry['host'] not in inventory.get('hosts', {}):
+            raise ValueError('observer on %s: not an inventory host' % entry['host'])
+        entries.append((entry['host'], settings))
+    names = [host for host, _ in entries]
+    if len(names) != len(set(names)):
+        raise ValueError('a host has more than one observer')
+    return entries
+
+
+def enrollment_record(settings):
+    """What the APM expects of one sidecar: its endpoint, configuration digest and checks.
+
+    Dynamic workers carry this as `monitoring` in their roster entry.
+    """
+    document = sidecar_document(settings)
+    port = int(document['listen'].rsplit(':', 1)[1])
+    return {'address': _endpoint(_address(settings), port), 'config_digest': config_digest(document),
+            'checks': expected_checks(document)}
+
+
+SNAPSHOT_KEYS = {'sources', 'unit', 'data_path', 'size'}
+
+
+def observers(inventory, *, mode, edge_outputs=None, roster=None, host_snapshot=None, roster_snapshot=None):
+    """The central APM's observer inventory (`PIR_APM_OBSERVERS`).
+
+    `snapshot` in an observer's settings names the sources and main unit the
+    Transparent capacity views know the host by; with `host_snapshot` the APM
+    writes their former `hosts.json` from sidecar observations. `roster` makes
+    each enrolled roster member an expected host.
+    """
+    if mode not in ('shadow', 'active'):
+        raise ValueError('mode is shadow or active')
+    edge_outputs = edge_outputs or {}
+    hosts = []
+    for host, settings in observer_entries(inventory):
+        entry = {'host_id': host, 'tls_name': tls_name(host), **enrollment_record(settings)}
+        if host in edge_outputs:
+            entry['edge_output'] = edge_outputs[host]
+        snapshot = settings.get('snapshot')
+        if snapshot is not None:
+            if (not isinstance(snapshot, dict) or not {'sources', 'unit'} <= set(snapshot) <= SNAPSHOT_KEYS
+                    or not snapshot['sources'] or not all(isinstance(n, str) for n in snapshot['sources'])):
+                raise ValueError('observer on %s: snapshot is {"sources", "unit", "data_path"?, "size"?}' % host)
+            entry['snapshot'] = snapshot
+        hosts.append(entry)
+    document = {'mode': mode,
+                'collector': {'cert': 'collector.pem', 'key': 'collector.key', 'ca': 'monitoring-ca.pem'},
+                'hosts': hosts,
+                'decommissioned': sorted(inventory.get('retired_hosts', {}))}
+    if roster is not None:
+        document['roster'] = roster
+    if host_snapshot is not None:
+        document['host_snapshot'] = host_snapshot
+    if roster_snapshot is not None:
+        mapping = settings_of(roster_snapshot, ('unit',), ('role_units', 'data_path', 'size'))
+        roles = mapping.get('role_units', {})
+        if (roster is None or not isinstance(roles, dict)
+                or not all(isinstance(k, str) and NAME.fullmatch(k) for k in roles)
+                or not all(isinstance(u, str) and UNIT.fullmatch(u) for u in [mapping['unit'], *roles.values()])
+                or (mapping.get('size') is not None and
+                    (not isinstance(mapping['size'], str) or not re.fullmatch(r'[a-z0-9-]{1,40}', mapping['size'])))):
+            raise ValueError('roster_snapshot needs a roster, systemd unit names and a valid size')
+        if mapping.get('data_path', '/') != '/':
+            directory(mapping['data_path'])
+        document['roster_snapshot'] = mapping
+    document['revision'] = observers_revision(document)
+    return document
+
+
+def observers_revision(document):
+    """Digest of an observer inventory without its own `revision` field.
+
+    The APM reports the revision it loaded at `/observers/ready`, so an install
+    proves the running process read exactly the installed inventory.
+    """
+    content = {key: value for key, value in document.items() if key != 'revision'}
+    return 'sha256:' + hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest()
+
+
+def _addresses(record):
+    """IPs in a host record, including the fleet load-generator public/private pair."""
+    found = set()
+    for key, value in record.items():
+        if isinstance(value, str) and ('ipv4' in key or key in ('ssh_host', 'public', 'private')):
+            try:
+                found.add(str(ipaddress.ip_address(value)))
+            except ValueError:
+                pass
+    return frozenset(found)
+
+
+def provisioned_hosts(outputs):
+    """Hosts in `terraform output -json`, each as `(label, addresses)`.
+
+    A host is any object carrying `*ipv4*` or `public`/`private` fields (worker groups, routers,
+    roster members in a JSON-string output) or a family of scalar or list
+    outputs sharing a prefix (`X_public_ipv4`, `X_private_ipv4`, `X_ipv4`),
+    whose list elements pair by position. One host's public and private
+    addresses stay together, so enrollment by either covers it.
+    """
+    hosts = []
+    families = {}
+
+    def walk(label, value):
+        if isinstance(value, str) and value[:1] in '[{':
+            try:
+                value = json.loads(value)
+            except ValueError:
+                return
+        if isinstance(value, dict):
+            addresses = _addresses(value)
+            if addresses:
+                hosts.append((value.get('name') or value.get('id') or label, addresses))
+            for key, child in value.items():
+                if isinstance(child, (dict, list)):
+                    walk(label, child)
+        elif isinstance(value, list):
+            for index, child in enumerate(value):
+                walk('%s[%d]' % (label, index), child)
+
+    for name, output in sorted(outputs.items()):
+        value = output.get('value') if isinstance(output, dict) else None
+        match = re.fullmatch(r'(.+?)_(public_|private_)?ipv4', name)
+        if match and (isinstance(value, str) or (isinstance(value, list) and all(isinstance(v, str) for v in value))):
+            values = value if isinstance(value, list) else [value]
+            family = families.setdefault(match.group(1), {})
+            for index, address in enumerate(values):
+                family.setdefault(index, set()).add(address)
+        else:
+            walk(name, value)
+    for prefix, members in sorted(families.items()):
+        for index, addresses in sorted(members.items()):
+            parsed = _addresses({'ipv4_%d' % i: a for i, a in enumerate(sorted(addresses))})
+            if parsed:
+                hosts.append(('%s[%d]' % (prefix, index) if len(members) > 1 else prefix, parsed))
+    return hosts
+
+
+def _roster_enrollment(member):
+    """A valid dynamic enrollment's IP and checks, or None for an unenrolled member."""
+    record = member.get('monitoring')
+    if (not isinstance(record, dict) or set(record) != {'address', 'config_digest', 'checks'}
+            or not isinstance(record['address'], str) or not isinstance(record['config_digest'], str)
+            or not re.fullmatch(r'sha256:[0-9a-f]{64}', record['config_digest'])
+            or not isinstance(record['checks'], list) or not record['checks']
+            or not all(isinstance(c, str) and re.fullmatch(r'[a-z0-9@._:/-]{1,128}', c) for c in record['checks'])):
+        return None
+    host, _, port = record['address'].rpartition(':')
+    try:
+        bracketed = host.startswith('[') and host.endswith(']')
+        address = ipaddress.ip_address(host[1:-1] if bracketed else host)
+        if (address.version != (6 if bracketed else 4) or not re.fullmatch(r'[0-9]{1,5}', port)
+                or not 1 <= int(port) <= 65535):
+            return None
+    except ValueError:
+        return None
+    return str(address), record['checks']
+
+
+def coverage(inventory, *, terraform_outputs=None, external_hosts=(), roster=None, expected_volumes=None):
+    """Compare provisioned hosts and expected volumes with observer enrollment.
+
+    `terraform_outputs` is `terraform output -json` of the fleet root,
+    `external_hosts` maps declared non-Terraform hosts (an external GPU or a
+    checker) to their addresses, and `roster` is the Transparent monitoring
+    roster carrying dynamic sidecar enrollment records. `expected_volumes` maps an enrolled host to mount paths, or
+    `{"path", "uuid"}` identities such as `activated_volumes` returns, that it
+    must check; coordinators always need their three data volumes and unified
+    query hosts need their publication volume. Each missing
+    source makes the report `partial`: it then proves nothing about the cloud.
+    """
+    entries = observer_entries(inventory)
+    enrolled = {host: sidecar_document(settings) for host, settings in entries}
+    covered = {}
+    static_addresses = {}
+    dialed = {host: str(ipaddress.ip_address(settings['address'])) for host, settings in entries}
+    for host, document in enrolled.items():
+        addresses = {document['listen'].rsplit(':', 1)[0].strip('[]'), dialed[host]}
+        entry = inventory['hosts'].get(host) or {}
+        if entry.get('address'):
+            addresses.add(entry['address'])
+        static_addresses[host] = frozenset(addresses)
+        for address in addresses:
+            covered[address] = host
+    members = [m for m in roster or [] if m.get('intent', 'enrolled') in ('enrolled', 'draining')]
+    dynamic_addresses = {}
+    for member in members:
+        host = member['id']
+        if not isinstance(host, str) or not NAME.fullmatch(host):
+            raise ValueError('invalid dynamic observer host id')
+        if host in static_addresses:
+            continue
+        record = _roster_enrollment(member)
+        if record is not None:
+            address, checks = record
+            dynamic_addresses[host] = frozenset([address])
+            if host not in enrolled:
+                # UUIDs are not in the enrollment contract, so UUID-specific
+                # volume coverage still requires an independently declared identity.
+                enrolled[host] = {'required_volumes': [], 'checks': checks}
+                covered[address] = host
+    provisioned = provisioned_hosts(terraform_outputs or {})
+    provisioned += [(name, frozenset(addresses)) for name, addresses in dict(external_hosts).items()]
+    # Static declarations satisfy roster enrollment without dynamic metadata,
+    # using the same endpoint precedence as the collector. Cloud records above
+    # still need their own address match and cannot be covered by ID alone.
+    provisioned += [(m['id'], static_addresses.get(m['id'], _addresses(m) | dynamic_addresses.get(m['id'], frozenset())))
+                    for m in members]
+    missing = sorted({label for label, addresses in provisioned if not addresses & covered.keys()})
+    seen = {covered[a] for _, addresses in provisioned for a in addresses if a in covered}
+    volumes = {host: list(wanted) for host, wanted in (expected_volumes or {}).items()}
+    for host, required in required_volume_paths(inventory).items():
+        wanted = volumes.setdefault(host, [])
+        paths = {v if isinstance(v, str) else v['path'] for v in wanted}
+        wanted.extend(path for path in required if path not in paths)
+    missing_volumes = {}
+    for host, wanted in sorted(volumes.items()):
+        declared = {v['path']: v['uuid'].lower() for v in enrolled.get(host, {}).get('required_volumes', [])}
+        for check in enrolled.get(host, {}).get('checks', []):
+            if check.startswith('volume:'):
+                declared.setdefault(check.removeprefix('volume:'), None)
+        absent = sorted(v if isinstance(v, str) else v['path'] for v in wanted
+                        if (v if isinstance(v, str) else v['path']) not in declared
+                        or (not isinstance(v, str) and declared[v['path']] != v['uuid'].lower()))
+        if absent:
+            missing_volumes[host] = absent
+    sources = {'terraform': terraform_outputs is not None, 'roster': roster is not None}
+    partial = not all(sources.values())
+    return {
+        'enrolled': sorted(enrolled),
+        'missing_declarations': missing,
+        'not_provisioned': [] if partial else sorted(set(enrolled) - seen),
+        'missing_volumes': missing_volumes,
+        'decommissioned': sorted(inventory.get('retired_hosts', {})),
+        'partial': partial,
+        'sources': sources,
+    }
+
+
+def activated_volumes(state_dir):
+    """`{host: [{"path", "uuid"}]}` from completed cache-data activation receipts.
+
+    `cache-data-activate` keeps its result under the deploy state directory;
+    a started worker's receipt binds the cache path to the filesystem UUID it
+    formatted and mounted there.
+    """
+    volumes = {}
+    for receipt in sorted(Path(state_dir).glob('cache-data-*.json')):
+        result = json.loads(receipt.read_text())
+        uuid = (result.get('device') or {}).get('uuid')
+        host = (result.get('request') or {}).get('host')
+        if result.get('phase') in ('serving-started', 'monitoring-pending') and uuid and host and result.get('active_cache'):
+            volumes.setdefault(host, []).append({'path': result['active_cache'], 'uuid': uuid})
+    return volumes
+
+
+def bind_volume(inventory_path, host, volume):
+    """Add a receipt-bound required volume to `host`'s observer settings in the deployment inventory.
+
+    Returns `bound`, `unchanged` or `no-observer` (coverage then reports the
+    volume missing). The same path bound to another filesystem is refused: an
+    operator decides which identity is current. The next `apm-sidecar` deploy
+    renders the configuration, and `install-observers` the APM's expected digest.
+    """
+    path = Path(inventory_path)
+    document = json.loads(path.read_text())
+    roles = document.get('services', {}).get(SERVICE, {}).get('roles', {}).get(ROLE, [])
+    entry = next((e for e in roles if e.get('host') == host), None)
+    if entry is None:
+        return 'no-observer'
+    volumes = entry.setdefault('settings', {}).setdefault('required_volumes', [])
+    for existing in volumes:
+        if existing['path'] == volume['path']:
+            if existing['uuid'].lower() != volume['uuid'].lower():
+                raise ValueError('%s on %s is already bound to another filesystem' % (volume['path'], host))
+            return 'unchanged'
+    volumes.append({'path': volume['path'], 'uuid': volume['uuid']})
+    sidecar_document(entry['settings'])  # the bound volume must still render
+    durable.atomic_json(path, document, mode=os.stat(path).st_mode & 0o777)
+    return 'bound'
+
+
+def apm_hosts(inventory):
+    """Hosts running the central APM, as the rendered `central` or the legacy `server` role."""
+    roles = inventory.get('services', {}).get('apm', {}).get('roles', {})
+    return {entry['host'] for role in ('central', 'server') for entry in roles.get(role, [])}
+
+
+def required_volume_paths(inventory):
+    """Mounts required by the coordinator and the unified query deployment."""
+    required = {host: set(COORDINATOR_VOLUMES) for host in apm_hosts(inventory)}
+    roles = inventory.get('services', {}).get('query-server', {}).get('roles', {})
+    for entry in roles.get('combined', []):
+        required.setdefault(entry['host'], set()).add('/srv/wallet-pir-query')
+    return required
+
+
+def _host_units(inventory, host, role_units):
+    """Units the deployment inventory runs on `host`, from its service role entries."""
+    found = set()
+    for service, spec in inventory.get('services', {}).items():
+        for role, entries in spec.get('roles', {}).items():
+            for entry in entries:
+                unit = entry.get('unit') or role_units.get((service, role))
+                if entry.get('host') == host and unit and service != SERVICE:
+                    found.add(unit)
+    return sorted(found)
+
+
+def enroll(inventory, *, terraform_outputs, role_units, external_hosts=()):
+    """Add an observer for every provisioned host the deployment inventory names.
+
+    Provisioned hosts come from `terraform output -json` and the declared
+    external hosts; each is matched to an inventory host by address. A matched
+    host without an observer gets one, dialed at its private address (an
+    external host at its declared address), checking the units its service
+    roles run. Existing observers are never changed or removed: only an
+    explicit retirement decommissions. Returns the new inventory and a report
+    naming provisioned hosts the inventory does not declare and observers that
+    still need required-volume identities bound.
+    """
+    inventory = json.loads(json.dumps(inventory))
+    roles = inventory.setdefault('services', {}).setdefault(SERVICE, {}).setdefault('roles', {}).setdefault(ROLE, [])
+    observed = {entry['host'] for entry in roles}
+    by_address = {}
+    for name, entry in inventory.get('hosts', {}).items():
+        for address in _addresses(dict(entry, ipv4=entry.get('address'))):
+            by_address[address] = name
+    external = {name: frozenset(addresses) for name, addresses in dict(external_hosts).items()}
+    provisioned = provisioned_hosts(terraform_outputs) + sorted(external.items())
+    added, undeclared = [], []
+    for label, addresses in provisioned:
+        hosts = {by_address[a] for a in addresses if a in by_address}
+        if len(hosts) != 1:
+            undeclared.append(label)
+            continue
+        host = hosts.pop()
+        if host in observed:
+            continue
+        private = sorted(a for a in addresses if _private(ipaddress.ip_address(a)))
+        settings = {'host_id': host, 'units': _host_units(inventory, host, role_units)}
+        if label in external and not private:
+            settings.update(address=sorted(addresses)[0], external=True)
+        elif private:
+            settings['address'] = private[0]
+        else:
+            undeclared.append(label)
+            continue
+        sidecar_document(settings)
+        roles.append({'host': host, 'install': True, 'settings': settings})
+        observed.add(host)
+        added.append(host)
+    required = required_volume_paths(inventory)
+    unbound = {}
+    for entry in roles:
+        declared = {v['path'] for v in entry['settings'].get('required_volumes', [])}
+        missing = required.get(entry['host'], set()) - declared
+        if missing:
+            unbound[entry['host']] = sorted(missing)
+    return inventory, {'added': added, 'undeclared': sorted(set(undeclared)), 'volumes_to_bind': unbound}

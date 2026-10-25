@@ -49,4 +49,83 @@ run "all_services" {
     condition     = output.transparent_txid_display_site.name == "transparent-pir-txid-k8-01" && output.status_host[0].name == "status-pir-01"
     error_message = "Optional services must keep their provider identities."
   }
+  assert {
+    condition     = startswith(digitalocean_droplet.coordinator.user_data, "#cloud-config") && !strcontains(digitalocean_droplet.coordinator.user_data, "pir-apm-sidecar")
+    error_message = "Without apm_sidecar_boot, user_data stays the plain cloud-config."
+  }
+}
+run "sidecar_at_first_boot" {
+  command   = apply
+  state_key = "first-boot"
+  variables {
+    enhance_group_count          = 2
+    enhance_legacy_worker_count  = 2
+    enhance_packing_router_count = 1
+    enhance_pool_worker_count    = 1
+    status_host_count            = 1
+    transparent_recent_count     = 2
+    transparent_archive_names    = ["transparent-pir-archive-01", "transparent-pir-archive-02"]
+    transparent_router_count     = 1
+    transparent_loadgen_count    = 1
+    transparent_v12_enabled      = true
+
+    transparent_txid_display_archive_count = 1
+    transparent_txid_display_site_enabled  = true
+    receiver_pir_enabled                   = true
+    pir_monitor_enabled                    = true
+
+    query_serving_enabled = true
+
+    apm_sidecar_boot = {
+      url    = "https://releases.example/pir-apm-sidecar"
+      sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    }
+  }
+  assert {
+    condition = alltrue([for data in [digitalocean_droplet.coordinator.user_data, digitalocean_droplet.pir_monitor[0].user_data] : (
+      startswith(data, "Content-Type: multipart/mixed")
+      && strcontains(data, "Content-Type: text/cloud-config")
+      && strcontains(data, "#cloud-config")
+      && strcontains(data, "export PIR_APM_SIDECAR_SHA256=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+      && strcontains(data, "systemctl enable pir-apm-sidecar.service")
+    && !strcontains(data, "PRIVATE KEY"))])
+    error_message = "New managed droplets append the pinned first-boot sidecar install, and never key material."
+  }
+}
+run "existing_droplets_keep_their_user_data" {
+  command = apply
+  variables {
+    enhance_group_count          = 2
+    enhance_legacy_worker_count  = 2
+    enhance_packing_router_count = 1
+    enhance_pool_worker_count    = 1
+    status_host_count            = 1
+    transparent_recent_count     = 2
+    transparent_archive_names    = ["transparent-pir-archive-01", "transparent-pir-archive-02"]
+    transparent_router_count     = 1
+    transparent_loadgen_count    = 1
+    transparent_v12_enabled      = true
+
+    transparent_txid_display_archive_count = 1
+    transparent_txid_display_site_enabled  = true
+    receiver_pir_enabled                   = true
+    pir_monitor_enabled                    = true
+
+    apm_sidecar_boot = {
+      url    = "https://releases.example/pir-apm-sidecar"
+      sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    }
+  }
+  assert {
+    condition     = startswith(digitalocean_droplet.coordinator.user_data, "#cloud-config") && !strcontains(digitalocean_droplet.coordinator.user_data, "pir-apm-sidecar")
+    error_message = "Setting apm_sidecar_boot changes no existing droplet: each ignores user_data changes."
+  }
+}
+
+run "sidecar_boot_rejects_an_unpinned_binary" {
+  command = plan
+  variables {
+    apm_sidecar_boot = { url = "https://releases.example/pir-apm-sidecar", sha256 = "latest" }
+  }
+  expect_failures = [var.apm_sidecar_boot]
 }
