@@ -1,0 +1,25 @@
+[Unit]
+Description=Unified Wallet PIR query serving
+After=network-online.target wallet-pir-query-data.service
+Requires=wallet-pir-query-data.service
+ConditionPathIsMountPoint=/srv/wallet-pir-query
+
+[Service]
+ExecStart=/bin/false
+Environment=RUST_LOG=info
+Environment=RAYON_NUM_THREADS=24
+Restart=on-failure
+RestartSec=5
+MemoryHigh=144G
+MemoryMax=160G
+MemorySwapMax=0
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+# Public drain is bounded, but admitted work owns its state until completion.
+# Deployment must report a stalled drain rather than force-kill the process.
+TimeoutStopSec=infinity
+
+[Install]
+WantedBy=multi-user.target

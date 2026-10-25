@@ -74,8 +74,14 @@ fn answer(state: &Rpc, request: &Value) -> Value {
     let result = match request["method"].as_str().unwrap() {
         "getblockcount" => json!(ACTIVATION_HEIGHT),
         "getblockhash" => {
-            assert_eq!(request["params"], json!([ACTIVATION_HEIGHT]));
-            json!(hash)
+            // Chain identity stays fixed when the synthetic activation block
+            // is replaced to exercise a reorg.
+            if request["params"] == json!([0]) {
+                json!(hex::encode([0x42; 32]))
+            } else {
+                assert_eq!(request["params"], json!([ACTIVATION_HEIGHT]));
+                json!(hash)
+            }
         }
         "getblock" => match request["params"][1].as_u64().unwrap() {
             0 => {

@@ -30,7 +30,7 @@
   },
   "status-publisher": {
     "fast": ["object_access_http"],
-    "full": []
+    "full": ["live_lookup"]
   },
   "status-shared": {
     "fast": [],

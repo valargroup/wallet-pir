@@ -459,7 +459,8 @@ class FastBuildTests(unittest.TestCase):
         self.assertNotIn('pir-query-server', publisher.get('dev-dependencies', {}))
         # Only the qualification-tests feature may link the host into the publisher.
         self.assertTrue(publisher['dependencies']['pir-query-server']['optional'])
-        self.assertEqual(publisher['features']['qualification-tests'], ['dep:pir-query-server'])
+        self.assertEqual(publisher['features']['qualification-tests'],
+                         ['dep:pir-query-server', 'pir-query-server/test-support'])
         self.assertEqual(query['dev-dependencies']['pir-query-server']['features'], ['test-support'])
         self.assertIn('operator', tests)
         status_builds = self._cargo_tests(['status-publisher'])

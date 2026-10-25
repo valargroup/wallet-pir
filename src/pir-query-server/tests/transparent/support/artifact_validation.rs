@@ -66,11 +66,35 @@ pub async fn assert_withdrawn(app: Router, failed: &str, healthy: &str, pending:
         );
     }
     tokio::time::timeout(Duration::from_secs(3), async {
-        while status(&app, failed).await != StatusCode::SERVICE_UNAVAILABLE {
+        loop {
+            // A shard request counts as query activity. Poll the private
+            // readiness report so this wait does not compete with the checker.
+            let response = app
+                .clone()
+                .oneshot(
+                    axum::http::Request::builder()
+                        .uri("/v1/ready")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            let report: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            if report["artifact_validation"]["failed"]
+                .as_u64()
+                .unwrap_or(0)
+                > 0
+            {
+                break;
+            }
             tokio::time::sleep(Duration::from_millis(2)).await;
         }
     })
     .await
     .expect("the retained revision is checked and withdrawn");
+    assert_eq!(status(&app, failed).await, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(status(&app, healthy).await, StatusCode::OK);
 }

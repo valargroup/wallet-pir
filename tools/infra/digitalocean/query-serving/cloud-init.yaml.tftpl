@@ -1,0 +1,66 @@
+#cloud-config
+package_update: true
+packages: [ca-certificates, curl, jq, xfsprogs, caddy]
+write_files:
+  - path: /etc/needrestart/conf.d/90-wallet-pir-no-auto-restart.conf
+    permissions: "0644"
+    content: |
+      $nrconf{restart} = 'l';
+  - path: /etc/systemd/system/wallet-pir-query-data.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Mount the unified query publication volume
+      After=network-online.target
+      Wants=network-online.target
+      Before=wallet-pir-query.service
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/sbin/wallet-pir-query-mount
+      RemainAfterExit=yes
+      TimeoutStartSec=330
+
+      [Install]
+      WantedBy=multi-user.target
+  - path: /usr/local/sbin/wallet-pir-query-mount
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      device=/dev/disk/by-id/scsi-0DO_Volume_${volume_name}
+      root=/srv/wallet-pir-query
+      for attempt in $(seq 1 60); do
+        if [ -b "$device" ]; then
+          mkdir -p "$root"
+          if ! mountpoint -q "$root"; then
+            mount -t xfs "$device" "$root"
+          fi
+          test "$(findmnt -n -o UUID --target "$root")" = "$(blkid -s UUID -o value "$device")"
+          mkdir -p "$root/enhance" "$root/status" "$root/history" "$root/details"
+          exit 0
+        fi
+        sleep 5
+      done
+      echo "Query data volume did not appear; serving stays stopped" >&2
+      exit 1
+  - path: /etc/caddy/Caddyfile
+    permissions: "0644"
+    content: |
+      ${hostname} {
+        @wallet path /enhance/v1/* /status/v1/* /transparent/v1/* /v1/enhance/* /v1/status/* /v2/* /v1/filters/*
+        handle @wallet {
+          reverse_proxy 127.0.0.1:8090
+        }
+        handle /receiver/v1/* {
+          respond "Receiver serving integration is not installed" 503
+        }
+        handle {
+          respond 404
+        }
+      }
+runcmd:
+  - [systemctl, daemon-reload]
+  - [systemctl, enable, --now, wallet-pir-query-data.service]
+  - [caddy, validate, --config, /etc/caddy/Caddyfile]
+  - [systemctl, enable, --now, caddy]

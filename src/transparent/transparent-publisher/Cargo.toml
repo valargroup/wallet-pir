@@ -17,7 +17,7 @@ rocksdb-reader = ["zakura-server-chain/rocksdb"]
 # Keep large test campaigns explicit; production behavior is unchanged. The
 # unified-host regression links the query host only here, so fast test builds
 # stay off that link.
-qualification-tests = ["dep:pir-query-server"]
+qualification-tests = ["dep:pir-query-server", "pir-query-server/test-support"]
 # Chain fixtures, the wallet client and the query server for host regressions.
 fixtures = [
     "zakura-server-chain/testing-node",

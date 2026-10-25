@@ -2,6 +2,15 @@
 # Run on the coordinator using its encrypted systemd runtime credential.
 set -euo pipefail
 umask 077
+terraform_root=/opt/enhance-pir/infra/production
+if [[ "${1:-}" == --root ]]; then
+  if [[ $# -lt 3 || "$2" != /* || ! -f "$2/backend.tf" ]]; then
+    echo "--root requires an absolute staged fleet root with backend.tf and a command." >&2
+    exit 1
+  fi
+  terraform_root="$2"
+  shift 2
+fi
 if [[ ! -d /opt/enhance-pir/infra/production ]]; then
   echo "Run this wrapper on the Enhance coordinator." >&2
   exit 1
@@ -14,6 +23,8 @@ exec flock -n /run/lock/wallet-pir-production.lock \
     --property=LoadCredentialEncrypted=runtime:/etc/credstore.encrypted/enhance-pir-runtime \
     /usr/bin/python3 /opt/enhance-pir/ops/wallet-pir-runtime.py \
   bash -c '
+    terraform_root="$1"
+    shift
     export TF_VAR_digitalocean_token="$DO_TOKEN_NEW_ORG"
     export TF_VAR_cloudflare_api_token="$CF_API_TOKEN"
     export AWS_ACCESS_KEY_ID="$WALLET_PIR_TF_STATE_ACCESS_KEY"
@@ -23,7 +34,7 @@ exec flock -n /run/lock/wallet-pir-production.lock \
       if [[ -f /srv/enhance-pir/autoscale/state.json ]]; then
         count="$(jq -er ".desired_groups" /srv/enhance-pir/autoscale/state.json)"
       else
-        count="$(terraform -chdir=/opt/enhance-pir/infra/production output -json enhance_worker_groups | jq length)"
+        count="$(terraform -chdir="$terraform_root" output -json enhance_worker_groups | jq length)"
       fi
       [[ "$count" =~ ^[1-4]$ ]] || exit 1
       set -- "$@" -var-file=/etc/enhance-pir/production.tfvars -var="enhance_group_count=$count"
@@ -34,5 +45,5 @@ exec flock -n /run/lock/wallet-pir-production.lock \
       fi
       set -- apply -input=false "$2"
     fi
-    exec terraform -chdir=/opt/enhance-pir/infra/production "$@"
-  ' enhance-terraform "$@"
+    exec terraform -chdir="$terraform_root" "$@"
+  ' enhance-terraform "$terraform_root" "$@"
