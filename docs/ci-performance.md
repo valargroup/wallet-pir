@@ -183,7 +183,10 @@ case deadline. The 8-core fast runner keeps that library in the pool with four
 build threads. The query host's Status cases share one process and finish
 before the pool, reusing prepared databases across publication identities.
 Splitting these cases duplicates large native allocations and can exhaust the
-runner's memory ceiling. The Enhance publication library also runs alone.
+runner's memory ceiling. Below eight CPUs the Enhance publication library runs
+alone, as does the hint oracle. On the 8-core fast runner both lead the light
+slots beside the first memory-heavy program and finish before Enhance runtime
+fixtures, so their duration is not added in front of that serialized chain.
 Below eight
 CPUs, counting any cgroup quota, the Enhance and Receiver runtime libraries
 also run alone, because single cases overran the 30-second deadline beside

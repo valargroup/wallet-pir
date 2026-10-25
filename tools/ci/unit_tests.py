@@ -22,8 +22,9 @@ def run_pool(programs, workers, heavy_limit, invoke, *, tolerate=lambda error: F
 
     A later light program may start ahead of a waiting heavy one, so the pool
     stays busy without overlapping more heavy fixtures than fit. A free heavy
-    slot goes to the waiting heavy program with the most cases: serialized
-    heavy programs are the critical path, and the longest should start first.
+    slot is taken before any light program: lights earlier in the queue must
+    not hold the critical path. That slot goes to the waiting heavy program
+    with the most cases, so the longest starts first.
     Returns the errors `tolerate` accepted; any other error cancels the rest
     and is raised.
     """
@@ -37,8 +38,11 @@ def run_pool(programs, workers, heavy_limit, invoke, *, tolerate=lambda error: F
                 while len(running) < workers:
                     waiting = [i for i, program in enumerate(pending) if program.get('heavy')]
                     largest = max(waiting, key=lambda i: pending[i].get('case_count', 0), default=None)
-                    index = next((i for i, program in enumerate(pending)
-                                  if not program.get('heavy') or (heavy < heavy_limit and i == largest)), None)
+                    if largest is not None and heavy < heavy_limit:
+                        index = largest
+                    else:
+                        index = next((i for i, program in enumerate(pending)
+                                      if not program.get('heavy')), None)
                     if index is None:
                         break
                     program = pending.pop(index)

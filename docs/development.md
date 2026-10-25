@@ -93,8 +93,11 @@ and exported object bytes across publication identities. Each publisher still
 has its own object map, and each consumer downloads into its own writable cache.
 On the 8-core fast runner that process is one of the three pool programs.
 Smaller hosts run it alone. Splitting those cases copies their large native
-fixtures and can exhaust the runner's memory limit. Receiver's encrypted HTTP
-smoke and focused storage, witness and cache-budget units stay in fast feedback.
+fixtures and can exhaust the runner's memory limit. On the 8-core fast runner
+the hint oracle and Enhance publication library lead the other light programs
+beside the one memory-heavy program; below eight CPUs they still run alone.
+Receiver's encrypted HTTP smoke and focused storage, witness and cache-budget
+units stay in fast feedback.
 Full publication reload/restart, staged loading and witness-finality campaigns
 use `qualification-tests`; adjacent witness reorg checks share one history
 through provisional and completed witnesses there.

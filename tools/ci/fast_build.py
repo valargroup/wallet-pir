@@ -152,6 +152,38 @@ def memory_heavy(name, kinds):
     return name in HEAVY_LIBRARIES and 'lib' in kinds
 
 
+def pool_flags(name, kinds, identity):
+    """Whether a program runs before the pool, and whether it leads the pool.
+
+    The hint oracle and the Enhance publication library run before the pool
+    below eight CPUs, where they would miss the case deadline beside the
+    runtime matrix. On the 8-core runner they lead the light slots instead.
+    Running them first left the serialized heavy chain idle for their whole
+    duration. They still start beside the query host and finish before
+    Enhance runtime fixtures.
+    """
+    hint = identity == ('pir-e2e-tests', 'ci_hint')
+    enhance_publication = name == 'enhance-publisher' and 'lib' in kinds
+    before = (publisher_runs_alone(name, kinds) or runtime_runs_alone(name, kinds)
+              or hint or enhance_publication)
+    lead = available_cpus() >= 8 and (hint or enhance_publication)
+    return before and not lead, lead
+
+
+def program_order(program):
+    """Sort key for the shared pool.
+
+    Lead programs take the light slots beside the first heavy program.
+    The transparent publisher still precedes other HTTP programs and units.
+    """
+    if program.get('lead'):
+        return (0, -program.get('case_count', 0))
+    publisher = (program.get('package') == 'transparent-publisher'
+                 and not program.get('integration') and program.get('case_count', 0) > 0)
+    group = 1 if publisher else 2 if program.get('integration') else 3
+    return (group, -program.get('case_count', 0))
+
+
 def runtime_runs_alone(name, kinds):
     """Runtime-building unit libraries keep their cores below eight CPUs.
 
@@ -619,17 +651,17 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
             names = names - repeated
             if not names:
                 continue
+        exclusive, lead = pool_flags(name, target['kind'], identity)
         program = dict(executable=binary, directory=directory, package=name,
                              version=package['version'],
                              integration=integration,
-                             # Its real reference packing and independent oracle
-                             # must not compete with the runtime's matrix fixtures.
-                             # Only the shared Status fixture stays exclusive;
-                             # the host's other roles join the ordinary pool.
-                             exclusive=publisher_runs_alone(name, target['kind'])
-                             or runtime_runs_alone(name, target['kind'])
-                             or identity == ('pir-e2e-tests', 'ci_hint')
-                             or (name == 'enhance-publisher' and 'lib' in target['kind']),
+                             # Only the shared Status fixture stays exclusive on
+                             # the fast runner; the host's other roles join the
+                             # ordinary pool. Hint and Enhance publication lead
+                             # that pool there and still run before it below
+                             # eight CPUs.
+                             exclusive=exclusive,
+                             lead=lead,
                              # A later command's new cases are a few seconds of the
                              # same harness; only the full run holds every fixture.
                              heavy=not integration and not repeated and memory_heavy(name, target['kind']),
@@ -655,14 +687,8 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
         if stale:
             raise ValueError(f'{name}: stale slow-test classification: {sorted(stale)}')
     # On a 4-core runner the publisher is exclusive and finishes before this
-    # pool. On more cores it starts first in the pool. HTTP programs are next.
-    def queue_key(program):
-        publisher = (program['package'] == 'transparent-publisher'
-                     and not program['integration'] and program['case_count'] > 0)
-        group = 0 if publisher else 1 if program['integration'] else 2
-        return group, -program['case_count']
-
-    programs.sort(key=queue_key)
+    # pool. On more cores it follows the lead programs. HTTP programs are next.
+    programs.sort(key=program_order)
     run(['python3', 'tools/ci/reclaim-build-cache.py'], env=env, stage='reclaim')
     with tempfile.TemporaryDirectory(prefix='wallet-pir-fast-tests-') as directory:
         root = Path(directory)

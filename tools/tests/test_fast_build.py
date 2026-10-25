@@ -201,6 +201,37 @@ class FastBuildTests(unittest.TestCase):
         unit_tests.run_pool(programs, 1, 1, lambda program: order.append(program['name']))
         self.assertEqual(order, ['long', 'middle', 'short'])
 
+    def test_a_free_heavy_slot_starts_before_earlier_light_programs(self):
+        import unit_tests
+        order = []
+        programs = [dict(name='light', case_count=20),
+                    dict(name='short', heavy=True, case_count=3),
+                    dict(name='long', heavy=True, case_count=90)]
+        unit_tests.run_pool(programs, 1, 1, lambda program: order.append(program['name']))
+        self.assertEqual(order, ['long', 'short', 'light'])
+
+    def test_hint_and_enhance_publication_lead_the_fast_pool(self):
+        hint = ('pir-e2e-tests', 'ci_hint')
+        with patch.object(fast_build, 'available_cpus', return_value=8):
+            self.assertEqual(fast_build.pool_flags('enhance-publisher', ['lib'], ('enhance-publisher', '')),
+                             (False, True))
+            self.assertEqual(fast_build.pool_flags('pir-e2e-tests', ['test'], hint), (False, True))
+            self.assertEqual(fast_build.pool_flags('transparent-publisher', ['lib'], ('transparent-publisher', '')),
+                             (False, False))
+            self.assertLess(
+                fast_build.program_order(dict(package='enhance-publisher', integration=False,
+                                              case_count=40, lead=True)),
+                fast_build.program_order(dict(package='transparent-publisher', integration=False,
+                                              case_count=30)))
+        with patch.object(fast_build, 'available_cpus', return_value=3):
+            exclusive, lead = fast_build.pool_flags('enhance-publisher', ['lib'], ('enhance-publisher', ''))
+            self.assertTrue(exclusive)
+            self.assertFalse(lead)
+            exclusive, lead = fast_build.pool_flags('pir-e2e-tests', ['test'], hint)
+            self.assertTrue(exclusive)
+            self.assertFalse(lead)
+            self.assertTrue(fast_build.pool_flags('enhance-shared', ['lib'], ('enhance-shared', ''))[0])
+
     def test_pool_raises_the_first_error_unless_tolerated(self):
         import unit_tests
 
