@@ -1,37 +1,31 @@
-# Receiver roles consumed by the shared operations registry.
+# Keep the existing Receiver host, installation root and publisher unit identity.
 [services.receiver]
 root = "/opt/receiver-pir"
-binary = "receiver-directory"
+binary = "pir-publisher"
 artifact_kinds = ["receiver-pir"]
 self_check = ["--help"]
 min_free_bytes = 1073741824
-order = ["server", "serve-publication"]
-# The receiver host's own Caddy edge.
+order = ["server", "query"]
 ancillary = ["routing"]
-# The id of the installed NEAR key file, /etc/receiver-pir/near-<id>.env.
-template_vars = ["NEAR_KEY"]
 
 [services.receiver.roles.server]
 unit = "receiver-pir.service"
-mode = "template"
-# Rendered from the coordinator's checkout, as every template role is.
+mode = "role"
 template = "receiver-pir.service.in"
-# The unit names the NEAR key file, so a drop-in must not supply another key.
-owns_unit = true
-health = "http://{listen}/v1/receiver/health"
-# Health answers at once; `serving` stays null until the first publication.
-ready = { field = "serving", nonempty = true }
+renderer = "tools.receiver.lib.roles:publisher"
+health = "http://{management_listen}/health"
+ready_url = "http://{management_listen}/ready"
+ready = { field = "ready", equals = true }
 ready_timeout = 300
 
-[services.receiver.roles.serve-publication]
-unit = "receiver-serve-publication.service"
+[services.receiver.roles.query]
+unit = "receiver-query.service"
+binary = "pir-query-server"
 mode = "role"
-template = "../deploy/receiver-serve-publication.service"
-renderer = "tools.receiver.lib.roles:serve_publication"
+template = "../deploy/receiver-query.service"
+renderer = "tools.receiver.lib.roles:query"
 optional = true
-# Settings: config_path, publication_record, publication_root, state_dir, bind,
-# rpc_urls, cookie | no_auth, poll_seconds?, min_rows?, limits?.
-# Serves once the recorded publication verifies and its anchor is canonical.
-health = "http://{listen}/v1/receiver/health"
-ready = { field = "serving", nonempty = true }
+health = "http://{management_listen}/health"
+ready_url = "http://{management_listen}/ready"
+ready = { field = "ready", equals = true }
 ready_timeout = 600

@@ -1,7 +1,7 @@
 //! The receiver directory's indexer: it reads Ironwood blocks from a Zakura node
 //! through the shared server chain adapters,
 //! keeps the payments recoverable with the zero outgoing viewing key, and publishes them
-//! as receiver directory revisions. The binary is `receiver-directory`; see
+//! as receiver directory revisions. Continuous work runs through `pir-publisher`; see
 //! `docs/receiver/README.md`.
 pub mod application;
 pub mod blocks;
@@ -13,7 +13,6 @@ pub mod near;
 pub mod probe;
 pub mod revision;
 pub mod seal;
-pub mod serve_publication;
 pub mod shards;
 pub mod verify;
 pub mod witness;
@@ -103,3 +102,5 @@ pub mod service;
 
 #[cfg(test)]
 mod block_hints_tests;
+
+pub mod commands;

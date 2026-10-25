@@ -2,7 +2,7 @@
 
 Products keep their own HTTPS acquisition settings and state. The final binary's
 offline check validates the combined listener/path layout and compiled features.
-Receiver is deliberately refused until the root binary can host it.
+Receiver may optionally join the same listener through publisher HTTPS.
 """
 import ipaddress
 import json
@@ -14,6 +14,7 @@ from tools.enhance.lib.roles import combined as enhance
 from tools.status.lib.roles import combined as status
 from tools.transparent.lib.roles import history_worker
 from tools.txid.lib.roles import display_worker
+from tools.receiver.lib.roles import query as receiver
 
 CONFIG = '/etc/wallet-pir-query/query-server.json'
 TEMPLATE = ROOT / 'tools/deploy/query-server/pir-query-server.service'
@@ -50,7 +51,7 @@ def combined(settings, *, release, template=None):
     non-HTTPS publishers and inconsistent public listeners. Configurations for
     products absent from the binary fail its returned `--check` before install.
     """
-    s = settings_of(settings, ('listen', 'management_listen', *PRODUCTS), ('config_path',))
+    s = settings_of(settings, ('listen', 'management_listen', *PRODUCTS), ('config_path', 'receiver'))
     public, management = listener(s['listen']), listener(s['management_listen'])
     sockets = {public, management}
     if public == management:
@@ -61,7 +62,7 @@ def combined(settings, *, release, template=None):
     config = directory(s.get('config_path', CONFIG))
     document = {'management_listen': management, 'public_listen': public}
     writable = []
-    for name, renderer in PRODUCTS.items():
+    for name, renderer in {**PRODUCTS, **({'receiver': receiver} if 'receiver' in s else {})}.items():
         product = s[name]
         if not isinstance(product, dict):
             raise ValueError(name + ' settings must be an object')

@@ -195,12 +195,12 @@ impl Publication {
     }
 
     /// The serialized head.
-    pub(crate) fn head_bytes(&self) -> &[u8] {
+    pub fn head_bytes(&self) -> &[u8] {
         &self.head
     }
 
     /// Serialized chunk `index`, if the inventory has it.
-    pub(crate) fn chunk(&self, index: usize) -> Option<&[u8]> {
+    pub fn chunk(&self, index: usize) -> Option<&[u8]> {
         self.chunks.get(index).map(Vec::as_slice)
     }
 
@@ -221,7 +221,7 @@ impl Publication {
 
     /// The source of the table whose session ID is `id`, if one of this inventory's
     /// segments has it.
-    pub(crate) fn table(&self, id: &Hash) -> Option<&Arc<Source>> {
+    pub fn table(&self, id: &Hash) -> Option<&Arc<Source>> {
         let (index, witness) = *self.sessions.get(id)?;
         let segment = &self.segments[index];
         Some(match witness {
@@ -551,7 +551,7 @@ impl Publications {
     }
 
     /// The current rolling window, whether or not a PIR publication is ready.
-    pub(crate) fn filters(&self) -> Result<Arc<crate::blocks::BlockWindow>, StatusCode> {
+    pub fn filters(&self) -> Result<Arc<crate::blocks::BlockWindow>, StatusCode> {
         self.0
             .read()
             .unwrap()
@@ -605,7 +605,7 @@ impl Publications {
 
     /// The current inventory's ID with its report, and the recovery epoch, read together
     /// so health never pairs one state's inventory with another's epoch.
-    pub(crate) fn health(&self) -> (Option<(Hash, Option<serde_json::Value>)>, u64) {
+    pub fn health(&self) -> (Option<(Hash, Option<serde_json::Value>)>, u64) {
         let state = self.0.read().unwrap();
         let serving = state.current.as_ref().map(|p| (p.id(), p.report.clone()));
         (serving, state.epoch)
@@ -754,20 +754,17 @@ impl Publications {
 
     /// The live inventory holding session `id`, payment or witness, with the current
     /// epoch. An id not served now, whether unknown, revoked or expired, is `GONE`.
-    pub(crate) fn select(&self, id: &Hash) -> Result<(Arc<Publication>, u64), StatusCode> {
+    pub fn select(&self, id: &Hash) -> Result<(Arc<Publication>, u64), StatusCode> {
         self.find(|p| p.table(id).is_some())
     }
 
     /// The live inventory `inventory` names, with the current epoch, or `GONE`.
-    pub(crate) fn inventory(
-        &self,
-        inventory: &Hash,
-    ) -> Result<(Arc<Publication>, u64), StatusCode> {
+    pub fn inventory(&self, inventory: &Hash) -> Result<(Arc<Publication>, u64), StatusCode> {
         self.find(|p| p.id() == *inventory)
     }
 
     /// A live inventory naming shard filter `digest`, with the current epoch, or `GONE`.
-    pub(crate) fn with_filter(&self, digest: &Hash) -> Result<(Arc<Publication>, u64), StatusCode> {
+    pub fn with_filter(&self, digest: &Hash) -> Result<(Arc<Publication>, u64), StatusCode> {
         self.find(|p| p.filters.contains_key(digest))
     }
 
@@ -778,7 +775,7 @@ impl Publications {
     }
 
     /// The current inventory, or `SERVICE_UNAVAILABLE` before one is published.
-    pub(crate) fn current(&self) -> Result<Arc<Publication>, StatusCode> {
+    pub fn current(&self) -> Result<Arc<Publication>, StatusCode> {
         self.0
             .read()
             .unwrap()

@@ -181,11 +181,7 @@ async fn run<E: PublisherExecutor + IngestionExecutor>(
     distribution.attach(&publications);
     let reads = crate::near::Reads::default();
     let mut tasks = pir_pipeline::service::Tasks::default();
-    let app = receiver_pir_server::router_with_health(publications.clone(), {
-        let reads = reads.clone();
-        std::sync::Arc::new(move || reads.health())
-    })
-    .nest(
+    let app = axum::Router::new().nest(
         receiver_pir_server::distribution::PREFIX.trim_end_matches('/'),
         distribution.router(),
     );

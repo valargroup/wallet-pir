@@ -103,6 +103,8 @@ status = [
     "dep:url",
 ]
 receiver = [
+    "dep:hex",
+    "dep:pir-observability",
     "dep:receiver-pir-server",
     "dep:pir-control",
     "dep:pir-publication",

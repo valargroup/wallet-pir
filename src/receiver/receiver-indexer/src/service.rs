@@ -1,19 +1,14 @@
-//! Resumable public-chain indexer and continuous canonical receiver PIR service.
-//! `receiver-directory probe ...` runs the monitor's probe instead.
+//! Receiver preparation settings and one-shot publication maintenance.
 use crate::{
-    application::{self, PROVIDERS},
+    application,
     blocks::{MAX_RECEIVER_BATCH_BLOCKS, MAX_RECEIVER_CONCURRENCY},
     canonical::freshest,
-    near::{Explorer, Reads},
 };
 use clap::Parser;
-use receiver_pir_server::Publications;
 use std::{
     net::{IpAddr, SocketAddr},
     path::PathBuf,
-    time::Duration,
 };
-use tracing::info;
 use zakura_server_chain::{Network, NodeClient};
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -47,16 +42,16 @@ pub struct Config {
     /// is canonical, and the depth applies to new blocks.
     #[arg(long, default_value_t = 2, value_parser = clap::value_parser!(u32).range(0..=50))]
     pub depth: u32,
-    /// Continuously reconcile the canonical chain and atomically rotate the service,
-    /// publishing from memory. Without it, one run writes its publication's files.
-    #[arg(long, conflicts_with = "end_height")]
-    #[serde(default)]
+    /// Managed preparation applies continuous-service validation internally.
+    /// This is not a command-line service mode.
+    #[arg(skip)]
+    #[serde(skip)]
     pub serve: bool,
     /// The service's listener: loopback, or a private IPv4 or unique-local IPv6 address
     /// that only the TLS proxy and monitoring hosts on the private network can reach.
-    #[arg(long, default_value = "127.0.0.1:18380")]
+    #[arg(skip = SocketAddr::from(([127, 0, 0, 1], 18380)))]
     pub bind: SocketAddr,
-    #[arg(long, default_value_t = 10, value_parser = clap::value_parser!(u64).range(1..))]
+    #[arg(skip = 10u64)]
     pub poll_seconds: u64,
     /// Maximum blocks retained for one validated batch.
     #[arg(long, default_value_t = MAX_RECEIVER_BATCH_BLOCKS, value_parser = clap::value_parser!(u32).range(1..=i64::from(MAX_RECEIVER_BATCH_BLOCKS)))]
@@ -183,11 +178,8 @@ impl Config {
         Ok(())
     }
 }
-pub async fn run(
-    mut args: Config,
-    http: pir_pipeline::service::Http<axum::Router>,
-    shutdown: pir_pipeline::service::Shutdown,
-) -> Result<()> {
+/// Prepare one publication without starting a polling loop or HTTP service.
+pub async fn publish(mut args: Config) -> Result<()> {
     args.near_key = std::env::var("NEAR_INTENTS_EXPLORER")
         .ok()
         .filter(|k| !k.is_empty());
@@ -198,111 +190,18 @@ pub async fn run(
         .iter()
         .map(|url| NodeClient::new(url.clone(), args.cookie.as_deref()))
         .collect::<std::result::Result<Vec<_>, _>>()?;
-    // This indexer currently requires mainnet; fail now if no node is on it.
     let genesis = Network::Mainnet.genesis_hash();
     freshest(&nodes, genesis).await?;
     let config = application::Config::from(&args);
-    let mut state = application::State::default();
-    if !args.serve {
-        application::refresh(&config, &nodes, genesis, None, &mut state).await?;
-        return Ok(());
-    }
-    let publications = Publications::new(
-        Duration::from_secs(args.retention_seconds),
-        usize::try_from(args.table_memory_mib << 20)?,
-    );
-    struct Fence(Publications);
-    impl Drop for Fence {
-        fn drop(&mut self) {
-            self.0.revoke();
-        }
-    }
-    let _fence = Fence(publications.clone());
-    let mut tasks = pir_pipeline::service::Tasks::default();
-    let reads = Reads::default();
-    let app = receiver_pir_server::router_with_health(publications.clone(), {
-        let reads = reads.clone();
-        std::sync::Arc::new(move || reads.health())
-    });
-    info!(
-        address = %args.bind,
-        "receiver PIR listening; waiting for a canonical publication"
-    );
-    // Canonical checks continue while indexing, proofs and PIR preparation are in progress.
-    let guard = tokio::spawn(crate::canonical::guard(
-        publications.clone(),
-        nodes.clone(),
-        genesis,
-        Duration::from_secs(args.poll_seconds),
-    ));
-    tasks.own(&guard);
-    if let Some(key) = args.near_key.clone() {
-        let path = args.data_dir.join(PROVIDERS);
-        let since = args
-            .near_since
-            .unwrap_or_else(|| application::unix_now() - crate::near::AUDIT_LOOKBACK_SECS);
-        let poll = Duration::from_secs(args.near_poll_seconds);
-        let mut explorer = Explorer::new(key)?;
-        let provider = tokio::spawn(async move {
-            loop {
-                crate::near::poll(&mut explorer, &path, since, &reads).await;
-                tokio::time::sleep(poll).await;
-            }
-        });
-        tasks.own(&provider);
-    }
-    let mut serving = tokio::spawn(http.serve(args.bind, app));
-    tasks.own(&serving);
-    let failed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let failed_task = failed.clone();
-    let stop = shutdown.clone();
-    let watched = tokio::spawn(async move {
-        let mut guard = guard;
-        tokio::select! { _ = &mut guard => {}, _ = &mut serving => {} }
-        failed_task.store(true, std::sync::atomic::Ordering::SeqCst);
-        stop.request();
-    });
-    tasks.own(&watched);
-    application::run_until(
+    application::refresh(
         &config,
         &nodes,
         genesis,
-        &publications,
-        &mut state,
-        Duration::from_secs(args.poll_seconds),
-        shutdown,
+        None,
+        &mut application::State::default(),
     )
     .await?;
-    if failed.load(std::sync::atomic::Ordering::SeqCst) {
-        return Err("receiver background service stopped".into());
-    }
     Ok(())
-}
-
-/// Receiver SQLite connections stay on their owner thread; no Sync wrapper is introduced.
-pub async fn run_isolated(
-    config: Config,
-    http: pir_pipeline::service::Http<axum::Router>,
-    shutdown: pir_pipeline::service::Shutdown,
-) -> Result<()> {
-    let thread = std::thread::Builder::new()
-        .name("receiver-publisher".into())
-        .spawn(move || {
-            let runtime = tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(2)
-                .max_blocking_threads(2)
-                .enable_all()
-                .build()?;
-            runtime.block_on(run(config, http, shutdown))
-        })?;
-    tokio::task::spawn_blocking(move || {
-        thread
-            .join()
-            .map_err(|_| -> Box<dyn std::error::Error + Send + Sync> {
-                "Receiver publisher thread panicked".into()
-            })?
-    })
-    .await?
 }
 
 /// Default sealed segment rows, shared by JSON configuration and command-line parsing.
@@ -333,7 +232,7 @@ mod tests {
     fn the_table_budget_must_hold_the_largest_pair() {
         let config = |mib: u64| {
             Config::try_parse_from([
-                "receiver-directory",
+                "pir-publisher receiver publish",
                 "--data-dir",
                 "/srv/receiver",
                 "--rpc-url",
@@ -358,7 +257,7 @@ mod tests {
     fn shard_rows_must_reach_the_minimum() {
         let config = |shard: u32, min: u32| {
             Config::try_parse_from([
-                "receiver-directory",
+                "pir-publisher receiver publish",
                 "--data-dir",
                 "/srv/receiver",
                 "--rpc-url",

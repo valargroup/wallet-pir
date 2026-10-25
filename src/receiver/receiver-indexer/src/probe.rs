@@ -42,7 +42,7 @@ pub struct Args {
     /// The service's health route on the private network, such as
     /// `http://10.70.0.11:18380/v1/receiver/health`; the public edge does not serve it.
     #[arg(long)]
-    health_url: String,
+    health_url: Option<String>,
     /// An independent node's RPC endpoint. Repeat it for fallbacks: the nodes that
     /// reached the publication check it one at a time, ranked as
     /// [`NodeClient::ranked`] does, until one completes the checks.
@@ -344,7 +344,10 @@ async fn probe(
         .into_iter()
         .chain(segment_anchors(segment));
     still_anchored(&rpc, anchors.map(|(anchor, _, _)| anchor)).await?;
-    indexer_report(&http, &args.health_url, &hex::encode(head.inventory)).await
+    match &args.health_url {
+        Some(url) => indexer_report(&http, url, &hex::encode(head.inventory)).await,
+        None => Ok(None),
+    }
 }
 
 /// Downloads `head`'s inventory chunk by chunk through the library's bounded

@@ -1,15 +1,10 @@
 [package]
+autobins = false
 name = "receiver-indexer"
 version = "0.0.1"
 edition = "2021"
 license = "MIT"
 description = "Indexes zero-OVK Ironwood payments from a Zakura node and publishes the receiver directory"
-
-[[bin]]
-name = "receiver-directory"
-path = "src/main.rs"
-# Its documentation would collide with the `receiver-directory` library's.
-doc = false
 
 [[bin]]
 name = "receiver-probe"
@@ -48,5 +43,6 @@ zakura-server-chain = { path = "../../shared/pir-chain", default-features = fals
 
 
 [dev-dependencies]
+pir-query-server = { path = "../../pir-query-server", features = ["receiver"] }
 rusqlite = { version = "0.37", features = ["bundled"] }
 zakura-server-chain = { path = "../../shared/pir-chain", default-features = false, features = ["receiver", "testing-node"] }

@@ -1,7 +1,7 @@
 # Query server host
 
 `pir-query-server` is one process that serves any compiled subset of Enhance,
-Status, Transparent history, and transaction details. The host crate is
+Status, Transparent history, transaction details and Receiver. The host crate is
 `src/pir-query-server`. Its management server
 reserves listeners and owns process shutdown. The host owns Status roles
 directly: role configuration, HTTP routes, admission, telemetry, the generation
@@ -12,7 +12,9 @@ root owns the public route mounts of every product. Enhance roles,
 synchronization, HTTP surfaces and private evaluation messages live in
 `pir_query_server::enhance`, over `enhance-shared` material. Transparent roles, publication managers, activation, validation,
 archive forwarding and HTTP surfaces live in `pir_query_server::transparent`
-over `transparent-shared` material. A Transparent provider selects its own
+over `transparent-shared` material. Receiver HTTP, admission and synchronization
+live in `pir_query_server::receiver`; `receiver-pir-server` supplies reusable
+publication and evaluator primitives. A Transparent provider selects its own
 holdings (the whole recent tier within its cache budget); fleet planning, file
 lists and edge rendering belong to `shard-assign` in `transparent-tools`.
 
@@ -276,10 +278,13 @@ ordinary error withdraws its wallet namespaces and stays not ready while the
 other products continue; a confirmed publisher incompatibility, or a panicked
 product task, stops the whole host. The products' private health routes
 (Enhance `GET /internal/health`, Status `GET /control/health`, Transparent
-`GET /v1/ready`) are unchanged for deployment checks.
+`GET /v1/ready`) are unchanged for deployment checks. Receiver health lives at
+`/v1/receiver/health` and its HTTP metrics at `/receiver/metrics`, both on the
+root management listener.
 
 ## Dedicated query infrastructure
 
 See [the unified query node](query-node.md) for the opt-in 192 GiB candidate,
 HTTPS publication synchronization, volume and RAM limits, locked Terraform and
-transactional deployment. Receiver integration remains an all-products gate.
+transactional deployment. Receiver joins through publisher HTTPS; cumulative
+all-product qualification and separate production approval remain release gates.

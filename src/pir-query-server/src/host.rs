@@ -238,6 +238,8 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
         phases: Arc::default(),
         readiness: Arc::new(readiness),
     };
+    #[cfg(feature = "receiver")]
+    let receiver_operator = crate::public::Slot::default();
     let routes = Router::new()
         .route(
             "/health",
@@ -258,6 +260,27 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
             }),
         )
         .with_state(state.clone());
+    #[cfg(feature = "receiver")]
+    let routes = if active(&config.receiver)?.is_some() {
+        let health = receiver_operator.clone();
+        let metrics = receiver_operator.clone();
+        routes
+            .route(
+                "/v1/receiver/health",
+                axum::routing::any(move |request: axum::extract::Request| {
+                    health.clone().forward(request)
+                }),
+            )
+            .route(
+                "/receiver/metrics",
+                axum::routing::any(move |mut request: axum::extract::Request| {
+                    *request.uri_mut() = axum::http::Uri::from_static("/metrics");
+                    metrics.clone().forward(request)
+                }),
+            )
+    } else {
+        routes
+    };
     // The host stops each listener and product itself, in drain order, once
     // `shutdown` is requested or a fatal failure ends the loop below.
     let management_stop = Shutdown::default();
@@ -400,6 +423,7 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
             crate::receiver::run(
                 role.clone(),
                 slots["receiver"].clone(),
+                receiver_operator,
                 state.readiness["receiver"].clone(),
                 stop.clone(),
             ),

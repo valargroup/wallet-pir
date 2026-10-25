@@ -20,6 +20,9 @@ struct Maintenance {
 }
 #[derive(clap::Subcommand)]
 enum Command {
+    #[cfg(feature = "receiver")]
+    /// Prepare Receiver publications without starting a service.
+    Receiver(Maintenance),
     #[cfg(feature = "enhance")]
     /// Enhance offline maintenance and build information.
     Enhance(Maintenance),
@@ -45,6 +48,10 @@ enum Command {
 impl Command {
     async fn run(self) -> pir_publisher::Result<()> {
         match self {
+            #[cfg(feature = "receiver")]
+            Self::Receiver(args) => {
+                receiver_indexer::commands::run(arguments("receiver", args)).await
+            }
             #[cfg(feature = "enhance")]
             Self::Enhance(args) => {
                 enhance_publisher::commands::run(arguments("enhance", args)).await

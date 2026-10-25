@@ -207,13 +207,11 @@
   "receiver-indexer-store": {
     "family": "receiver",
     "targets": [
-      "receiver:receiver-indexer:bin:receiver-directory",
       "receiver:receiver-indexer:bin:receiver-probe",
       "receiver:receiver-indexer:doc:receiver_indexer",
       "receiver:receiver-indexer:example:rehearsal_fixture",
       "receiver:receiver-indexer:lib:receiver_indexer",
       "receiver:receiver-indexer:test:indexer",
-      "receiver:receiver-indexer:test:serve_publication",
       "receiver:receiver-store:doc:receiver_store",
       "receiver:receiver-store:lib:receiver_store",
       "receiver:receiver-store:test:store"

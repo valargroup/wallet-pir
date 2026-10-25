@@ -258,7 +258,7 @@ async fn health_reports_the_owners_fields_beside_its_own() {
             value.as_object().unwrap().clone()
         })
     };
-    let server = serve_router(receiver_pir_server::router_with_health(
+    let server = serve_router(pir_query_server::receiver::router_with_health(
         Publications::default(),
         fields,
     ))

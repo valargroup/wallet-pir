@@ -39,7 +39,7 @@ BINARIES = {
     # The receiver directory's indexer and server, which
     # tools/scripts/wallet-pir-deploy.py deploys and whose `probe` is the deploy's
     # exact check, and the standalone probe pir-monitor runs.
-    'receiver-pir': ['receiver-directory', 'receiver-probe'],
+    'receiver-pir': ['pir-publisher', 'pir-query-server', 'receiver-probe'],
 }
 FILES = {
     'pir-query-server': ['tools/deploy/query-server/pir-query-server.service',
@@ -66,7 +66,10 @@ FILES = {
                                  'tools/txid/scripts/txid-display-observe.py'],
     'status-pir': ['tools/status/deploy/status-worker.service.in', 'tools/status/deploy/status-router.service.in',
                    'tools/status/deploy/status-worker.example.json', 'tools/status/deploy/status-router.example.json'],
-    'receiver-pir': ['tools/receiver/digitalocean/receiver-pir.service.in', 'tools/receiver/digitalocean/Caddyfile',
+    'receiver-pir': ['tools/receiver/deploy/receiver-query.service',
+                     'tools/receiver/deploy/receiver-query.example.json',
+                     'tools/receiver/deploy/receiver-publisher.example.json',
+                     'tools/receiver/digitalocean/receiver-pir.service.in', 'tools/receiver/digitalocean/Caddyfile',
                      'tools/receiver/digitalocean/cloud-init.yaml'],
 }
 FILES['enhance-pir-native'] = FILES['enhance-pir'] + ['tools/enhance/deploy/native-tag-integration.md']

@@ -2758,6 +2758,7 @@ dependencies = [
  "hex",
  "pir-pipeline",
  "pir-publication",
+ "pir-query-server",
  "receiver-pir-server",
  "receiver-store",
  "reqwest",
@@ -2783,9 +2784,8 @@ version = "0.0.1"
 dependencies = [
  "axum",
  "hex",
- "pir-control",
- "pir-observability",
  "pir-publication",
+ "pir-query-server",
  "reqwest",
  "serde",
  "serde_json",

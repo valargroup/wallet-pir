@@ -25,11 +25,11 @@ use zakura_pir_query_server::receiver::{
     snapshot::Snapshot,
 };
 #[path = "../../../receiver/receiver-store/tests/common/mod.rs"]
-mod common;
+pub(super) mod common;
 #[path = "../../../receiver/receiver-pir-server/tests/common/history.rs"]
 mod history;
 #[path = "../../../receiver/receiver-pir-server/tests/common/prepared.rs"]
-mod prepared;
+pub(super) mod prepared;
 use crate::test_tls as tls;
 
 struct Origin {
@@ -310,7 +310,7 @@ async fn https_authority_controls_real_wallet_queries_and_restart() {
     lifecycle.synchronize().await.unwrap();
     lifecycle.adapter().check_unused_revocations();
     let mount = crate::public::receiver();
-    mount.slot.install(receiver_pir_server::router_with_health(
+    mount.slot.install(router_with_health(
         publications.clone(),
         Arc::new(Default::default),
     ));
@@ -566,4 +566,11 @@ async fn large_proofs_are_batched_and_negative_chunks_refute_only_their_view() {
         .collect();
     lifecycle.check_serving_proofs(retained).await.unwrap();
     server.abort();
+}
+
+pub(super) fn empty_snapshot(variant: u8) -> Snapshot {
+    let mut manifest = common::manifest(MIN_ROWS);
+    manifest.salt[0] = variant;
+    manifest.end_hash = [variant; 32];
+    Snapshot::build(manifest, &[]).unwrap()
 }

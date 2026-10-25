@@ -1,370 +1,100 @@
-"""The receiver Droplet's Caddyfile, unit, cloud-init, inventory and runbook must agree on its private serving contract.
-
-Caddy syntax validation accepts a catch-all proxy, which would put the
-operator routes (`/v1/receiver/health`, `/metrics`) on the public edge. These
-checks pin the edge to the six wallet routes the server registers, the unit (the template
-`wallet-pir-deploy.py` renders) to a private listener, its hardening and the one
-optional NEAR key file the inventory names, cloud-init to the matching account,
-the inventory's `exact_check` to the deployed binary's probe on the receiver's host,
-the runbook's provisioning unit to the template with a bootstrap Description,
-and its monitor probe config to the array `pir-monitor` reads. Each
-check takes the file's text, so the negative cases run it on mutated copies.
-"""
-import copy
-import ipaddress
+"""Receiver root roles, provider edge, release bundle and sandbox agree offline."""
 import json
 from pathlib import Path
 import re
-import shlex
-import subprocess
-import tempfile
+import sys
 import tomllib
 import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
-DIR = ROOT / 'tools/receiver/digitalocean'
-SERVER = ROOT / 'src/receiver/receiver-pir-server/src/lib.rs'
-OPERATOR_ROUTES = {'/v1/receiver/health', '/metrics'}
-# The wallet routes the server mounts at each public prefix: canonical, then deployed.
-WALLET_PREFIXES = ['/receiver/v1', '/v1/receiver']
-WALLET_OPERATIONS = ['/inventory', '/inventory/*', '/query', '/public/*', '/shard-filters/*', '/block-filters/*']
-WALLET_ROUTES = {prefix + operation for prefix in WALLET_PREFIXES for operation in WALLET_OPERATIONS}
-PRIVATE_NETWORK = ipaddress.ip_network('10.70.0.0/16')
-DEPLOY = ROOT / 'tools/receiver/digitalocean/service.toml'
-INVENTORY = ROOT / 'tools/enhance/deploy/deploy-inventory.example.json'
-INFRA = ROOT / 'tools/infra/digitalocean/fleet'
-PROBE = ['{release_dir}/receiver-directory', 'probe']
-USER = 'receiver-pir'
-STATE = '/srv/receiver-pir'
-# The only key source, named by the inventory's NEAR_KEY id. It is optional, since the
-# payout audit it enables never gates indexing or serving.
-NEAR_KEY_FILE = '/etc/receiver-pir/near-@NEAR_KEY@.env'
-HARDENING = {'NoNewPrivileges': 'true', 'ProtectSystem': 'strict', 'ProtectHome': 'true',
-             'PrivateTmp': 'true', 'ReadWritePaths': STATE, 'Restart': 'on-failure'}
+sys.path.insert(0, str(ROOT / 'tools/lib'))
+from wallet_pir_ops.deploy import descriptors, units
+from wallet_pir_ops import query_role, release
+from tools.receiver.lib import roles
+
+QUERY = {
+    'config_path': '/etc/receiver/query.json', 'state_dir': '/srv/wallet-pir-query/receiver',
+    'listen': '127.0.0.1:18380', 'management_listen': '127.0.0.1:18381',
+    'publisher': 'https://publisher.example', 'genesis': [1] * 32, 'activation_height': 100,
+    'publisher_ca': '/etc/receiver/ca.pem',
+}
 
 
-def caddy_tree(text):
-    """Parse a Caddyfile into nested `(line, children)` blocks, dropping comments."""
-    root, stack = [], []
-    current = root
-    for raw in text.splitlines():
-        line = raw.strip()
-        if not line or line.startswith('#'):
-            continue
-        if line == '}':
-            current = stack.pop()
-        elif line.endswith('{'):
-            node = (line[:-1].strip(), [])
-            current.append(node)
-            stack.append(current)
-            current = node[1]
-        else:
-            current.append((line, []))
-    assert not stack, 'unbalanced Caddyfile braces'
-    return root
+class ReceiverOpsConfig(unittest.TestCase):
+    def test_query_uses_https_only_and_preserves_capacity_and_sandbox(self):
+        rendered = roles.query(QUERY, release='/opt/receiver/releases/test')
+        config = json.loads(rendered.files[QUERY['config_path']])
+        self.assertEqual(config['receiver']['settings']['publisher'], QUERY['publisher'])
+        self.assertEqual(config['public_listen'], QUERY['listen'])
+        service = units.effective([rendered.unit])['Service']
+        self.assertEqual(units.exec_start(units.effective([rendered.unit])),
+                         '/opt/receiver/releases/test/pir-query-server --config /etc/receiver/query.json')
+        self.assertEqual(service['MemoryHigh'], '6G')
+        self.assertEqual(service['MemoryMax'], '7G')
+        self.assertEqual(service['MemorySwapMax'], '0')
+        self.assertIn(QUERY['state_dir'], service['ReadWritePaths'])
+        self.assertIn(QUERY['publisher_ca'], service['ReadOnlyPaths'])
+        self.assertNotIn('EnvironmentFile', service)
+        self.assertEqual(rendered.check, ('--config', QUERY['config_path'], '--check'))
+        for field in ('rpc_urls', 'cookie', 'no_auth', 'publication_record', 'near_key'):
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                roles.query({**QUERY, field: 'refused'}, release='/release')
+        for origin in ('http://publisher.example', 'https://user@publisher.example',
+                       'https://publisher.example/path', 'https://publisher.example?x=1'):
+            with self.subTest(origin=origin), self.assertRaises(ValueError):
+                roles.query({**QUERY, 'publisher': origin}, release='/release')
 
+    def test_existing_store_is_owned_by_root_publisher(self):
+        document = json.loads((ROOT / 'tools/receiver/deploy/receiver-publisher.example.json').read_text())
+        settings = {'config_path': '/etc/receiver/publisher.json',
+                    'management_listen': document['management_listen'], 'chain': document['chain'],
+                    'receiver': document['receiver']['settings']}
+        rendered = roles.publisher(settings, release='/opt/receiver/releases/test')
+        config = json.loads(rendered.files[settings['config_path']])
+        self.assertEqual(config['receiver']['settings']['data_dir'], '/srv/receiver-pir/index')
+        self.assertNotIn('rpc_url', config['receiver']['settings'])
+        self.assertIn('rpc_url', config['chain'])
+        self.assertIn('/pir-publisher --config ', units.exec_start(units.effective([rendered.unit])))
+        service = units.effective([rendered.unit])['Service']
+        self.assertEqual(service['User'], 'receiver-pir')
+        self.assertEqual(service['MemoryMax'], '7G')
+        self.assertIn('near-', service['EnvironmentFile'][0])
 
-def coordinator_ipv4():
-    """The coordinator address the fleet publishes, which fronts the unified wallet host."""
-    variables = (INFRA / 'variables.tf').read_text()
-    block = variables.split('variable "wallet_pir_coordinator_dns_ipv4" {', 1)[1].split('\n}', 1)[0]
-    return re.search(r'default\s*=\s*"([0-9.]+)"', block)[1]
+    def test_all_five_products_share_the_root_query_listener(self):
+        settings = json.loads((ROOT / 'tools/deploy/query-server/query-node.example.json').read_text())
+        rendered = query_role.combined(settings, release='/release')
+        document = json.loads(next(iter(rendered.files.values())))
+        self.assertTrue(all(document[name]['enabled'] for name in
+                            ('enhance', 'status', 'transparent_history', 'transaction_details', 'receiver')))
+        self.assertEqual(document['receiver']['settings']['publisher'],
+                         settings['receiver']['publisher'])
+        self.assertNotIn('rpc_url', document['receiver']['settings'])
 
+    def test_registry_and_release_name_only_supported_entrypoints(self):
+        service = descriptors.load_descriptors(ROOT / 'tools/deploy/services.toml')['receiver']
+        self.assertEqual(service.binary, 'pir-publisher')
+        self.assertEqual(service.roles['server'].unit, 'receiver-pir.service')
+        self.assertEqual(service.roles['query'].binary, 'pir-query-server')
+        self.assertNotIn('serve-publication', service.roles)
+        self.assertEqual(release.BINARIES['receiver-pir'],
+                         ['pir-publisher', 'pir-query-server', 'receiver-probe'])
+        manifest = tomllib.loads((ROOT / 'src/receiver/receiver-indexer/Cargo.toml').read_text())
+        self.assertEqual([item['name'] for item in manifest['bin']], ['receiver-probe'])
+        for path in release.FILES['receiver-pir']:
+            self.assertTrue((ROOT / path).is_file(), path)
 
-def receiver_site(text):
-    """Return the one site block, after checking the optional global options.
-
-    The only global option allowed trusts the coordinator, and nothing else, to
-    forward `X-Forwarded-For`: the unified wallet host proxies Receiver from
-    there, and per-client admission must still key on the wallet.
-    """
-    tree = caddy_tree(text)
-    if tree and tree[0][0] == '':
-        trust = [('servers', [(f'trusted_proxies static {coordinator_ipv4()}/32', [])])]
-        assert tree[0][1] == trust, tree[0][1]
-        tree = tree[1:]
-    (site, body), = tree
-    return site, body
-
-
-def check_caddyfile(text):
-    """Return the upstream the wallet routes proxy to; fail on any other public route."""
-    site, body = receiver_site(text)
-    assert site == 'receiver-pir.valargroup.dev', site
-    names = sorted(line.split()[0] for line, _ in body)
-    assert names == ['@wallet', 'handle', 'handle', 'request_body'], names
-    matcher = next(line for line, _ in body if line.startswith('@wallet '))
-    kind, *paths = matcher.split()[1:]
-    assert kind == 'path' and set(paths) == WALLET_ROUTES and len(paths) == len(WALLET_ROUTES), paths
-    handles = {line: children for line, children in body if line.split()[0] == 'handle'}
-    assert set(handles) == {'handle @wallet', 'handle'}, sorted(handles)
-    assert handles['handle'] == [('respond 404', [])], handles['handle']
-    (proxy, nested), = handles['handle @wallet']
-    directive, upstream = proxy.split()
-    assert directive == 'reverse_proxy' and not nested, proxy
-    return upstream
-
-
-def check_server_routes(source, caddy):
-    """Fail unless the edge's wallet routes match the server's routes but the operator ones.
-
-    Each route the server registers must be one a wallet route matches, so a release
-    adding a route also adds it to the Caddyfile its cutover installs, and each wallet
-    route must match a registered one.
-    """
-    routes = set(re.findall(r'\.route\(\s*"([^"]+)"', source))
-    assert OPERATOR_ROUTES <= routes, sorted(routes)
-    # Wallet operations are registered once, relative, and mounted at each prefix.
-    prefixes = re.findall(r'\.nest\(\s*"([^"]+)"', source)
-    assert prefixes == WALLET_PREFIXES, prefixes
-    served = OPERATOR_ROUTES | {prefix + route for prefix in prefixes for route in routes - OPERATOR_ROUTES}
-    matcher = next(line for line in caddy.splitlines() if line.split()[:1] == ['@wallet'])
-    edge = matcher.split()[2:]
-    matches = lambda pattern, route: route.startswith(pattern[:-1]) if pattern.endswith('*') else route == pattern
-    for route in served - OPERATOR_ROUTES:
-        assert any(matches(pattern, route) for pattern in edge), 'the edge does not serve ' + route
-    for pattern in edge:
-        assert any(matches(pattern, route) for route in served - OPERATOR_ROUTES), pattern + ' serves nothing'
-
-
-def systemd_sections(text):
-    """Parse a unit into `{section: {key: [values]}}`."""
-    sections, current = {}, None
-    for raw in text.splitlines():
-        line = raw.strip()
-        if not line or line.startswith('#'):
-            continue
-        if line.startswith('['):
-            current = sections.setdefault(line.strip('[]'), {})
-        else:
-            key, value = line.split('=', 1)
-            current.setdefault(key, []).append(value)
-    return sections
-
-
-def check_unit(text):
-    """Return `(bind, data_dir)` after checking the template's release binary, listener and hardening."""
-    service = systemd_sections(text)['Service']
-    single = {key: values[0] for key, values in service.items() if len(values) == 1}
-    assert single.get('User') == USER and single.get('Group') == USER, (single.get('User'), single.get('Group'))
-    for key, value in HARDENING.items():
-        assert single.get(key) == value, (key, service.get(key))
-    assert int(single.get('RestartSec', '0')) > 0, single.get('RestartSec')
-    assert service.get('EnvironmentFile') == ['-' + NEAR_KEY_FILE], service.get('EnvironmentFile')
-    assert 'NEAR_INTENTS_EXPLORER' not in ' '.join(service.get('Environment', [])), service.get('Environment')
-    argv = shlex.split(single['ExecStart'])
-    assert argv[0] == '@RELEASE@/receiver-directory', argv[0]
-    assert '--serve' in argv, argv
-    option = lambda name: argv[argv.index(name) + 1]
-    bind, data_dir = option('--bind'), option('--data-dir')
-    host, port = bind.rsplit(':', 1)
-    assert ipaddress.ip_address(host) in PRIVATE_NETWORK and port == '18380', bind
-    assert data_dir.startswith(STATE + '/'), data_dir
-    return bind, data_dir
-
-
-def runcmd(text):
-    """The cloud-init `runcmd` argument lists (flow sequences of plain or quoted words)."""
-    commands = []
-    for raw in text.split('\nruncmd:\n', 1)[1].splitlines():
-        line = raw.strip()
-        if line.startswith('- ['):
-            commands.append([word.strip().strip("'\"") for word in line[3:].rstrip(']').split(',')])
-    return commands
-
-
-def check_cloud_init(text, bind):
-    """Check the service account and its directories without installing a host firewall."""
-    packages = next(line for line in text.splitlines() if line.startswith('packages:'))
-    assert 'caddy' in packages and 'ufw' not in packages, packages
-    commands = runcmd(text)
-    assert ['useradd', '--system', '--home-dir', STATE, '--shell', '/usr/sbin/nologin', USER] in commands
-    assert ['install', '-d', '-o', USER, '-g', USER, '-m', '0750', STATE] in commands
-    assert any(c[:2] == ['install', '-d'] and '/opt/receiver-pir/releases' in c for c in commands)
-    assert not any(command[0] == 'ufw' for command in commands), commands
-
-
-def check_exact_check(service, unit, caddy):
-    """Check the receiver's deploy gate: the deployed binary's own probe, run on the server's host.
-
-    The coordinator cannot reach the private health route. The probe and its
-    fixture are built into the release's binary, so they match the server.
-    """
-    (server,) = service['roles']['server']
-    check = service['exact_check']
-    bind, _ = check_unit(unit)
-    assert server['vars']['listen'] == bind, server
-    assert check['host'] == server['host'], check['host']
-    argv = check['argv']
-    assert argv[:2] == PROBE and not any('{' in word for word in argv[2:]), argv
-    option = lambda name: argv[argv.index(name) + 1]
-    site, _ = receiver_site(caddy)
-    assert option('--origin') == 'https://' + site, argv
-    assert option('--health-url') == 'http://%s/v1/receiver/health' % bind, argv
-    # The nodes and authentication the service itself uses, the only ones the host reaches.
-    served = shlex.split(systemd_sections(unit)['Service']['ExecStart'][0])
-    nodes = lambda words: [words[i + 1] for i, word in enumerate(words) if word == '--rpc-url']
-    assert nodes(argv) and nodes(argv) == nodes(served), (nodes(argv), nodes(served))
-    assert ('--no-auth' in argv) == ('--no-auth' in served), argv
-    timeout = check.get('timeout')
-    assert isinstance(timeout, int) and 120 <= timeout <= 600, timeout
-
-
-def fenced(text, language):
-    """The bodies of `text`'s fenced code blocks in `language`, list items' included."""
-    return re.findall(r'^ *```%s\n(.*?)^ *```$' % language, text, re.S | re.M)
-
-
-def bootstrap_unit(readme, template):
-    """The runbook's provisioning `sed` run on `template`."""
-    (block,) = [b for b in fenced(readme, 'sh') if '(bootstrap)' in b]
-    argv = shlex.split(block.replace('\\\n', ' '))
-    assert argv[0] == 'sed' and argv[-2:] == ['receiver-pir.service.in', '>/etc/systemd/system/receiver-pir.service'], argv
-    return subprocess.run(argv[:-2], input=template, capture_output=True, text=True, check=True).stdout
-
-
-def check_probe_config(configs):
-    """Check a `service-probes.json` holding only the receiver's record, as `pir-monitor` parses it."""
-    assert isinstance(configs, list) and len(configs) == 1, configs
-    (config,) = configs
-    assert sorted(config) == ['command', 'service', 'timeout_seconds'], sorted(config)
-    assert config['service'] == 'receiver' and 1 <= config['timeout_seconds'] <= 45, config
-    argv = config['command']
-    assert argv[0] == '/opt/pir-monitor/receiver-probe', argv
-
-
-def monitor_merge(readme):
-    """The runbook's two `jq` programs for an existing monitor: `(merge, check)`."""
-    (block,) = [b for b in fenced(readme, 'sh') if '--slurpfile new receiver-probe.json' in b]
-    (merge,) = re.findall(r"jq --slurpfile new receiver-probe\.json '(.*?)' service-probes\.json\.live", block, re.S)
-    (check,) = re.findall(r"jq -e '(.*?)' service-probes\.json\.new", block, re.S)
-    return merge, check
-
-
-class ReceiverOpsContract(unittest.TestCase):
-    def setUp(self):
-        self.caddy = (DIR / 'Caddyfile').read_text()
-        self.unit = (DIR / 'receiver-pir.service.in').read_text()
-        self.cloud = (DIR / 'cloud-init.yaml').read_text()
-        self.service = json.loads(INVENTORY.read_text())['services']['receiver']
-        with open(DEPLOY, 'rb') as handle:
-            self.descriptor = tomllib.load(handle)['services']['receiver']
-
-    def test_repository_files_satisfy_the_contract(self):
-        bind, _ = check_unit(self.unit)
-        self.assertEqual(check_caddyfile(self.caddy), bind)
-        check_cloud_init(self.cloud, bind)
-
-    def test_the_edge_serves_every_wallet_route_and_only_those(self):
-        source = SERVER.read_text()
-        check_server_routes(source, self.caddy)
-        unexposed = source.replace('.route("/query"', '.route("/unrouted", get(health))\n'
-                                   '        .route("/query"', 1)
-        self.assertNotEqual(unexposed, source)
-        for server, caddy in [
-            (unexposed, self.caddy),
-            (source, self.caddy.replace('/v1/receiver/query ', '/v1/receiver/query /v1/receiver/gone/* ')),
-            (source, self.caddy.replace(' /receiver/v1/query', '')),
-            (source.replace('.nest("/receiver/v1", wallet.clone())', ''), self.caddy),
-        ]:
-            with self.assertRaises(AssertionError):
-                check_server_routes(server, caddy)
-
-    def test_the_deploy_tool_renders_this_whole_unit(self):
-        with open(DEPLOY, 'rb') as handle:
-            role = tomllib.load(handle)['services']['receiver']['roles']['server']
-        self.assertEqual((role['unit'], role['mode']), ('receiver-pir.service', 'template'))
-        # No drop-in may stay beside it, so the key file the unit names is the only key.
-        self.assertIs(role.get('owns_unit'), True)
-        self.assertEqual((DEPLOY.parent / role['template']).resolve(), DIR / 'receiver-pir.service.in')
-        self.assertFalse((DIR / 'receiver-pir.service').exists(), 'the template is the only unit source')
-
-
-    def test_the_inventory_names_the_key_file_the_unit_reads(self):
-        self.assertEqual(self.descriptor.get('template_vars'), ['NEAR_KEY'])
-        self.assertIsInstance(self.service.get('template_vars', {}).get('NEAR_KEY'), str)
-
-    def test_the_deploy_runs_the_probe_on_the_receiver_before_commit(self):
-        check_exact_check(self.service, self.unit, self.caddy)
-        self.assertNotIn('--skip-exact-check', (DIR / 'README.md').read_text())
-
-    def test_misdirected_or_unbounded_probe_fails(self):
-        def mutated(edit):
-            service = copy.deepcopy(self.service)
-            edit(service['exact_check'], service['exact_check']['argv'])
-            return service
-        swap = lambda old, new: lambda check, argv: argv.__setitem__(argv.index(old), new)
-        for service in [
-            mutated(lambda check, argv: check.update(host='coordinator')),
-            mutated(swap(PROBE[0], '/opt/receiver-pir/tools/receiver-directory')),
-            mutated(swap('https://receiver-pir.valargroup.dev', 'https://receiver.example')),
-            mutated(swap('http://10.70.0.6:8232', 'http://127.0.0.1:8232')),
-            mutated(lambda check, argv: check.update(timeout=0)),
-        ]:
-            self.assertNotEqual(service, self.service)
-            with self.assertRaises(AssertionError):
-                check_exact_check(service, self.unit, self.caddy)
-
-    def test_exposed_operator_routes_or_catch_all_proxy_fail(self):
-        matcher = '/v1/receiver/block-filters/*'
-        for mutated in [
-            self.caddy.replace(matcher, matcher + ' /metrics'),
-            self.caddy.replace(matcher, matcher + ' /v1/receiver/health'),
-            self.caddy.replace(matcher, matcher + ' /v1/receiver/*'),
-            self.caddy.replace(matcher, matcher + ' /receiver/v1/*'),
-            self.caddy.replace(matcher, matcher + ' /receiver/v1/metrics'),
-            self.caddy.replace('\thandle {', '\thandle /metrics {\n\t\treverse_proxy 10.70.0.11:18380\n\t}\n\thandle {'),
-            self.caddy.replace('respond 404', 'reverse_proxy 10.70.0.11:18380'),
-        ]:
-            self.assertNotEqual(mutated, self.caddy)
-            with self.assertRaises(AssertionError):
-                check_caddyfile(mutated)
-
-    def test_public_bind_or_another_key_source_fails(self):
-        for mutated in [
-            self.unit.replace('--bind 10.70.0.11:18380', '--bind 0.0.0.0:18380'),
-            # A required key file would stop keyless indexing and serving.
-            self.unit.replace('=-' + NEAR_KEY_FILE, '=' + NEAR_KEY_FILE),
-            self.unit.replace(NEAR_KEY_FILE, '/etc/receiver-pir/near.env'),
-            self.unit.replace(NEAR_KEY_FILE, NEAR_KEY_FILE + '\nEnvironmentFile=-/etc/receiver-pir/near.env'),
-            self.unit.replace('Environment=RUST_LOG=info', 'Environment=RUST_LOG=info NEAR_INTENTS_EXPLORER=x'),
-        ]:
-            self.assertNotEqual(mutated, self.unit)
-            with self.assertRaises(AssertionError):
-                check_unit(mutated)
-
-
-    def test_the_monitor_probe_merge_keeps_one_receiver_and_the_other_probes(self):
-        readme = (DIR / 'README.md').read_text()
-        (block,) = [b for b in fenced(readme, 'json') if 'receiver-probe' in b]
-        entry = json.loads(block)
-        merge, check = monitor_merge(readme)
-        jq = lambda program, data, *args: subprocess.run(
-            ['jq', *args, program], input=json.dumps(data), capture_output=True, text=True)
-        directory = tempfile.TemporaryDirectory()
-        self.addCleanup(directory.cleanup)
-        new = Path(directory.name) / 'receiver-probe.json'
-        new.write_text(block)
-        others = [{'service': name, 'command': ['/opt/pir-monitor/%s-probe' % name], 'timeout_seconds': 30}
-                  for name in ('status', 'transparent')]
-        stale = dict(entry[0], timeout_seconds=10)
-        for live, kept in [([], []), (others, others), (others[:1] + [stale] + others[1:], others),
-                           ([stale, stale], [])]:
-            run = jq(merge, live, '--slurpfile', 'new', str(new))
-            self.assertEqual(run.returncode, 0, run.stderr)
-            merged = json.loads(run.stdout)
-            self.assertEqual([c for c in merged if c['service'] != 'receiver'], kept)
-            self.assertEqual([c for c in merged if c['service'] == 'receiver'], entry)
-            self.assertEqual(jq(check, merged, '-e').returncode, 0, merged)
-        self.assertNotEqual(jq(merge, {'service': 'status'}, '--slurpfile', 'new', str(new)).returncode, 0)
-        for bad in [others + others, others + entry * 2, others + [dict(entry[0], extra=1)], {'0': entry[0]}]:
-            self.assertNotEqual(jq(check, bad, '-e').returncode, 0, bad)
-
-    def test_cloud_init_does_not_enable_a_host_firewall(self):
-        bind, _ = check_unit(self.unit)
-        mutated = self.cloud + "  - [ufw, --force, enable]\n"
-        with self.assertRaises(AssertionError):
-            check_cloud_init(mutated, bind)
+    def test_edge_exposes_wallet_and_provider_namespaces_only(self):
+        text = (ROOT / 'tools/receiver/digitalocean/Caddyfile').read_text()
+        wallet = re.search(r'@wallet path (.*)', text).group(1).split()
+        expected = {prefix + operation for prefix in ('/receiver/v1', '/v1/receiver')
+                    for operation in ('/inventory', '/inventory/*', '/query', '/public/*',
+                                      '/shard-filters/*', '/block-filters/*')}
+        self.assertEqual(set(wallet), expected)
+        provider = re.search(r'@provider path (.*)', text).group(1).split()
+        self.assertEqual(provider, ['/.well-known/pir-service-discovery', '/provider/receiver/v1/*'])
+        self.assertNotIn('/v1/receiver/health', wallet)
+        self.assertIn('reverse_proxy {$RECEIVER_QUERY_UPSTREAM}', text)
+        self.assertRegex(text, r'handle\s*\{\s*respond 404')
 
 
 if __name__ == '__main__':
