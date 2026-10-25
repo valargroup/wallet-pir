@@ -141,9 +141,11 @@ def isolate_status_fixture(parts, package, kinds, discovered):
 
 # Unit cases that build full runtimes on every core, each near the case budget.
 RUNTIME_LIBRARIES = frozenset({'enhance-shared', 'receiver-indexer'})
-# Unit libraries whose fixtures each hold gigabytes: prepared runtimes, the
-# shared Status database and the query host's product fixtures.
-HEAVY_LIBRARIES = RUNTIME_LIBRARIES | {'transparent-publisher', 'enhance-publisher', 'pir-query-server'}
+# Unit libraries seen holding gigabytes together when the fast runner's 6 GiB
+# limit was hit: the query host's product fixtures (2.6 and 3.4 GB in its two
+# partitions) and Enhance's prepared runtimes (2.1 to 2.5 GB). Marking more
+# libraries serializes them too and pushes the job past its time target.
+HEAVY_LIBRARIES = frozenset({'pir-query-server', 'enhance-shared'})
 
 
 def memory_heavy(name, kinds):

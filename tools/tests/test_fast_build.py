@@ -161,6 +161,7 @@ class FastBuildTests(unittest.TestCase):
         self.assertTrue(fast_build.memory_heavy('enhance-shared', ['lib']))
         self.assertFalse(fast_build.memory_heavy('pir-query-server', ['test']))
         self.assertFalse(fast_build.memory_heavy('status-shared', ['lib']))
+        self.assertFalse(fast_build.memory_heavy('receiver-indexer', ['lib']))
 
     def test_pool_never_overlaps_more_heavy_programs_than_its_slots(self):
         import threading
