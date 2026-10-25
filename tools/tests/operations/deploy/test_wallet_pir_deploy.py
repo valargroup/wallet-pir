@@ -854,6 +854,31 @@ class ReceiverTests(Fleet):
     def command(self):
         return self.fake.host('receiver-01').units['receiver-pir.service']['exec_start']
 
+    def test_rollback_to_the_retired_runtime_uses_its_captured_wallet_listener(self):
+        legacy = '/opt/receiver-pir/releases/legacy/receiver-directory'
+        self.fake.put('receiver-01', legacy, RECEIVER_OLD)
+        unit = RECEIVER_LIVE.replace(RECEIVER_CURRENT + ' --config /etc/receiver-pir/publisher.json',
+                                     legacy + ' --serve --bind 10.70.0.11:18380 --data-dir /srv/receiver-pir/index')
+        deployer = self.receiver_fleet(unit)
+        original = self.fake.http_get
+        observed = []
+
+        def installed_listener(host, url, timeout=5):
+            if self.running(host, 'receiver-pir.service') == sha256(RECEIVER_OLD):
+                observed.append(url)
+                if url == 'http://10.70.0.11:18380/v1/receiver/inventory':
+                    return 200, '{"inventory":"retained"}'
+                return 0, 'replacement management listener is absent'
+            return original(host, url, timeout)
+
+        self.fake.http_get = installed_listener
+        journal = deployer.deploy(sha256(RECEIVER_NEW), self.receiver_binary, allow_drift=True)
+        deployer.rollback(journal.id)
+        self.assertEqual(Journal.load(self.state, 'receiver').status, 'rolled-back')
+        self.assertEqual(self.running('receiver-01', 'receiver-pir.service'), sha256(RECEIVER_OLD))
+        self.assertEqual(self.unit(), unit)
+        self.assertEqual(observed, ['http://10.70.0.11:18380/v1/receiver/inventory'])
+
     def test_first_deploy_adopts_the_hand_installed_unit_and_rollback_returns_to_current(self):
         deployer = self.receiver_fleet(RECEIVER_HAND_INSTALLED)
         sha = sha256(RECEIVER_NEW)

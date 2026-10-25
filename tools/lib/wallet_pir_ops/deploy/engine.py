@@ -12,9 +12,11 @@ from dataclasses import dataclass, field
 from concurrent.futures import ThreadPoolExecutor
 import difflib
 import hashlib
+import ipaddress
 import json
 import os
 from pathlib import Path
+import shlex
 import time
 
 from .. import durable
@@ -748,6 +750,26 @@ class Deployer:
         return all(self.ex.sha256(record['host'], change['path']) == change['previous_sha256']
                    for change in record['changes'])
 
+    def wait_restored(self, record, expected):
+        """Verify the restored entrypoint rather than the replacement's listener.
+
+        The retired combined Receiver runtime has no root management server.
+        Its wallet inventory proves serving readiness at the captured bind socket.
+        Executable, unit and configuration restoration are still checked normally.
+        """
+        if self.service.name == 'receiver':
+            previous = record['previous']
+            _prefix, binary, tail = units.split_exec(previous['exec_start'])
+            if os.path.basename(binary) == 'receiver-directory':
+                arguments = shlex.split(tail)
+                bind = arguments[arguments.index('--bind') + 1] if '--bind' in arguments else '127.0.0.1:18380'
+                address, port = bind.rsplit(':', 1)
+                if not ipaddress.ip_address(address.strip('[]')).is_private or not 1 <= int(port) <= 65535:
+                    raise DeployError('legacy Receiver rollback requires its captured private listener')
+                record = {**record, 'verify': {**record['verify'], 'health': 'http://' + bind + '/v1/receiver/inventory',
+                                              'health_equals': {}, 'ready': None, 'ready_url': None}}
+        self.wait_verified(record, expected)
+
     def restore(self, journal, index, *, verify=True):
         record = journal.hosts[index]
         host, unit = record['host'], record['unit']
@@ -781,7 +803,7 @@ class Deployer:
                                   exe_sha256=expected, invocation_id=state['invocation_id'])
         if not verify:
             return
-        self.wait_verified(record, expected)
+        self.wait_restored(record, expected)
         self.lock.verify()
         journal.set_phase(index, 'restored')
         self.out('%s: restored %s' % (record['key'], expected))
