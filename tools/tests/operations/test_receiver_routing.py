@@ -72,7 +72,7 @@ class ReceiverRouting(unittest.TestCase):
         after = candidate(QUERY, request)
         self.assertIn('/enhance/v1/* /status/v1/* /transparent/v1/* /v2/* /receiver/v1/* /v1/receiver/*', after)
         self.assertNotIn('integration is not installed', after)
-        self.assertIn('trusted_proxies static 161.35.182.172/32', after)
+        self.assertIn('trusted_proxies 161.35.182.172/32', after)
         self.assertEqual(candidate(after, request), after)
         with self.assertRaises(DeployError):
             candidate(QUERY.replace('respond "Receiver serving integration is not installed" 503', 'reverse_proxy other:80'), request)

@@ -65,6 +65,14 @@ def candidate(text, request):
         require(site.count('handle /receiver/v1/') == len(stub.findall(site)),
                 'unrecognized Receiver query handler')
         site = stub.sub('', site)
+        # The query host's installed Caddy supports per-handler proxy trust;
+        # the newer global servers syntax would require an unrelated upgrade.
+        proxy = 'trusted_proxies ' + request['receiver_address'] + '/32'
+        if proxy not in site:
+            upstream = re.compile(r'(?m)^([ \t]*)reverse_proxy (127\.0\.0\.1:[0-9]+)$')
+            require(len(upstream.findall(site)) == 1, 'expected one simple loopback query proxy')
+            site = upstream.sub(lambda match: (match[1] + 'reverse_proxy ' + match[2] + ' {\n'
+                                               + match[1] + '  ' + proxy + '\n' + match[1] + '}'), site)
     else:
         require(phase == 'wallet', 'unknown phase')
         matches = list(WALLET.finditer(site))
@@ -73,12 +81,6 @@ def candidate(text, request):
         require('/provider/receiver/v1/*' in site, 'prepare HTTPS distribution before switching wallets')
         site = WALLET.sub(lambda match: match[1] + request['query_origin'] + match[3], site)
     after = text[:start] + site + text[end:]
-    if phase == 'query':
-        proxy = 'trusted_proxies static ' + request['receiver_address'] + '/32'
-        if text.lstrip().startswith('{'):
-            require(proxy in text[:start], 'existing global proxy trust must name the Receiver edge')
-        else:
-            after = '{\n\tservers {\n\t\t' + proxy + '\n\t}\n}\n\n' + after
     return after
 
 
