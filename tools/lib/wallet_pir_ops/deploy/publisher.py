@@ -44,6 +44,11 @@ STATUS_HTTPS_DROP = '/etc/systemd/system/' + UNIT + '.d/' + 'z' * 36 + '-status-
 FINAL = ('committed', 'rolled-back')
 
 
+def failure_text(error):
+    """A bounded error description for journals and operator output."""
+    return ('%s: %s' % (type(error).__name__, error))[:2000]
+
+
 def require(condition, message):
     if not condition:
         raise DeployError(message)
@@ -613,12 +618,16 @@ class Cutover:
             self.ex.upload(self.host, binary, target, 0o755)
         require(self.ex.sha256(self.host, target) == self.request['release']['binary_sha256'], 'uploaded publisher digest differs')
 
-    def rollback(self):
+    def rollback(self, deploy_error=None):
         with production_lock(self.inventory, self.ex) as self.lock:
-            return self.restore_transaction()
+            return self.restore_transaction(deploy_error)
 
-    def restore_transaction(self):
-        """Roll the latest transaction back; the caller holds the production lock."""
+    def restore_transaction(self, deploy_error=None):
+        """Roll the latest transaction back; the caller holds the production lock.
+
+        An automatic rollback after a failed deploy first records that deploy error
+        in the journal, then records its own error beside it if restoration fails.
+        """
         require(self.ex.publisher_resources(self.host, [CONFIG])['machine_id'] == self.request['machine_id'],
                 'coordinator machine identity differs')
         journal = self.latest()
@@ -626,6 +635,21 @@ class Cutover:
         require(journal['request'] == self.request, 'request differs from latest publisher cutover')
         if journal['phase'] == 'rolled-back':
             return journal
+        if deploy_error is None:
+            return self.restore_journal(journal)
+        journal['failure'] = {'deploy_error': deploy_error}
+        self.save(journal)
+        try:
+            return self.restore_journal(journal)
+        except Exception as error:
+            journal['failure']['rollback_error'] = failure_text(error)
+            try:
+                self.save(journal)
+            except Exception:  # noqa: BLE001 - the raised error still carries both
+                pass
+            raise
+
+    def restore_journal(self, journal):
         plan = journal['plan']
         for path, digest in plan['executables'].items():
             require(self.ex.sha256(self.host, path) == digest, 'rollback executable changed: ' + path)
@@ -741,12 +765,25 @@ def dispatch(args, executor=None, **_options):
         if operation == 'preflight':
             return target.plan()
         target.serving.binary = args.serving_binary
+        return deploy_or_restore(target, binary, args.expect_plan_sha256, args.serving_binary)
+
+
+def deploy_or_restore(target, binary, expected_plan, serving_binary):
+    """Deploy; after a failure, roll back the unfinished transaction.
+
+    A rollback failure is raised with the original deploy error so neither is lost.
+    """
+    try:
+        return target.deploy(binary, expected_plan, serving_binary)
+    except Exception as error:
+        from .deployment_alerts import failed
+        failed()
+        deploy_error = failure_text(error)
         try:
-            return target.deploy(binary, args.expect_plan_sha256, args.serving_binary)
-        except Exception:
-            from .deployment_alerts import failed
-            failed()
             latest = target.latest()
-            if latest and latest['request'] == request and latest['phase'] not in FINAL:
-                target.rollback()
-            raise
+            if latest and latest['request'] == target.request and latest['phase'] not in FINAL:
+                target.rollback(deploy_error)
+        except Exception as failure:
+            raise DeployError('publisher deploy failed (%s); its rollback did not complete: %s'
+                              % (deploy_error, failure_text(failure))) from error
+        raise

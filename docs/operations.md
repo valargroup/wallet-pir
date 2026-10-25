@@ -247,6 +247,53 @@ but their mutation drivers remain product recipes: `schema-*` and
 a publication is more than replacing an executable. Their retained request,
 plan-digest, authority, quiescence and recovery requirements continue to apply.
 
+## Recover an interrupted rollout
+
+Recovery repeats only reviewed steps for the checkpoint the transaction recorded.
+Start from what the tools report, not from a new plan of your own.
+
+1. Read the latest transaction (`status <service>`, or `publisher-cutover-status`
+   for the unified publisher). When a publisher deploy fails and its automatic
+   rollback fails too, the journal keeps both errors apart:
+   `failure.deploy_error` says why the rollout stopped and
+   `failure.rollback_error` says where restoration stopped. The command's error
+   names both.
+2. For a publisher cutover whose restoration stopped before verification
+   finished, use the staged Status repair path:
+
+   ```sh
+   python3 <release>/tools/scripts/wallet-pir-deploy.py publisher-cutover-repair-probe-plan --request <request.json> --request-sha256 <digest>
+   python3 <release>/tools/scripts/wallet-pir-deploy.py publisher-cutover-repair-probe-verify --request <request.json> --request-sha256 <digest> --expect-plan-sha256 <plan digest>
+   ```
+
+   It applies only when all of these hold:
+   - the continuous-load checker is stopped;
+   - the transaction is this request's restored transaction: restoration
+     recorded the publisher start and both serving roles passed their restored
+     identity checks;
+   - no effect is pending (no recorded intent);
+   - the replacement Status probe client is the staged publisher executable,
+     unchanged since staging.
+
+   The plan pins the restored processes and the replacement client; verify
+   repeats all four exact-answer checks and finishes the rollback without
+   stopping or starting any service. [The unified publisher](publisher.md)
+   describes what it checks.
+3. Outside those preconditions the repair refuses and names the check that
+   failed. That is an unsupported checkpoint: report it with the refusal and the
+   transaction's recorded phase. Do not bypass the guard, and do not fall back to
+   a generic `rollback`, which repeats restoration effects. Use another recovery
+   command only where this runbook or [the unified publisher](publisher.md) names
+   it for that exact phase (`publisher-cutover-continue` for a lost stop reply,
+   `publisher-cutover-verify` for verification recovery).
+
+Remote checks during recovery go through `ssh-check`. Never rerun a failed
+`ssh-check` unchanged: read its JSON result (the last stderr line) and change
+something first. A `negative` result is an answer to act on; `check_failed`
+needs its cause fixed; `unreachable`, `auth_refused`, `host_key_mismatch` and
+`approval_required` stop the step until that is resolved. After a change, rerun
+it with `--fresh`.
+
 ## Configure a publisher and its sandbox together
 
 `role_config.RenderedRole` holds unit text and the configuration files that unit

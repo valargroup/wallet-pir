@@ -216,6 +216,22 @@ class PublisherTests(PublisherFixture, unittest.TestCase):
         self.ex.fail_probe = False
         self.target.rollback()
 
+    def test_failed_automatic_rollback_keeps_the_deploy_and_rollback_errors(self):
+        self.ex.fail_probe = True
+        self.ex.crash_on = ('disable', publisher.UNIT)
+        plan = self.target.plan()['plan_sha256']
+        with self.assertRaises(DeployError) as raised:
+            publisher.deploy_or_restore(self.target, self.binary, plan, self.serving_binary)
+        message = str(raised.exception)
+        self.assertIn('encrypted-answer probe failed', message)
+        self.assertIn('reply lost after completed service mutation', message)
+        failure = self.target.latest()['failure']
+        self.assertRegex(failure['deploy_error'], '^DeployError: .*encrypted-answer probe failed')
+        self.assertRegex(failure['rollback_error'], '^RemoteError: .*reply lost')
+        self.ex.fail_probe = False
+        self.assertEqual(self.target.rollback()['phase'], 'rolled-back')
+        self.assertEqual(self.target.latest()['failure'], failure)
+
     def test_foreign_managed_file_blocks_restore_before_stopping(self):
         self.deploy()
         self.ex.put('coordinator', publisher.CONFIG, 'foreign configuration')

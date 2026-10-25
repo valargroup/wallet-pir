@@ -105,9 +105,10 @@ class DeploymentNotificationsTests(unittest.TestCase):
                 patch.object(publisher, 'file_sha256', return_value='digest'), \
                 patch.object(deployment_alerts, 'failed') as resumed:
             target = cutover.return_value
+            target.request = request
             target.deploy.side_effect = RuntimeError('validation failed')
             target.latest.return_value = {'request': request, 'phase': 'verifying'}
-            target.rollback.side_effect = lambda: resumed.assert_called_once_with()
+            target.rollback.side_effect = lambda _error: resumed.assert_called_once_with()
             with self.assertRaisesRegex(RuntimeError, 'validation failed'):
                 publisher.dispatch(args, executor=self.monitor)
-            target.rollback.assert_called_once_with()
+            target.rollback.assert_called_once_with('RuntimeError: validation failed')

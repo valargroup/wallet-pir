@@ -430,7 +430,9 @@ rollback behavior.
 `publisher-cutover-restart` repeats cooperative shutdown, readiness and exact
 checks without replacing the rollback baseline. `publisher-cutover-rollback`
 and `publisher-cutover-reconcile` restore the saved edge, serving roles and
-publisher together, then repeat readiness and product probes. Only `publisher-cutover/3` journals are supported. Retired storage and HTTPS
+publisher together, then repeat readiness and product probes. A failed deploy
+rolls back automatically; if that rollback also fails, the journal's `failure`
+keeps `deploy_error` and `rollback_error` as separate fields. Only `publisher-cutover/3` journals are supported. Retired storage and HTTPS
 handoff fields are rejected, including for recovery. Historical migrations must
 be closed before installing this tool version; use their pinned original package
 when inspecting their retained records.
