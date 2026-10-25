@@ -96,11 +96,12 @@ codegen-units = 16
 incremental = true
 
 # The fast runner caps the job at 6 GiB and deletes incremental sessions before
-# this compile. Non-incremental opt-level 1 still ran this host out of memory.
-# Opt-level 0 with one codegen unit stays inside the cap. Deploy binaries stay
-# on the fat-LTO release profile above. Fast tests link dependencies that are
+# this compile. One codegen unit of this host runs out of memory sooner than
+# several smaller ones. Match the fast profile's unit count, skip the
+# incremental session, and leave optimization at 1. Deploy binaries stay on
+# the fat-LTO release profile above. Fast tests link dependencies that are
 # still fully optimized.
 [profile.release-fast.package.pir-query-server]
-opt-level = 0
-codegen-units = 1
+opt-level = 1
+codegen-units = 16
 incremental = false

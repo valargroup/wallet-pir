@@ -384,8 +384,9 @@ fast 6 GiB cap and the OOM kill drops the runner; one stays inside the cap
 and reuses the existing target. Before that compile, main deletes incremental
 sessions in the warm target. A killed rustc can leave a session that the next
 compile of the same crate grows past 6 GiB. Fingerprints and finished artifacts
-stay, so an unchanged crate is not rebuilt. The fast query host uses non-incremental `release-fast` opt-level 0 and one
-codegen unit. Opt-level 1 of that crate still crossed 6 GiB.
+stay, so an unchanged crate is not rebuilt. The fast query host uses non-incremental `release-fast` opt-level 1 and 16
+codegen units. One codegen unit of that crate runs out of memory sooner than
+several smaller ones.
 History and detail compile on the stable command; Enhance and Status compile
 on the hint command, without history and detail. Deploy binaries stay on the
 fat-LTO release profile. A build cannot occupy the fast service's queue, but both services
