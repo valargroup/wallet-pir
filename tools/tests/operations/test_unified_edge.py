@@ -18,7 +18,7 @@ from tools.status.lib.routing import candidate as status_candidate
 from wallet_pir_ops.deploy import coordinator_edge, descriptors
 from wallet_pir_ops.deploy.engine import DeployError
 from wallet_pir_ops.deploy.transaction import Journal
-from wallet_pir_ops.deploy.unified_edge import CONFIG, DNS_SOURCE, HOST, REFUSED, SERVED, UnifiedEdge, candidate, digest
+from wallet_pir_ops.deploy.unified_edge import CONFIG, DNS_SOURCE, HOST, REDIRECTED, REFUSED, SERVED, UnifiedEdge, candidate, digest
 
 ENHANCE_URL = 'https://enhance-pir.valargroup.dev'
 TEMPLATE = coordinator_edge.TEMPLATE.read_text()
@@ -40,7 +40,8 @@ class Host:
         self.writes = []
         self.held = False
         self.reloads = 0
-        self.codes = {path: '200' for path in SERVED} | {path: '404' for path in REFUSED}
+        self.codes = ({path: '200' for path in SERVED} | {path: '302' for path in REDIRECTED}
+                      | {path: '404' for path in REFUSED})
 
     @contextmanager
     def lock(self):

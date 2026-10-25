@@ -21,6 +21,10 @@ pattern = "tools/deploy/*/*.example.json"
 reason = "Typed host configuration examples consumed by the publisher and query-server checks."
 
 [[allow_data]]
+pattern = "tools/deploy/query-server/install-node.json"
+reason = "The one configuration the query node installer release renders and ships."
+
+[[allow_data]]
 pattern = "tools/enhance/deploy/*.example.json"
 reason = "Public examples for the maintained deployment commands."
 

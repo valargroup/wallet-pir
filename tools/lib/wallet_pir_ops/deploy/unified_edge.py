@@ -6,7 +6,7 @@ is never replaced with the rendered template. This operation adds the
 one site when it differs, and leaves every other byte of the live file alone.
 Plan pins the complete file and host identity. Deploy validates the candidate,
 saves both versions in durable journals, reloads Caddy and probes the unified
-host on the coordinator: canonical routes answer 200, legacy and operator
+host on the coordinator: canonical routes answer 200, the installer 302, legacy and operator
 paths 404. Any failure restores the exact previous file. Rollback refuses
 foreign changes.
 """
@@ -33,6 +33,8 @@ SERVED = ('/enhance/v1/init', '/status/v1/init', '/transparent/v1/shards',
           '/transparent/v1/filters/shards', '/receiver/v1/inventory')
 REFUSED = ('/metrics', '/v1/enhance/init', '/v1/status/init', '/v2/shards', '/v1/receiver/inventory',
            '/receiver/v1/health')
+# The installer route redirects to the script kept in this repository.
+REDIRECTED = ('/install',)
 PROBE_ATTEMPTS = 12
 PROBE_INTERVAL = 10
 DNS_SOURCE = '/opt/enhance-pir/infra/production/wallet-unified-dns.tf'
@@ -216,11 +218,12 @@ class UnifiedEdge:
                          '--resolve', HOST + ':443:127.0.0.1', 'https://' + HOST + path], 40)
 
     def probe(self):
-        """Every canonical route answers 200 and every refused path 404.
+        """Every canonical route answers 200, the installer 302 and every refused path 404.
 
         Retries cover certificate issuance after the first install.
         """
-        expected = {path: '200' for path in SERVED} | {path: '404' for path in REFUSED}
+        expected = ({path: '200' for path in SERVED} | {path: '302' for path in REDIRECTED}
+                    | {path: '404' for path in REFUSED})
         for attempt in range(PROBE_ATTEMPTS):
             try:
                 observed = {path: self.status_code(path) for path in expected}

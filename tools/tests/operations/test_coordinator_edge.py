@@ -66,7 +66,7 @@ class Rendering(unittest.TestCase):
     def test_unified_site_serves_only_canonical_prefixes_and_never_itself(self):
         unified = site(rendered(), UNIFIED_HOST)
         handled = re.findall(r'(?m)^\thandle (\S+) \{$', unified)
-        self.assertEqual(sorted(handled), sorted(['/enhance/v1/*', '/enhance/v1/query', '/receiver/v1/*', '/status/v1/*',
+        self.assertEqual(sorted(handled), sorted(['/enhance/v1/*', '/enhance/v1/query', '/install', '/receiver/v1/*', '/status/v1/*',
                                            '/transparent/v1/*', '/transparent/v1/filters/shards*',
                                            '/transparent/v1/filters/parents/*']))
         self.assertNotIn(UNIFIED_HOST, unified.split('{', 1)[1])

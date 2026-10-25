@@ -1,0 +1,66 @@
+name: Release query server
+
+# Publishes the archive the one-line query node installer
+# (tools/deploy/query-server/install.sh) downloads: the CPU native binary, and
+# the unit and configuration rendered from install-node.json by the same role
+# renderer the fleet uses. After a release, pin its tag and archive checksum in
+# install.sh.
+on:
+  push:
+    tags: ['query-server-v*']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-query-server-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CFLAGS: -mpclmul
+  CXXFLAGS: -mpclmul
+  # install.sh refuses CPUs without these features.
+  RUSTFLAGS: -C target-cpu=x86-64-v3 -C target-feature=+pclmulqdq
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/rust-setup
+        with:
+          lane: release
+          scope: query-server
+      - name: Check the installer
+        run: python3 -B -m unittest tools.tests.operations.test_query_installer tools.tests.operations.test_query_role
+      - name: Build all supported query products together
+        run: cargo build --locked --release -p pir-query-server --features enhance,status,transparent-history,transparent-detail,native-reinspiring
+      - name: Render and check the node configuration
+        run: |
+          out=.local-pir/query-release
+          mkdir -p "$out"
+          python3 tools/scripts/wallet-pir-roles.py --service query-server --role combined \
+            --settings tools/deploy/query-server/install-node.json --release /opt/wallet-pir-query/current > "$RUNNER_TEMP/rendered.json"
+          jq -r '.files["/etc/wallet-pir-query/query-server.json"]' "$RUNNER_TEMP/rendered.json" > "$out/query-server.json"
+          jq -r '.unit' "$RUNNER_TEMP/rendered.json" > "$out/wallet-pir-query.service"
+          cp "$CARGO_TARGET_DIR/release/pir-query-server" "$out/"
+          printf '%s\n' "$GITHUB_SHA" > "$out/revision"
+          "$out/pir-query-server" --config "$out/query-server.json" --check
+      - name: Package
+        run: |
+          archive="pir-query-server-${GITHUB_REF_NAME}-linux-x86_64.tar.gz"
+          tar -C .local-pir/query-release -czf "$archive" pir-query-server query-server.json wallet-pir-query.service revision
+          sha256sum "$archive" > SHA256SUMS
+          cat SHA256SUMS
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "$GITHUB_REF_NAME" \
+            --notes "Query node installer release from $GITHUB_SHA. Install: curl -fsSL https://wallet-pir.valargroup.dev/install | sudo bash -s -- --version $GITHUB_REF_NAME" \
+            "pir-query-server-${GITHUB_REF_NAME}-linux-x86_64.tar.gz" SHA256SUMS
