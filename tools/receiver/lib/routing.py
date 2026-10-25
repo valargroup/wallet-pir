@@ -40,9 +40,15 @@ def candidate(text, request):
     start, end = coordinator_edge.site_span(text, host)
     site = text[start:end]
     if phase == 'distribution':
-        block = ('\t@provider path /.well-known/pir-service-discovery /provider/receiver/v1/*\n'
-                 '\thandle @provider {\n\t\treverse_proxy ' + request['publisher_listen'] + '\n\t}\n\n')
+        previous = ('\t@provider path /.well-known/pir-service-discovery /provider/receiver/v1/*\n'
+                    '\thandle @provider {\n\t\treverse_proxy ' + request['publisher_listen'] + '\n\t}\n\n')
+        block = ('\t@provider path /provider/receiver/v1/*\n'
+                 '\thandle @provider {\n\t\treverse_proxy ' + request['publisher_listen'] + '\n\t}\n\n'
+                 '\thandle /.well-known/pir-service-discovery {\n\t\treverse_proxy 127.0.0.1:18381\n\t}\n\n')
         if '@provider' in site:
+            if site.count(previous) == 1:
+                site = site.replace(previous, block)
+                return text[:start] + site + text[end:]
             require(site.count(block) == 1 and site.count('@provider') == 2,
                     'existing provider routes differ from the requested distribution')
             return text
@@ -221,7 +227,8 @@ class Routing:
         journal = Journal.load(self.state_dir, self.service_name, identifier)
         require(journal is not None and journal.data['request'] == self.request, 'routing transaction/request mismatch')
         latest = Journal.load(self.state_dir, self.service_name)
-        require(latest.id == journal.id, 'roll back the later routing transaction first')
+        require(latest.id == journal.id or latest.status == 'rolled-back',
+                'roll back the later routing transaction first')
         with self.lock_factory() as self.lock:
             mutation_fence(self.inventory, self.ex, self.lock)
             self.restore(journal)

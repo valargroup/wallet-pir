@@ -62,6 +62,7 @@ class ReceiverRouting(unittest.TestCase):
         result = self.deploy(routing)
         after = self.host.read('coordinator', CONFIG)
         self.assertIn('/provider/receiver/v1/*', after)
+        self.assertIn('handle /.well-known/pir-service-discovery {\n\t\treverse_proxy 127.0.0.1:18381', after)
         self.assertIn('handle @wallet {\n  reverse_proxy 10.70.0.11:18380', after)
         self.assertEqual(candidate(after, routing.request), after)
         routing.rollback(result['transaction'])
@@ -91,6 +92,8 @@ class ReceiverRouting(unittest.TestCase):
         self.host.failure = 'exact'
         with self.assertRaises(DeployError):
             self.deploy(routing)
+        routing.rollback(result['transaction'])
+        self.assertEqual(self.host.files[CONFIG], before)
 
     def test_changed_plan_foreign_edits_and_interruption_do_not_lose_the_predecessor(self):
         routing = self.routing('distribution')

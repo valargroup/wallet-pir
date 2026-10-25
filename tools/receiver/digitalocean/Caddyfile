@@ -29,9 +29,13 @@ receiver-pir.valargroup.dev {
 
 	# The Receiver host publishes prepared inputs; queries run on the configured
 	# existing query host. Set RECEIVER_QUERY_UPSTREAM during the approved cutover.
-	@provider path /.well-known/pir-service-discovery /provider/receiver/v1/*
+	@provider path /provider/receiver/v1/*
 	handle @provider {
 		reverse_proxy 127.0.0.1:18380
+	}
+
+	handle /.well-known/pir-service-discovery {
+		reverse_proxy 127.0.0.1:18381
 	}
 
 	handle {

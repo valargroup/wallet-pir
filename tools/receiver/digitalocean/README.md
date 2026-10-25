@@ -27,6 +27,9 @@ The `receiver-pir` bundle contains `pir-publisher`, `pir-query-server` and
 `/opt/receiver-pir`, and renders the root publisher configuration from inventory.
 Its root chain section owns RPC settings. Use the existing
 `/srv/receiver-pir/index` to resume ingestion without reindexing.
+Place its non-secret configuration at `/etc/receiver-pir-publisher.json` so the
+`receiver-pir` account can read it. Keep `/etc/receiver-pir` root-only for the
+audit environment files; systemd reads those before changing user.
 
 The optional `receiver.query` role renders a Receiver-only root query host;
 alternatively enable Receiver in the root query-server role's combined settings.
