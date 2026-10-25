@@ -16,6 +16,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[3]
 sys.path[:0] = [str(ROOT), str(ROOT / 'tools/lib'), str(ROOT / 'tools/tests/operations/deploy')]
 from fake_fleet import FakeFleet, sha256  # noqa: E402
+from wallet_pir_ops import contract  # noqa: E402
 from wallet_pir_ops.deploy import cli, descriptors  # noqa: E402
 from tools.transparent.lib import binary_upgrade  # noqa: E402
 
@@ -735,7 +736,7 @@ class ProviderHistoryUpgrade(UnifiedOwner, Harness):
         self.discovery = (200, json.dumps({'service': 'pir-publisher', 'version': '1.0.0'}))
         http_get = self.fake.http_get
         self.fake.http_get = lambda host, url, timeout=5: (
-            self.discovery if url == PUBLISHER_ORIGIN + binary_upgrade.DISCOVERY_PATH else http_get(host, url, timeout))
+            self.discovery if url == PUBLISHER_ORIGIN + contract.DISCOVERY_PATH else http_get(host, url, timeout))
         self.write_request()
         self.fake.log.clear()
 
