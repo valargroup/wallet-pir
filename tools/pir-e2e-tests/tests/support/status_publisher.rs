@@ -99,7 +99,10 @@ impl StatusPublisher {
         let renew_current = current.clone();
         let renew_objects = objects.clone();
         let renew = Arc::new(move || {
+            let mut current = renew_current.lock().unwrap();
             let mut refreshed = inventory.clone();
+            refreshed.manifest.generation =
+                current.publication.as_ref().unwrap().descriptor.generation + 1;
             refreshed.manifest.observed_ms = now_ms();
             let bytes = serde_json::to_vec(&refreshed).unwrap();
             let object = ObjectReference::for_bytes(&bytes);
@@ -107,7 +110,6 @@ impl StatusPublisher {
                 .lock()
                 .unwrap()
                 .insert(object.sha256.clone(), bytes);
-            let mut current = renew_current.lock().unwrap();
             *current = Current {
                 scope: scope(NETWORK, SALT),
                 sequence: current.sequence + 1,
