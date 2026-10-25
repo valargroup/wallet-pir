@@ -1,18 +1,15 @@
-//! Serving the public half of a published shard set.
+//! Loading the public half of a published shard set.
 //!
 //! The failure this guards against is not a crash. A range filter that does not
 //! match the digest its map publishes still parses, still answers queries, and
 //! answers them *wrongly* — a wallet testing its scripts against it would
 //! under-match and skip history it should have retrieved, then advance its
-//! coverage over the gap. That is a silent wrong answer, so the service refuses
-//! to start rather than serve it.
+//! coverage over the gap. That is a silent wrong answer, so loading refuses
+//! the set rather than accept it.
 
 use zakura_pir_publisher::transparent::filter as transparent_filter;
 
-use axum::body::Body;
-use axum::http::{Request, StatusCode};
 use std::path::Path;
-use tower::ServiceExt;
 use transparent_filter::digest::filter_hash;
 use transparent_filter::wire::{SealParameters, ShardMap, ShardMapEntry};
 use transparent_publisher::history::shard_filters::ShardFilters;
@@ -142,103 +139,4 @@ fn a_set_missing_a_filter_is_refused() {
     publish(dir.path(), false);
     std::fs::remove_file(dir.path().join(format!("{:064x}", 2u64)).join("filter.bin")).unwrap();
     assert!(ShardFilters::open(dir.path()).is_err());
-}
-
-#[tokio::test]
-async fn the_routes_serve_the_map_and_each_filter() {
-    let dir = tempfile::tempdir().unwrap();
-    publish(dir.path(), false);
-    let filters = ShardFilters::open(dir.path()).unwrap();
-    let expected_digest = filters.map_digest();
-
-    let store = transparent_publisher::ingest::store::FilterStore::open(
-        dir.path().join("filter-store"),
-        transparent_filter::PROFILE,
-        GENESIS,
-        100,
-    )
-    .unwrap();
-    let state = transparent_publisher::history::service::ServiceState::new(store)
-        .with_shard_filters(filters);
-    let app = transparent_publisher::history::service::router(state);
-
-    let response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/v2/filters/shards")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    // The digest is published as a header so a wallet can pin the revision it
-    // synced against without hashing the body itself.
-    assert_eq!(
-        response
-            .headers()
-            .get("x-shard-map-sha256")
-            .unwrap()
-            .to_str()
-            .unwrap(),
-        expected_digest
-    );
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let served: ShardMap = serde_json::from_slice(&body).unwrap();
-    assert_eq!(served.shards.len(), 2);
-
-    let response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/v2/filters/shards/1/filter")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    assert_eq!(bytes.to_vec(), vec![8u8; 64]);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/v2/filters/shards/9/filter")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::NOT_FOUND);
-}
-
-/// Without a set the routes must say so rather than 500 or answer emptily: the
-/// service is expected to run with no published set at all.
-#[tokio::test]
-async fn without_a_set_the_shard_routes_are_not_found() {
-    let dir = tempfile::tempdir().unwrap();
-    let store = transparent_publisher::ingest::store::FilterStore::open(
-        dir.path(),
-        transparent_filter::PROFILE,
-        GENESIS,
-        100,
-    )
-    .unwrap();
-    let app = transparent_publisher::history::service::router(
-        transparent_publisher::history::service::ServiceState::new(store),
-    );
-    for uri in ["/v2/filters/shards", "/v2/filters/shards/0/filter"] {
-        let response = app
-            .clone()
-            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{uri}");
-    }
 }

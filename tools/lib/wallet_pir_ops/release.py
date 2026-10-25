@@ -24,7 +24,6 @@ BINARIES = {
     'enhance-pir-native': ['pir-publisher', 'pir-query-server', 'enhance-pir-cli', 'enhance-pir-load-test'],
     # GPU hosts run this query server, not the publisher. The clients are diagnostics.
     'enhance-pir-native-cuda': ['pir-query-server', 'enhance-pir-cli', 'enhance-pir-load-test'],
-    'transparent-filter': ['pir-publisher'],
     # Transparent history and txid display processes run pir-query-server
     # (features `transparent-history,transparent-detail`) with `--config`; the
     # admin tools come from transparent-tools.
@@ -58,8 +57,6 @@ FILES = {
         'tools/pir-e2e-tests/tests/fixtures/ironwood-canonical-record-0.hex',
         'tools/pir-e2e-tests/tests/fixtures/ironwood-canonical-record-1.hex',
         'tools/enhance/deploy/workers.example.json'],
-    'transparent-filter': ['tools/transparent/deploy/transparent-filter-server.service',
-                           'tools/transparent/deploy/transparent-filters.example.json'],
     'transparent-shard': [],
     'transparent-publisher': [],
     'transparent-txid-display': ['tools/txid/deploy/transparent-txid-display-worker.service.in',

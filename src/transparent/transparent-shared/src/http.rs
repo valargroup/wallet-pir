@@ -16,10 +16,6 @@ pub const CANONICAL_PREFIX: &str = "/transparent/v1";
 /// Deployed alias of the shard, filter-shard and transaction-detail
 /// operations (`/shards/...`, `/filters/shards/...`, `/txid/...`).
 pub const LEGACY_PREFIX: &str = "/v2";
-/// Deployed alias of the compact-filter operations (`/filters/info`,
-/// `/filters/chain`, `/filters/digests`, `/filters/range`). Only `/filters/*`
-/// suffixes are public under it; `/v1/health` and `/v1/ready` stay private.
-pub const LEGACY_FILTERS_PREFIX: &str = "/v1";
 
 fn suffix_under<'a>(path: &'a str, prefix: &str) -> Option<&'a str> {
     path.strip_prefix(prefix).filter(|s| s.starts_with('/'))
@@ -31,21 +27,12 @@ pub fn shard_operation(path: &str) -> Option<&str> {
     suffix_under(path, CANONICAL_PREFIX).or_else(|| suffix_under(path, LEGACY_PREFIX))
 }
 
-/// The operation suffix of any wallet-facing Transparent path: a
-/// [`shard_operation`] or a `/filters/*` operation under
-/// [`LEGACY_FILTERS_PREFIX`].
-pub fn public_operation(path: &str) -> Option<&str> {
-    shard_operation(path).or_else(|| {
-        suffix_under(path, LEGACY_FILTERS_PREFIX).filter(|s| s.starts_with("/filters/"))
-    })
-}
-
 // Preserve historical classification even for product-shaped 404s. These
 // mappings are product policy; the shared observer receives only fixed labels.
 // Canonical and legacy paths of one operation share its label.
 /// Only a fixed endpoint category survives classification. No dynamic path segment is retained.
 fn endpoint(path: &str) -> Option<&'static str> {
-    let operation = public_operation(path).unwrap_or_default();
+    let operation = shard_operation(path).unwrap_or_default();
     if operation == "/shards/init" {
         Some("init")
     } else if operation == "/shards" || operation == "/filters/shards" {
@@ -90,7 +77,7 @@ mod tests {
             ("/v2/shards/init", "init"),
             ("/v2/shards", "map"),
             ("/v2/filters/shards", "map"),
-            ("/v1/filters/private", "filter"),
+            ("/v2/filters/shards/3/filter", "filter"),
             ("/v2/shards/private/revisions/digest/manifest", "manifest"),
             ("/v2/shards/private/revisions/digest/setup/pages/0", "setup"),
             (
@@ -107,10 +94,10 @@ mod tests {
             ),
         ] {
             assert_eq!(endpoint(path), Some(label));
-            let canonical = public_operation(path).map(|op| format!("{CANONICAL_PREFIX}{op}"));
+            let canonical = shard_operation(path).map(|op| format!("{CANONICAL_PREFIX}{op}"));
             assert_eq!(endpoint(&canonical.unwrap()), Some(label), "{path}");
         }
-        assert_eq!(endpoint("/transparent/v1/filters/info"), Some("filter"));
+        assert_eq!(endpoint("/v1/filters/info"), None);
         assert_eq!(endpoint("/metrics"), None);
         assert_eq!(endpoint("/v1/health"), None);
         assert_eq!(endpoint("/transparent/v1x/shards/init"), None);

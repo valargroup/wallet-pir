@@ -691,8 +691,8 @@ class BoundaryTests(unittest.TestCase):
 
 class ReleaseTests(unittest.TestCase):
     def bundle(self, directory, mutate=None):
-        data = {name: b'binary' for name in release.BINARIES['transparent-filter']}
-        data.update({Path(name).name: b'unit' for name in release.FILES['transparent-filter']})
+        data = {name: b'binary' for name in release.BINARIES['transparent-txid-display']}
+        data.update({Path(name).name: b'unit' for name in release.FILES['transparent-txid-display']})
         data['revision'] = (SHA + '\n').encode()
         data['SHA256SUMS'] = ''.join(f'{hashlib.sha256(v).hexdigest()}  {k}\n' for k, v in data.items()).encode()
         if mutate:
@@ -708,13 +708,13 @@ class ReleaseTests(unittest.TestCase):
     def test_verified_binary_is_executable(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            release.extract(self.bundle(root), root / 'artifact', SHA, 'transparent-filter')
+            release.extract(self.bundle(root), root / 'artifact', SHA, 'transparent-txid-display')
             self.assertTrue((root / 'artifact/pir-publisher').stat().st_mode & 0o111)
 
     def test_wrong_sha_tampered_missing_extra_or_path_escape_refused_before_write(self):
         mutations = [lambda d: d.update(revision=b'b' * 40),
                      lambda d: d.update({'pir-publisher': b'tampered'}),
-                     lambda d: d.pop('transparent-filter-server.service'),
+                     lambda d: d.pop('transparent-txid-display-worker.service.in'),
                      lambda d: d.update({'extra': b'x'}),
                      lambda d: d.update({'../outside': b'x'}),
                      lambda d: d.update(SHA256SUMS=d['SHA256SUMS'] + d['SHA256SUMS'])]
@@ -722,7 +722,7 @@ class ReleaseTests(unittest.TestCase):
             with self.subTest(mutate=mutate), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 with self.assertRaises(ValueError):
-                    release.extract(self.bundle(root, mutate), root / 'artifact', SHA, 'transparent-filter')
+                    release.extract(self.bundle(root, mutate), root / 'artifact', SHA, 'transparent-txid-display')
                 self.assertFalse((root / 'artifact').exists())
 
     def test_only_completed_main_full_ci_is_qualified(self):
@@ -734,10 +734,10 @@ class ReleaseTests(unittest.TestCase):
 
     def test_missing_and_expired_artifacts_refused(self):
         run = dict(id=1, head_sha=SHA, head_branch='main', event='push', status='completed', conclusion='success', path='.github/workflows/ci-full.yml')
-        for artifacts in [[], [{'name': f'transparent-filter-{SHA}', 'expired': True}]]:
+        for artifacts in [[], [{'name': f'transparent-txid-display-{SHA}', 'expired': True}]]:
             with patch.dict('os.environ', {'GITHUB_REPOSITORY': 'org/repo'}), patch.object(release, 'api', side_effect=[{'workflow_runs': []}, {'workflow_runs': [run]}, {'artifacts': artifacts}]):
                 with self.assertRaises(ValueError):
-                    release.resolve(SHA, 'transparent-filter')
+                    release.resolve(SHA, 'transparent-txid-display')
 
     def test_all_product_bundles_round_trip(self):
         with tempfile.TemporaryDirectory() as tmp:

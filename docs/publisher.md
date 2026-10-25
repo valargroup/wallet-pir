@@ -453,14 +453,9 @@ The two Transparent features select separate configuration sections and owners.
 
 Long-running services use `pir-publisher --config FILE`. Existing history and
 display settings live under `transparent_history.settings` and
-`transaction_details.settings`. The optional `transparent_filters` section,
-compiled by `transparent-history`, runs filter ingestion from the root chain
-follower and the HTTP service with its own state and listener. It extends the
-existing filter store with the same transparent extraction History uses and
-needs no historical event journal. Use the packaged
-`tools/transparent/deploy/transparent-filters.example.json` when installing the
-filter unit; install its reviewed configuration as
-`/etc/wallet-pir/transparent-filters.json` before starting it.
+`transaction_details.settings`. The former per-block `transparent_filters`
+section is removed, and a configuration that still names it is refused; delete
+it, and the filter unit that ran it, before upgrading.
 
 Maintenance uses root subcommands:
 

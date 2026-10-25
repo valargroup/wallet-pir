@@ -18,8 +18,7 @@ from wallet_pir_ops import release  # noqa: E402
 FAMILIES = {'ops': 'Operations', 'receiver': 'Receiver',
             'transparent': 'Transparent', 'enhance': 'Enhance'}
 KINDS = {'ops': ['wallet-pir-ops'], 'receiver': ['receiver-pir'],
-         'transparent': ['transparent-filter', 'transparent-shard', 'transparent-publisher',
-                         'transparent-txid-display'],
+         'transparent': ['transparent-shard', 'transparent-publisher', 'transparent-txid-display'],
          'enhance': ['enhance-pir', 'enhance-pir-native', 'status-pir', 'pir-publisher']}
 
 

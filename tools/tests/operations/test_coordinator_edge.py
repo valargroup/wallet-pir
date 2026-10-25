@@ -2,8 +2,8 @@
 
 The renderer and the per-site helpers are tested directly. The integration test
 runs the rendered Caddyfile in a real Caddy (skipped when `caddy` is not on
-PATH) against recording upstreams: loopback HTTP services for Enhance, Status
-and Transparent filters, and HTTPS origins for Transparent and Receiver whose
+PATH) against recording upstreams: loopback HTTP services for Enhance and
+Status, and HTTPS origins for Transparent and Receiver whose
 certificates chain to a test CA. The only edits to the rendered file are test
 plumbing: global ports and storage, internal TLS instead of ACME, the
 upstream dial addresses, and trust in the test CA. Routes, Host and SNI
@@ -67,8 +67,7 @@ class Rendering(unittest.TestCase):
         unified = site(rendered(), UNIFIED_HOST)
         handled = re.findall(r'(?m)^\thandle (\S+) \{$', unified)
         self.assertEqual(sorted(handled), sorted(['/enhance/v1/*', '/enhance/v1/query', '/receiver/v1/*', '/status/v1/*',
-                                           '/transparent/v1/*', '/transparent/v1/filters/*',
-                                           '/transparent/v1/filters/shards*',
+                                           '/transparent/v1/*', '/transparent/v1/filters/shards*',
                                            '/transparent/v1/filters/parents/*']))
         self.assertNotIn(UNIFIED_HOST, unified.split('{', 1)[1])
         for legacy in ('/v1/enhance', '/v1/status', '/v1/filters', '/v2/', '/v1/receiver', '/apm', '/provider/'):
@@ -94,7 +93,7 @@ class Rendering(unittest.TestCase):
                                   '\thandle /v1/status/* {', 1)
         guarded = guard(text)
         unified = site(guarded, UNIFIED_HOST)
-        self.assertEqual(unified.count('transparent fleet maintenance'), 2)
+        self.assertEqual(unified.count('transparent fleet maintenance'), 1)
         self.assertIn('reverse_proxy https://' + TRANSPARENT_HOST, unified)
         self.assertNotIn('127.0.0.1:8090', unified)
 
@@ -180,7 +179,7 @@ class LiveEdge(unittest.TestCase):
             (root / (host + '.key')).write_bytes(key)
             origins[host] = Recorder(host, (root / (host + '.pem'), root / (host + '.key')))
         cls.upstreams = {'enhance': Recorder('enhance'), 'status': Recorder('status'),
-                         'filters': Recorder('filters'), 'transparent': origins[TRANSPARENT_HOST],
+                         'transparent': origins[TRANSPARENT_HOST],
                          'receiver': origins[RECEIVER_HOST]}
         parents = root / 'parents'
         parents.mkdir()
@@ -208,7 +207,7 @@ class LiveEdge(unittest.TestCase):
 
     @classmethod
     def plumb(cls, text, root, parents):
-        ports = {'127.0.0.1:8082': 'enhance', '127.0.0.1:8492': 'status', '127.0.0.1:8090': 'filters'}
+        ports = {'127.0.0.1:8082': 'enhance', '127.0.0.1:8492': 'status'}
         for address, name in ports.items():
             text = text.replace('reverse_proxy ' + address, f'reverse_proxy 127.0.0.1:{cls.upstreams[name].port}')
         for host, name in ((TRANSPARENT_HOST, 'transparent'), (RECEIVER_HOST, 'receiver')):
@@ -268,7 +267,6 @@ class LiveEdge(unittest.TestCase):
                 self.assertEqual((seen['method'], seen['path'], seen['body']), ('POST', backend_path, query))
                 self.assertEqual(seen['forwarded_for'], '127.0.0.1')
         for path, name in (('/enhance/v1/init', 'enhance'), ('/status/v1/session/00', 'status'),
-                           ('/transparent/v1/filters/info', 'filters'), ('/transparent/v1/filters/range', 'filters'),
                            ('/transparent/v1/filters/shards', 'transparent'),
                            ('/transparent/v1/filters/shards/3/filter', 'transparent'),
                            ('/receiver/v1/inventory', 'receiver')):
@@ -284,9 +282,6 @@ class LiveEdge(unittest.TestCase):
                      '/transparent/v1/filters/shards/3/filter'):
             self.assertEqual(self.request(UNIFIED_HOST, 'GET', path), (200, TRANSPARENT_HOST.encode()))
             self.assertEqual(self.only('transparent')['path'], path.replace('/transparent/v1', '/v2'))
-        path = '/transparent/v1/filters/range?start=1&end=2'
-        self.assertEqual(self.request(UNIFIED_HOST, 'GET', path)[0], 200)
-        self.assertEqual(self.only('filters')['path'], '/v1/filters/range?start=1&end=2')
 
     def test_cross_origin_hops_name_the_origin_as_host_and_sni(self):
         for host, name in ((TRANSPARENT_HOST, 'transparent'), (RECEIVER_HOST, 'receiver')):
@@ -312,9 +307,8 @@ class LiveEdge(unittest.TestCase):
                 self.assertEqual(self.request(ENHANCE_HOST, 'POST', path, query)[0], 200)
                 seen = self.only(name)
                 self.assertEqual((seen['method'], seen['path'], seen['body']), ('POST', path, query))
-        self.assertEqual(self.request(ENHANCE_HOST, 'GET', '/v1/filters/info')[0], 200)
-        self.only('filters')
-        for path in ('/metrics', '/receiver/v1/query', '/transparent/v1/query'):
+        for path in ('/metrics', '/receiver/v1/query', '/transparent/v1/query', '/v1/filters/info',
+                     '/transparent/v1/filters/range'):
             self.assertEqual(self.request(ENHANCE_HOST, 'GET', path)[0], 404)
         self.nothing_reached()
 

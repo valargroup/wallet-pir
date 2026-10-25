@@ -97,7 +97,6 @@
       "publication_binding_http",
       "cache_recovery_http",
       "rpc",
-      "service_round_trip",
       "shard_filters",
       "transparent_host_processes",
       "transparent_provider_installation",

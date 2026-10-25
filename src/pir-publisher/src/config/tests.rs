@@ -160,7 +160,6 @@ fn uncompiled_sections_are_rejected_even_when_disabled() {
         ("receiver", cfg!(feature = "receiver")),
         ("transparent_history", cfg!(feature = "transparent-history")),
         ("transaction_details", cfg!(feature = "transparent-detail")),
-        ("transparent_filters", cfg!(feature = "transparent-history")),
     ] {
         if !compiled {
             let raw = serde_json::json!({"management_listen":"127.0.0.1:18080", section:{"enabled":false}});
@@ -225,42 +224,11 @@ fn history_publication_rejects_retired_fleet_and_mode_keys() {
         );
     }
 }
-#[cfg(feature = "transparent-history")]
-#[test]
-fn filter_and_history_publishers_cannot_write_the_same_state() {
-    let example: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../../tools/deploy/publisher/publisher.example.json"
-    ))
-    .unwrap();
-    let mut history = example["transparent_history"].clone();
-    history["settings"]["follow_journal"] = serde_json::json!(false);
-    let raw = serde_json::json!({"management_listen":"127.0.0.1:18080", "chain":example["chain"],
-    "transparent_history":history,
-    "transparent_filters":{"enabled":true,"settings":{
-        "data_dir":history["settings"]["data_dir"]
-    }}});
-    let config: Config = serde_json::from_value(raw).unwrap();
-    let error = config.validate().unwrap_err().to_string();
-    assert!(!error.contains("chain"), "{error}");
-}
 
-/// Filters and History read the node only through the root chain settings.
+/// History reads the node only through the root chain settings.
 #[cfg(feature = "transparent-history")]
 #[test]
-fn filter_and_history_settings_refuse_their_own_node_endpoint() {
-    for (key, value) in [
-        ("zakura_rpc_url", serde_json::json!("http://127.0.0.1:8232")),
-        ("zakura_cookie", serde_json::json!("/etc/node.cookie")),
-        ("poll_seconds", serde_json::json!(10)),
-    ] {
-        let mut filters = serde_json::json!({"data_dir": "/srv/filters"});
-        filters[key] = value;
-        assert!(
-            serde_json::from_value::<transparent_publisher::service::FilterConfig>(filters)
-                .is_err(),
-            "{key}"
-        );
-    }
+fn history_settings_refuse_their_own_node_endpoint() {
     let example: serde_json::Value = serde_json::from_str(include_str!(
         "../../../../tools/deploy/publisher/publisher.example.json"
     ))
@@ -313,7 +281,6 @@ fn enabled_products_require_settings_and_identify_the_product() {
         ("enhance", cfg!(feature = "enhance")),
         ("status", cfg!(feature = "status")),
         ("transparent_history", cfg!(feature = "transparent-history")),
-        ("transparent_filters", cfg!(feature = "transparent-history")),
         ("transaction_details", cfg!(feature = "transparent-detail")),
         ("receiver", cfg!(feature = "receiver")),
     ] {
