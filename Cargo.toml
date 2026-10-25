@@ -98,9 +98,9 @@ incremental = true
 # The fast runner caps the job at 6 GiB and deletes incremental sessions before
 # this compile. A from-scratch rustc of this host runs out of memory when a
 # few large codegen units are optimized together. Many small units keep that
-# rustc inside the cap; the fast compile also caps this crate's codegen
-# threads. Dependencies stay fully optimized, and deploy binaries stay on the
-# fat-LTO release profile above. There is no incremental session to poison.
+# rustc inside the cap. Stable rustc has no flag for a per-crate codegen
+# thread cap. Dependencies stay fully optimized, and deploy binaries stay on
+# the fat-LTO release profile above. There is no incremental session to poison.
 [profile.release-fast.package.pir-query-server]
 opt-level = 1
 codegen-units = 256

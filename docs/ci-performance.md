@@ -385,10 +385,9 @@ and reuses the existing target. Before that compile, main deletes incremental
 sessions in the warm target. A killed rustc can leave a session that the next
 compile of the same crate grows past 6 GiB. Fingerprints and finished artifacts
 stay, so an unchanged crate is not rebuilt. The fast query host uses non-incremental `release-fast` opt-level 1 and 256
-codegen units, and the fast compile caps that crate's codegen at four threads.
-One large codegen unit of that crate runs out of memory sooner than many
-smaller ones. The thread cap is applied by a wrapper on that compile step, so
-it is not part of the warm target identity and other crates stay fresh.
+codegen units. One large codegen unit of that crate runs out of memory sooner than many
+smaller ones. Stable rustc no longer accepts a per-crate codegen thread cap, so the unit
+count is what keeps a from-scratch rustc inside 6 GiB.
 History and detail compile on the stable command; Enhance and Status compile
 on the hint command, without history and detail. Deploy binaries stay on the
 fat-LTO release profile. A build cannot occupy the fast service's queue, but both services
