@@ -251,7 +251,7 @@ async fn health_serves_the_owners_report() {
 #[tokio::test]
 async fn health_reports_the_owners_fields_beside_its_own() {
     let reads = std::sync::Arc::new(AtomicUsize::new(0));
-    let fields: receiver_pir_server::HealthFields = {
+    let fields: pir_query_server::receiver::HealthFields = {
         let reads = reads.clone();
         std::sync::Arc::new(move || {
             let value = serde_json::json!({"reads": reads.load(Ordering::SeqCst), "serving": "x"});

@@ -2182,6 +2182,7 @@ dependencies = [
  "pir-query-server",
  "pir-service-discovery",
  "pir-sync-manager",
+ "receiver-indexer",
  "reqwest",
  "serde",
  "serde_json",
