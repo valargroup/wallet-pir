@@ -225,8 +225,7 @@ pub(crate) async fn publish_committed<E: pir_pipeline::publisher::PublisherExecu
     providers: &mut PayoutStore,
     serving: &Publications,
     state: &mut State,
-    distribution: Option<&crate::distribution::Distribution>,
-    executor: &E,
+    distribution: Option<(&crate::distribution::Distribution, &E)>,
 ) -> Result<()> {
     let genesis = store.config().genesis;
     let tip = store.tip()?;
@@ -235,7 +234,7 @@ pub(crate) async fn publish_committed<E: pir_pipeline::publisher::PublisherExecu
     }
     let epoch = serving.epoch();
     publish_filters(args, rpc, store, serving, genesis, &tip, epoch).await?;
-    if let Some(distribution) = distribution {
+    if let Some((distribution, executor)) = distribution {
         distribution.export(serving, executor).await?;
     }
     if serving.ready_at().is_some() {
@@ -255,7 +254,7 @@ pub(crate) async fn publish_committed<E: pir_pipeline::publisher::PublisherExecu
     }
     .publish(providers, state)
     .await?;
-    if let Some(distribution) = distribution {
+    if let Some((distribution, executor)) = distribution {
         distribution.export(serving, executor).await?;
     }
     Ok(())

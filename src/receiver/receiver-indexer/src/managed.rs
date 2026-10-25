@@ -395,8 +395,7 @@ impl<E: PublisherExecutor> Ingestion for Writer<E> {
             &mut self.providers,
             &self.publications,
             &mut self.state,
-            Some(&self.distribution),
-            &self.executor,
+            Some((&self.distribution, &self.executor)),
         )
         .await
     }

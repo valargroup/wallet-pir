@@ -24,8 +24,7 @@ use zakura_server_chain::{Network, NodeClient};
 const MAX_CHECK_ANCHORS: usize = 4096;
 
 #[cfg(test)]
-#[path = "../../receiver-store/tests/common/mod.rs"]
-mod common;
+use crate::probe::common;
 #[cfg(test)]
 #[path = "../../../pir-query-server/tests/support/status_tls.rs"]
 mod tls;
