@@ -77,6 +77,13 @@ class Fixture(unittest.TestCase):
         # Exercise their pinned archive inventory with today's integrity checks.
         release_inventory = patch.dict(RELEASE.BINARIES, C.CI_KINDS)
         release_inventory.start(); self.addCleanup(release_inventory.stop)
+        # Include the service unit required by the pinned source's filter
+        # bundle. Current release kinds no longer describe that archive.
+        release_files = patch.dict(RELEASE.FILES, {
+            'transparent-publisher': [],
+            'transparent-filter': ['transparent/ops/deploy/transparent-filter-server.service'],
+        })
+        release_files.start(); self.addCleanup(release_files.stop)
         self.data = {name: elf(name) for name in C.ARTIFACTS}
         pins = {name: hashlib.sha256(data).hexdigest() for name, data in self.data.items()}
         self.result = {'source_sha':C.SOURCE_SHA, 'status':'passed', 'build_exit':0, 'profile':'release',
@@ -122,6 +129,17 @@ class Fixture(unittest.TestCase):
 
 
 class Identity(Fixture):
+    def test_historical_filter_bundle_still_requires_its_service_unit(self):
+        archive_path = self.archives['transparent-filter']
+        with tarfile.open(archive_path, 'r:gz') as archive:
+            without_unit = [(member.name, archive.extractfile(member).read())
+                            for member in archive.getmembers()
+                            if member.name != 'transparent-filter-server.service']
+        incomplete = self.root/'missing-service.tar.gz'
+        incomplete.write_bytes(tar_bytes(without_unit))
+        with self.assertRaisesRegex(ValueError, 'inventory'):
+            C.read_ci(str(incomplete), 'transparent-filter', scratch=self.root)
+
     def test_fixture_archives_collect_all_eighteen_with_provenance(self):
         files = C.files(self.archives)
         self.assertEqual(set(files), {'provenance.json', *('artifacts/'+n for n in C.ARTIFACTS)})
