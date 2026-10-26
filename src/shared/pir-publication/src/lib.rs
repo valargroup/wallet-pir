@@ -18,6 +18,7 @@ mod object_file;
 mod object_installation;
 mod object_reference;
 mod object_verification;
+mod preparation_record;
 mod publication_authority;
 mod publication_envelope;
 mod published_objects;
@@ -44,6 +45,7 @@ pub use object_reference::{
     is_object_digest, object_digest, ObjectReference, ObjectReferenceError, OBJECTS_PATH,
 };
 pub use object_verification::{verify_object_file, ObjectVerification};
+pub use preparation_record::{is_sealed_object, PreparationRecord};
 pub use publication_authority::{
     AuthorityTransition, PublicationAuthority, PublicationAuthorityError,
 };
