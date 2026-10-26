@@ -51,7 +51,11 @@ opens APM's deployment window:
 Every host is prepared before anything restarts. If any component in a wave fails, the
 deploy stops: the components of that wave that had already moved are rolled back, and
 later waves never start. A partial mode refuses a release whose contract major differs
-from the live publisher's. `pir-deploy rollback <group|host>` swaps components back to
+from the live publisher's. `pir-deploy --dry-run <mode> ...` takes no lease and restarts
+nothing. On every selected host it unpacks the build, has the new binary accept the
+host's config, and runs that build's `pir-probe` against the service running now. Then
+it prints the waves that would restart. Components that share a host deploy one after
+another. `pir-deploy rollback <group|host>` swaps components back to
 their previous release, and `pir-deploy status` prints what each host runs.
 `pirctl adopt <component>` moves a unit that names a release path onto the `current`
 link without restarting it. It sets aside drop-ins that only repeat `ExecStart`.

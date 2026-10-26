@@ -426,6 +426,51 @@ PIRCTL_ROOT=%(hosts)s/$host PIRCTL_PROC=%(hosts)s/$host/proc exec %(pirctl)s "$@
         self.assertEqual(self.fleet.current(self.router, 'enhance-router'), SHA_A[:12])
         self.assertEqual(self.fleet.restarts(self.router, 'enhance-router.service'), 1)
 
+    def restart_counts(self):
+        return [self.fleet.restarts(root, unit) for root, unit in (
+            (self.coordinator, 'publisher.service'), (self.query, 'query.service'),
+            (self.worker, 'enhance-worker.service'), (self.router, 'enhance-router.service'))]
+
+    def test_a_dry_run_checks_every_host_and_restarts_nothing(self):
+        self.fleet.release(SHA_A)
+        self.assertEqual(self.run_driver('all', SHA_A).returncode, 0)
+        before = self.restart_counts()
+        self.fleet.release(SHA_B)
+        result = self.run_driver('--dry-run', 'all', SHA_B)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('== checked 3 components', result.stdout)
+        self.assertIn('wave 1 (enhance unified) would restart: query query, worker enhance-worker', result.stdout)
+        self.assertIn('enhance-router: probe passed', result.stderr)
+        self.assertIn('== dry run passed', result.stdout)
+        self.assertEqual(self.restart_counts(), before)
+        self.assertEqual(self.fleet.current(self.router, 'enhance-router'), SHA_A[:12])
+        self.assertFalse((self.coordinator / 'run/wallet-pir/deploy.lease').exists())
+
+    def test_a_dry_run_names_a_host_whose_config_the_new_build_refuses(self):
+        self.fleet.release(SHA_A)
+        self.assertEqual(self.run_driver('all', SHA_A).returncode, 0)
+        before = self.restart_counts()
+        self.fleet.release(SHA_B, markers=['BAD_CONFIG'])
+        result = self.run_driver('--dry-run', 'product', 'enhance', SHA_B)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('check failed on: worker enhance-worker router enhance-router', result.stderr)
+        self.assertIn('== dry run FAILED', result.stdout)
+        self.assertEqual(self.restart_counts(), before)
+
+    def test_components_sharing_a_host_deploy_in_turn_and_each_keeps_its_probe(self):
+        # The worker unpacks the release first and has no probe of its own.
+        self.fleet.host('status', [('status-worker', 'pir-query-server', ''),
+                                   ('status-router', 'pir-query-server', 'status')])
+        with self.inventory.open('a') as inventory:
+            inventory.write('status status-worker status 1\nstatus status-router status 2\n')
+        self.fleet.release(SHA_A)
+        result = self.run_driver('product', 'status', SHA_A)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        status = self.fleet.hosts / 'status'
+        self.assertEqual(self.fleet.current(status, 'status-worker'), SHA_A[:12])
+        self.assertEqual(self.fleet.current(status, 'status-router'), SHA_A[:12])
+        self.assertIn('status-router: probe passed', result.stderr)
+
     def test_a_held_lease_blocks_a_second_deploy(self):
         self.fleet.release(SHA_A)
         self.fleet.pirctl(self.coordinator, 'lease', 'take', 'ci', '600')
