@@ -5,7 +5,7 @@
 //! Status sources), one family per configured Transparent service (keys
 //! `quality.<service>.<rule>`), and the Transparent capacity family. Rules pick
 //! by service kind and source role, never by service name.
-use super::{services::Kind, ServiceView, Source, View};
+use super::{publication::Finding, services::Kind, ServiceView, Source, View};
 use pir_apm::incidents::{Condition, Incident};
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -36,6 +36,10 @@ pub struct Policy {
     pub unit_forecast_ratio: f64,
     pub unit_memory_ratio: f64,
     pub unit_memory_hold_seconds: u64,
+    /// How long a public origin may keep serving the previous map after a
+    /// publication before the origin check fires (see
+    /// [`Finding::LaggingOrigin`]). Other disagreement keeps 30 s.
+    pub origin_lag_hold_seconds: u64,
 }
 impl Default for Policy {
     fn default() -> Self {
@@ -61,6 +65,7 @@ impl Default for Policy {
             unit_forecast_ratio: 0.90,
             unit_memory_ratio: 0.85,
             unit_memory_hold_seconds: 600,
+            origin_lag_hold_seconds: 180,
         }
     }
 }
@@ -86,6 +91,7 @@ impl Policy {
             && self.rebuild_critical_seconds >= self.txid_rebuild_warning_seconds
             && self.prepare_critical_seconds >= self.prepare_warning_seconds
             && self.capacity_warning_days >= self.capacity_critical_days
+            && self.origin_lag_hold_seconds > 0
             && [
                 self.host_floor_ratio,
                 self.unit_forecast_ratio,
@@ -463,7 +469,14 @@ fn service_rules(a: &mut Adder, svc: &ServiceView, view: &View, now: u64, p: &Po
                 name,
                 verdict.filter(|_| publication_fresh).map(|v| !v),
                 "critical",
-                if key == "canonical" { 0 } else { 30 },
+                match key {
+                    "canonical" => 0,
+                    // Origins pick up a new publication within about a minute.
+                    _ if publication.finding() == Some(Finding::LaggingOrigin) => {
+                        p.origin_lag_hold_seconds
+                    }
+                    _ => 30,
+                },
                 publication.sampled_at,
                 observed,
                 "public anchor must be canonical; every origin must agree",
@@ -1400,6 +1413,7 @@ mod tests {
             .find(|c| c.key == "quality.transparent.publication_origins")
             .unwrap();
         assert_eq!(origins.firing, Some(true));
+        assert_eq!(origins.hold_seconds, 180, "a lagging origin is propagation");
         assert!(origins
             .observed
             .starts_with("lagging origin; expected map aaaa"));
@@ -1407,6 +1421,39 @@ mod tests {
             "https://b.example at 99: HTTP 200, map {}",
             "bb".repeat(32)
         )));
+    }
+
+    #[test]
+    fn origin_serving_an_unknown_map_keeps_the_short_hold() {
+        let mut svc = service("transparent", Kind::History);
+        svc.public_origins = vec!["https://a.example".into()];
+        svc.publication = publication::View {
+            sampled_at: 100,
+            canonical: Some(true),
+            origins_agree: Some(false),
+            map_sha256: Some("aa".repeat(32)),
+            map_after: Some("aa".repeat(32)),
+            previous_map: Some("bb".repeat(32)),
+            origins: vec![publication::Origin {
+                origin: "https://a.example".into(),
+                observed_at: 99,
+                http_status: Some(200),
+                map_sha256: Some("cc".repeat(32)),
+                failure: None,
+            }],
+            ..Default::default()
+        };
+        let v = view(
+            vec![svc],
+            vec![("r", source("transparent", "recent-replica", 100, &[]))],
+        );
+        let f = conditions(&v, 105, &Policy::default());
+        let origins = f.services["transparent"]
+            .iter()
+            .find(|c| c.key == "quality.transparent.publication_origins")
+            .unwrap();
+        assert_eq!((origins.firing, origins.hold_seconds), (Some(true), 30));
+        assert!(origins.observed.starts_with("map mismatch"));
     }
 
     #[test]

@@ -162,7 +162,8 @@ Optional `PIR_APM_ALERT_POLICY` names a JSON file. Fields and defaults:
     "host_floor_ratio": 0.2,
     "unit_forecast_ratio": 0.9,
     "unit_memory_ratio": 0.85,
-    "unit_memory_hold_seconds": 600
+    "unit_memory_hold_seconds": 600,
+    "origin_lag_hold_seconds": 180
   }
 }
 ```
@@ -630,7 +631,7 @@ txid display controller.
 | --- | --- | --- | --- | --- |
 | `inventory` | both | warning | roster or worker list invalid | 45 s |
 | `publication_canonical` | both | critical | published block hash differs from the node's | – |
-| `publication_origins` | both | critical | a public origin serves another map (only with origins) | 30 s |
+| `publication_origins` | both | critical | a public origin serves another map (only with origins) | 30 s; 180 s (`origin_lag_hold_seconds`) while every differing origin still serves the previous map |
 | `publication_*_coverage` | both | warning | that check unavailable | 45 s |
 | `publication_warning` | history | warning | oldest unpublished block > 30 s | – |
 | `publication_critical` | history | critical | oldest unpublished block > 60 s | 60 s |
