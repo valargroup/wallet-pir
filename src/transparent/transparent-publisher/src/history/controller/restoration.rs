@@ -107,6 +107,13 @@ pub(super) async fn serve_restored(
         {
             return Err("restored publication invalidated before serving".into());
         }
+        // This process already offered the publication as withdrawn under
+        // its startup revision, and query servers keep that withdrawal as
+        // final for the revision. Serve it live under a newer one.
+        authority.0.distribution_revision.store(
+            advance_distribution_revision(&config.publication_root)?,
+            Ordering::Release,
+        );
         authority
             .0
             .invalidated_from

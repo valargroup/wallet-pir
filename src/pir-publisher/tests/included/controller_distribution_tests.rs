@@ -2529,6 +2529,64 @@ async fn restarted_controller_does_not_serve_a_restored_anchor_the_node_replaced
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_restored_publication_goes_live_under_a_newer_revision_than_its_withdrawal() {
+    let startup = Startup::new().await;
+    let public = read_public(startup.directory.clone()).unwrap();
+    let Restore::Restored(found) = restore_public(&startup.config, &public).unwrap() else {
+        panic!("the fixture publication restores");
+    };
+    // As at startup: withdrawn under a freshly reserved revision until served.
+    let owner = authority(
+        &startup.directory,
+        Some(found.finalized),
+        startup._rpc.client.clone(),
+    );
+    owner.0.withdrawn.store(true, Ordering::Release);
+    owner.0.distribution_revision.store(
+        advance_distribution_revision(&startup.config.publication_root).unwrap(),
+        Ordering::Release,
+    );
+    let front = startup.root.path().join("front");
+    std::fs::create_dir(&front).unwrap();
+    let tls = tls(&front, owner.clone()).await;
+    let current = || async {
+        reqwest::Client::builder()
+            .add_root_certificate(tls.cert.clone())
+            .build()
+            .unwrap()
+            .get(format!("{}/provider/v1/current", tls.origin))
+            .send()
+            .await
+            .unwrap()
+            .json::<transparent_shared::publication::Current>()
+            .await
+            .unwrap()
+    };
+    // A query server that synchronizes now keeps this withdrawal.
+    let withdrawn = current().await;
+    assert!(!withdrawn.eligible());
+
+    let store = Arc::new(tokio::sync::Mutex::new(
+        EventStore::open_existing(&startup.config.data_dir).unwrap(),
+    ));
+    serve_restored(
+        &startup.config,
+        &startup._rpc.client,
+        &store,
+        &owner,
+        found.validation,
+    )
+    .await
+    .unwrap();
+    let live = current().await;
+    assert!(live.eligible());
+    assert_eq!(live.inventory_sha256, withdrawn.inventory_sha256);
+    assert!(live.revision > withdrawn.revision);
+    // The query server's own succession rule accepts the live record.
+    assert!(live.succeeds(&withdrawn));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn without_completion_evidence_corrupt_bytes_are_prepared_in_full_and_never_served() {
     let startup = Startup::new().await;
     let table = startup
