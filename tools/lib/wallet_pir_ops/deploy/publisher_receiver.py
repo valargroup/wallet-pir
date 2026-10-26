@@ -119,7 +119,7 @@ class Receiver:
         after = self.source_edge(before)
         # Validate with the source host's installed Caddy before touching its owner.
         from tools.receiver.lib.routing import Routing
-        Routing(owner.inventory, owner.ex, owner.state_dir, {'host': source,
+        Routing(owner.inventory, owner.ex, owner.state_dir, {'host': source, 'phase': 'distribution',
             'query_host': owner.host}).validate(after)
         return {'unit': state, 'executable': executable, 'configuration': configuration,
                 'user': effective.get('Service', {}).get('User', 'root'),

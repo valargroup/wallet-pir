@@ -525,9 +525,10 @@ Run `publisher-cutover-plan` and `publisher-cutover-preflight` with the pinned
 request and publisher archive. After production confirmation, use
 `publisher-cutover-deploy` with that plan digest. For a publisher-only update,
 pin the installed Enhance serving binary and set `preserve_serving: true`.
-Then update each combined query host sequentially using the existing
-`plan query-server`, `preflight query-server` and `deploy query-server` commands,
-its inventory and the query archive. Each Receiver-enabled combined host must
+Then update each combined query host sequentially using `fleet-release-*` and
+the query archive. That binary-only path retains the installed configuration,
+environment, thread settings and resource policy. Prepare its immutable binary
+only after deployment is authorized. Each Receiver-enabled combined host must
 have a separate `receiver` encrypted-answer check in `exact_check.products`.
 Keep `status` and `rollback` inputs alongside each transaction. These are
 unqualified branch artifacts: focused offline checks, readiness and the existing
