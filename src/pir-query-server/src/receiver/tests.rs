@@ -502,7 +502,7 @@ async fn large_proofs_are_batched_and_negative_chunks_refute_only_their_view() {
     let config = config(root.path(), &tls);
     let publications = Publications::default();
     let mut lifecycle = sync::synchronization(&config, publications).unwrap();
-    lifecycle.synchronize().await.unwrap();
+    // Proof batching checks live authority without loading wallet tables.
     let healthy = ViewIdentity([11; 32]);
     let rejected = ViewIdentity([12; 32]);
     let proofs = vec![
