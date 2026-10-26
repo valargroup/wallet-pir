@@ -100,7 +100,8 @@ pub struct DisplayRevision {
     /// Segments of each bucket's table, in bucket order. Empty unless held.
     pub buckets: Vec<Vec<SegmentSource>>,
     /// Whether this process checked every row of these exact tables, here
-    /// or under an earlier revision of this digest. Never for serving loads.
+    /// or under an earlier revision of this digest, or a saved publisher
+    /// preparation of every segment covers them. Never for serving loads.
     rows_checked: bool,
 }
 
@@ -591,6 +592,36 @@ impl DisplaySet {
     }
 
     /// A revision whose tables this worker holds.
+    /// Attach a publisher's saved preparation to each segment of a set
+    /// opened for serving whose object still has the identity `prepared`
+    /// records for its digest; it never becomes this process's content
+    /// evidence. A revision whose every segment is prepared counts its rows
+    /// as prepared too. Every other segment stays size-checked only and is
+    /// verified in full when a later load takes this set as its previous one.
+    pub(crate) fn inherit_preparation(
+        &mut self,
+        prepared: &BTreeMap<String, pir_publication::FileIdentity>,
+    ) {
+        for revision in &mut self.revisions {
+            let mut every = !revision.buckets.is_empty();
+            for source in revision.buckets.iter_mut().flatten() {
+                let identity = prepared.get(&source.sha256).copied().filter(|stamp| {
+                    source.check_object_link().is_ok_and(|linked| linked)
+                        && std::fs::canonicalize(source.path())
+                            .ok()
+                            .is_some_and(|physical| {
+                                File::open(&physical)
+                                    .is_ok_and(|file| stamp.check(&physical, &file).is_ok())
+                            })
+                });
+                source.preparation = identity;
+                source.size_only = identity.is_none();
+                every &= identity.is_some();
+            }
+            revision.rows_checked = every;
+        }
+    }
+
     pub fn held(&self, digest: &str) -> Option<&DisplayRevision> {
         self.revision(digest).filter(|revision| revision.held())
     }

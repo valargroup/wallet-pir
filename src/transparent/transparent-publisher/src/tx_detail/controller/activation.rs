@@ -60,7 +60,16 @@ impl Controller {
         {
             distribution
                 .commit_publication(finalized, revision, &self.shutdown, &next_active)
-                .map_err(|error| CycleError::Halt(Halt::Activation(error.to_string())))?;
+                .map_err(|error| {
+                    // Background validation can withdraw authority after the
+                    // final phase check, including while the journal lock is
+                    // awaited. No activation write began for this rejection.
+                    if error.is::<super::super::distribution::PreparationChanged>() {
+                        retry(error)
+                    } else {
+                        CycleError::Halt(Halt::Activation(error.to_string()))
+                    }
+                })?;
         } else {
             next_active
                 .store(&self.root)

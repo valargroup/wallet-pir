@@ -5,6 +5,12 @@ crate, the display tables that `transparent-filter-server`'s txid display
 controller publishes, and the display service in `transparent-shard-server`. History
 recovery has its own [changelog](CHANGELOG.md). Both are released under one tag.
 
+## Unreleased
+
+- Retry publication when a failed background check withdraws authority during
+  activation, instead of persisting a controller halt. Activation write
+  failures still halt for recovery.
+
 ## 0.1.0-rc.4 — 2026-10-13
 
 No txid display changes; released with history recovery's handling of bad

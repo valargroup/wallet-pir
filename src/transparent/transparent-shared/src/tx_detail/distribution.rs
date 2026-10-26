@@ -10,6 +10,7 @@ use crate::tx_detail::{
     set::{DisplaySet, MANIFEST_FILE, MAP_FILE},
     DisplayRole,
 };
+use pir_publication::{is_sealed_object, FileIdentity, PreparationRecord};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -18,6 +19,121 @@ use std::{
 
 pub const SCHEMA: &str = "transparent-display-prepared-distribution-v1";
 pub const PREFIX: &str = "/provider/txid/v1/";
+/// The publisher's saved preparation of its active publication, in its root.
+pub const PREPARATION_FILE: &str = "display-preparation.json";
+const PREPARATION_SEMANTICS: &str = "display-publisher-preparation-v1";
+
+/// What a preparation record is bound to: one exact publication directory
+/// and its map.
+fn completion(directory: &Path, map_sha256: &str) -> Result<String, Error> {
+    Ok(digest(&serde_json::to_vec(&(directory, map_sha256))?))
+}
+
+/// The saved preparation a restarted publisher adopts for `directory`, the
+/// active publication with map `map_sha256`: a set opened for serving whose
+/// unchanged sealed segments carry the record's identities, and the runtimes
+/// whose unchanged files it names. Anything changed, unsettled or absent is
+/// verified in full by the next preparation that takes these as its previous
+/// evidence. Nothing here hashes or self-checks a file, and the caller must
+/// check every adopted byte again in the background.
+pub fn adopt_preparation(
+    directory: &Path,
+    map_sha256: &str,
+    record: &PreparationRecord,
+) -> Result<(DisplaySet, CheckedRuntimes), Error> {
+    if !record.describes(PREPARATION_SEMANTICS, &completion(directory, map_sha256)?) {
+        return Err("display preparation record names another publication".into());
+    }
+    let now = std::time::SystemTime::now();
+    let mut tables = BTreeMap::new();
+    let mut runtimes = CheckedRuntimes::default();
+    for (path, (sha256, bytes, recorded)) in record.files() {
+        if !path.ends_with(".runtime") {
+            if recorded.settled_before(now) {
+                tables.insert(sha256.clone(), *recorded);
+            }
+            continue;
+        }
+        let current = std::fs::canonicalize(directory.join(path))
+            .ok()
+            .and_then(|physical| {
+                let file = std::fs::File::open(&physical).ok()?;
+                FileIdentity::capture(&physical, &file).ok()
+            });
+        if current.is_some_and(|current| record.adopts(path, current, now)) {
+            runtimes
+                .preparation
+                .insert(path.clone(), (sha256.clone(), *bytes, *recorded));
+        }
+    }
+    let mut set = DisplaySet::open_for_serving(directory, 0, DisplayRole::Combined)?;
+    set.inherit_preparation(&tables);
+    Ok((set, runtimes))
+}
+
+/// Check every byte `inventory` lists for `root` on the calling thread, for
+/// a publisher that listed some of them from saved preparation: every table
+/// and its rows against its manifest, every other file against its listed
+/// digest, and every runtime by loading and self-checking it. Nothing uses
+/// the shared build pool, so `stop` may block to yield to foreground work; a
+/// stop ends with [`Stopped`]. Any other error means these bytes are not what
+/// was served.
+pub fn validate_until(root: &Path, inventory: &Inventory, stop: Stop<'_>) -> Result<(), Error> {
+    let set = DisplaySet::open_reusing_until(root, 0, None, &[], DisplayRole::Combined, stop)?;
+    if set.map_digest != inventory.map_sha256 {
+        return Err("display map differs from the served inventory".into());
+    }
+    let mut tables = BTreeSet::new();
+    for revision in set.current() {
+        for (table, segment) in revision.targets() {
+            let source = revision
+                .segment(table, segment)
+                .ok_or("missing display source")?;
+            tables.insert(source.sha256().to_owned());
+        }
+    }
+    for artifact in &inventory.artifacts {
+        if matches!(artifact.kind, Kind::ArchiveTable | Kind::RecentTable) {
+            if !tables.contains(&artifact.sha256) {
+                return Err(format!("{} is not a verified display table", artifact.path).into());
+            }
+            continue;
+        }
+        if stop() {
+            return Err(Box::new(Stopped));
+        }
+        let (sha256, bytes) = crate::publication::hash_until(root, &artifact.path, stop)?;
+        if sha256 != artifact.sha256 || bytes != artifact.bytes {
+            return Err(format!("{} differs from its listed digest", artifact.path).into());
+        }
+    }
+    let shipped = ShippedRuntimes::required(root.to_path_buf());
+    let mut params = std::collections::HashMap::new();
+    for revision in set.current() {
+        for (table, segment) in revision.targets() {
+            let source = revision
+                .segment(table, segment)
+                .ok_or("missing display source")?;
+            let shared = match params.entry((revision.geometry.name, kind(table))) {
+                std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    entry.insert(std::sync::Arc::new(SharedParams::build_display(
+                        revision.geometry,
+                        kind(table),
+                    )?))
+                }
+            };
+            let key = runtime_key(&revision.digest, table, segment);
+            let path = shipped.path(&key, shared, source.sha256());
+            if stop() {
+                return Err(Box::new(Stopped));
+            }
+            ShippedRuntimes::load_file(std::fs::File::open(&path)?, &key, shared, source.sha256())?
+                .self_check(shared, &source.load()?)?;
+        }
+    }
+    Ok(())
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -94,8 +210,53 @@ pub struct Finalized {
     pub files: BTreeMap<String, (PathBuf, u64)>,
     pub anchor_height: u64,
     pub anchor_hash: String,
+    /// Whether any file was listed from a saved publisher preparation instead
+    /// of being hashed or self-checked by this process; its bytes still owe
+    /// a full background check.
+    pub inherited_preparation: bool,
+    /// The identity each listed artifact had when it was hashed or adopted.
+    pub listed_files: BTreeMap<String, FileIdentity>,
 }
 impl Finalized {
+    /// Record every sealed object in `store` this inventory of `directory`
+    /// lists, with the identity it had when it was hashed or adopted, for a
+    /// restarted publisher. Metadata and any file since changed are left out,
+    /// so they are verified again.
+    pub fn preparation_record(
+        &self,
+        directory: &Path,
+        store: &Path,
+    ) -> Result<PreparationRecord, Error> {
+        let mut record = PreparationRecord::new(
+            PREPARATION_SEMANTICS,
+            completion(directory, &self.inventory.map_sha256)?,
+        );
+        for artifact in &self.inventory.artifacts {
+            let (Some((path, _)), Some(identity)) = (
+                self.files.get(&artifact.sha256),
+                self.listed_files.get(&artifact.path),
+            ) else {
+                continue;
+            };
+            if artifact.kind == Kind::Metadata {
+                continue;
+            }
+            let physical = std::fs::canonicalize(path)?;
+            let file = std::fs::File::open(&physical)?;
+            if is_sealed_object(store, &physical, &file)?
+                && identity.check(&physical, &file).is_ok()
+            {
+                record.insert(
+                    artifact.path.clone(),
+                    artifact.sha256.clone(),
+                    artifact.bytes,
+                    *identity,
+                );
+            }
+        }
+        Ok(record)
+    }
+
     /// Verify source tables and every required native runtime before publication.
     pub fn prepare(root: &Path) -> Result<Self, Error> {
         let set = DisplaySet::open(root, 0, DisplayRole::Combined)?;
@@ -136,6 +297,9 @@ impl Finalized {
         checked.bytes_reused = 0;
         let mut passed = BTreeMap::new();
         let mut evidence = BTreeMap::new();
+        let mut preparation = BTreeMap::new();
+        let mut listed_files = BTreeMap::new();
+        let mut inherited_preparation = false;
         let shipped = ShippedRuntimes::required(root.to_path_buf());
         let mut inventory = Inventory {
             schema: SCHEMA.into(),
@@ -194,12 +358,22 @@ impl Finalized {
         }
         for (path, kind, known) in &mut pending {
             if matches!(kind, Kind::RecentRuntime | Kind::ArchiveRuntime) {
-                *known = path
-                    .file_name()
-                    .and_then(|name| name.to_str())
+                let name = path.file_name().and_then(|name| name.to_str());
+                *known = name
                     .and_then(|name| checked.evidence.get(name))
                     .map(|(sha256, bytes, stamp)| {
                         crate::publication::Known::from_evidence(sha256.clone(), *bytes, *stamp)
+                    })
+                    .or_else(|| {
+                        name.and_then(|name| checked.preparation.get(name)).map(
+                            |(sha256, bytes, stamp)| {
+                                crate::publication::Known::from_preparation(
+                                    sha256.clone(),
+                                    *bytes,
+                                    *stamp,
+                                )
+                            },
+                        )
                     });
             }
         }
@@ -214,9 +388,10 @@ impl Finalized {
             stamp,
             settled,
             read,
-            ..
+            prepared,
         } in hash_listed(root, pending, stop)?
         {
+            inherited_preparation |= prepared;
             if read {
                 checked.bytes_hashed += artifact.bytes;
             } else {
@@ -237,10 +412,12 @@ impl Finalized {
                         physical.clone(),
                         stamp,
                         settled,
+                        prepared,
                     ),
                 );
             }
             files.insert(artifact.sha256.clone(), (physical, artifact.bytes));
+            listed_files.insert(artifact.path.clone(), stamp);
             inventory.artifacts.push(artifact);
         }
         // Keep native loads sequential to bound resident runtime memory.
@@ -250,12 +427,21 @@ impl Finalized {
                 .and_then(|name| name.to_str())
                 .ok_or("non-UTF8 display runtime name")?
                 .to_owned();
-            let (sha256, file, physical, stamp, settled) =
+            let (sha256, file, physical, stamp, settled, prepared) =
                 runtimes.remove(&path).ok_or("unhashed display runtime")?;
             let probe = file.try_clone()?;
             // The derived name binds parameters and source; the whole-file
-            // digest binds the exact bytes checked by a previous inventory.
-            if previous.get(&name) == Some(&sha256) {
+            // digest binds the exact bytes checked by a previous inventory,
+            // or saved preparation the same unchanged inode.
+            if previous.get(&name) == Some(&sha256)
+                || (prepared
+                    && checked
+                        .preparation
+                        .get(&name)
+                        .is_some_and(|(digest, _, identity)| {
+                            digest == &sha256 && *identity == stamp
+                        }))
+            {
                 checked.reused += 1;
             } else {
                 if stop() {
@@ -267,13 +453,21 @@ impl Finalized {
                 checked.loaded += 1;
             }
             stamp.check(&physical, &probe)?;
+            // A listed digest this process did not hash stays preparation.
             if settled {
-                evidence.insert(
+                let target = if prepared {
+                    &mut preparation
+                } else {
+                    &mut evidence
+                };
+                target.insert(
                     name.clone(),
                     (sha256.clone(), probe.metadata()?.len(), stamp),
                 );
             }
-            passed.insert(name, sha256);
+            if !prepared {
+                passed.insert(name, sha256);
+            }
         }
         inventory.artifacts.sort_by(|a, b| a.path.cmp(&b.path));
         inventory.validate(&inventory.network, &inventory.genesis_hash)?;
@@ -281,6 +475,7 @@ impl Finalized {
         let terminal = set.map.shards.last().ok_or("empty display map")?;
         checked.passed = passed;
         checked.evidence = evidence;
+        checked.preparation = preparation;
         Ok(Self {
             sha256: digest(&bytes),
             bytes,
@@ -288,6 +483,8 @@ impl Finalized {
             files,
             anchor_height: terminal.end_height,
             anchor_hash: terminal.terminal_block_hash.clone(),
+            inherited_preparation,
+            listed_files,
         })
     }
 }

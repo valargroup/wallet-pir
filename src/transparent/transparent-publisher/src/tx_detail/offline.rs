@@ -284,11 +284,14 @@ pub fn bench_recent(
 /// Prepares the root's active publication `passes` times in one process, as
 /// a restarted publisher does before it may serve, and reports each pass.
 ///
-/// The first pass starts with no evidence, like a fresh process; later passes
-/// reuse what earlier ones verified, like a running publisher. Nothing is
-/// committed and the node is never asked. Preparation still advances the
-/// root's distribution revision and may install objects, so it holds the
-/// controller lock throughout and refuses a root a running publisher owns.
+/// The first pass starts like a fresh process: with the root's saved
+/// preparation when it has one, otherwise with no evidence. Later passes
+/// reuse what earlier ones checked, like a running publisher. Afterwards it
+/// saves the record a restart would adopt and, when a pass listed files from
+/// saved preparation, times the background check of every byte. Nothing is
+/// activated and the node is never asked. Preparation advances the root's
+/// distribution revision and may install objects, so it holds the controller
+/// lock throughout and refuses a root a running publisher owns.
 pub async fn bench_restore(root: &Path, passes: u32) -> Result<Vec<Value>, BoxError> {
     let _lock = super::controller::own_root(root)?;
     let scratch = tempfile::tempdir()?;
@@ -298,7 +301,9 @@ pub async fn bench_restore(root: &Path, passes: u32) -> Result<Vec<Value>, BoxEr
     let rpc = crate::ingest::zakura::connect("http://127.0.0.1:9", cookie)?;
     let distribution = super::distribution::Distribution::new(root, rpc)?;
     let active = ActiveRecord::load(root)?;
+    distribution.adopt_saved(&active);
     let mut out = Vec::new();
+    let mut last = None;
     for pass in 0..passes {
         let started = std::time::Instant::now();
         let finalized = distribution
@@ -314,7 +319,21 @@ pub async fn bench_restore(root: &Path, passes: u32) -> Result<Vec<Value>, BoxEr
             "inventory_sha256": finalized.sha256,
             "files": finalized.files.len(),
             "bytes": finalized.files.values().map(|(_, bytes)| bytes).sum::<u64>(),
+            "inherited_preparation": finalized.inherited_preparation,
         }));
+        last = Some(finalized);
+    }
+    if let Some(finalized) = last {
+        distribution.save_preparation(&finalized, &active.directory);
+        if finalized.inherited_preparation {
+            let started = std::time::Instant::now();
+            transparent_shared::tx_detail::distribution::validate_until(
+                &active.directory,
+                &finalized.inventory,
+                &|| false,
+            )?;
+            out.push(json!({"background_check_seconds": started.elapsed().as_secs_f64()}));
+        }
     }
     Ok(out)
 }

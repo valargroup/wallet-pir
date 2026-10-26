@@ -128,6 +128,16 @@ impl Known {
             prepared: false,
         }
     }
+    /// A publisher's saved preparation of an unchanged file: listed without a
+    /// read, and never this process's evidence.
+    pub(crate) fn from_preparation(sha256: String, bytes: u64, stamp: FileIdentity) -> Self {
+        Self {
+            sha256,
+            bytes,
+            stamp,
+            prepared: true,
+        }
+    }
     /// A source's process-local verification or explicitly inherited publisher
     /// preparation. Received and ordinary size-only sources carry neither.
     pub(crate) fn of(source: &crate::history::shardset::SegmentSource) -> Option<Self> {
@@ -310,6 +320,18 @@ pub(super) struct Listing {
     pub(super) settled: bool,
     /// Whether the bytes were read, rather than vouched for by `known`.
     pub(super) read: bool,
+}
+
+/// Read and hash the artifact at `relative` under `root` on the calling
+/// thread, asking `stop` before each bounded read; its digest and length.
+pub(crate) fn hash_until(
+    root: &Path,
+    relative: &str,
+    stop: &(dyn Fn() -> bool + Sync),
+) -> Result<(String, u64), Error> {
+    let (physical, mut file) = resolve(root, relative)?;
+    let listing = listed_digest(&physical, &mut file, None, stop)?;
+    Ok((listing.sha256, listing.bytes))
 }
 
 pub fn verify_file(path: &Path, expected: &Artifact) -> Result<(), Error> {

@@ -29,7 +29,6 @@ pub use contracts::{
 mod artifacts;
 #[cfg(test)]
 use artifacts::hash_artifacts;
-pub(crate) use artifacts::hash_listed;
 use artifacts::listed_digest;
 #[cfg(test)]
 pub(crate) use artifacts::listed_hashes;
@@ -38,6 +37,7 @@ use artifacts::resolve_path;
 pub(crate) use artifacts::Known;
 pub(crate) use artifacts::Listed;
 pub use artifacts::{digest, open_artifact, record_received_file, safe_path, verify_file, Stopped};
+pub(crate) use artifacts::{hash_listed, hash_until};
 mod finalization;
 use finalization::plan;
 pub use finalization::Finalized;

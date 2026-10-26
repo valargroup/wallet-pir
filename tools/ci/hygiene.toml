@@ -173,6 +173,18 @@ pattern = "evidence/txid/txid-display-4k8-2026-10-13/raw/reports-and-verdicts.ta
 reason = "Essential certificates and checker verdicts for the txid display tables."
 
 [[allow_data]]
+pattern = "evidence/txid/display-restart-reuse-2026-10-26/ab.sh"
+reason = "Script that produced the restart before/after measurement."
+
+[[allow_data]]
+pattern = "evidence/txid/display-restart-reuse-2026-10-26/raw/ab-f4997e681.jsonl"
+reason = "Restart before/after runs against the parent commit."
+
+[[allow_data]]
+pattern = "evidence/txid/display-restart-reuse-2026-10-26/raw/ab-e52f43d8.jsonl"
+reason = "Restart before/after runs against the earlier baseline."
+
+[[allow_data]]
 pattern = "tools/transparent/fixtures/observation/failed-observation-20260912T003121Z.tar.gz"
 reason = "Real failed observation consumed by the mandatory audit negative control."
 

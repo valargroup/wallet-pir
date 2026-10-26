@@ -12,16 +12,27 @@ use axum::{
 };
 use std::{
     path::{Path, PathBuf},
-    sync::{Arc, RwLock},
+    sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Arc, Mutex, RwLock,
+    },
 };
 use transparent_shared::publication::{
     digest, AnchorCheck, CheckedRuntimes, Current, Eligibility, Stopped,
 };
-use transparent_shared::tx_detail::distribution::{Finalized, PREFIX, SCHEMA};
+use transparent_shared::tx_detail::distribution::{
+    adopt_preparation, validate_until, Finalized, PREFIX, PREPARATION_FILE, SCHEMA,
+};
 use transparent_shared::tx_detail::{set::DisplaySet, DisplayRole};
 
 #[derive(Clone)]
 pub struct Distribution(Arc<Inner>);
+/// Preparation lost authority before any durable activation write. The caller
+/// may prepare again; failures after activation starts must still halt.
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+pub(super) struct PreparationChanged(&'static str);
+
 struct Inner {
     root: PathBuf,
     rpc: NodeClient,
@@ -33,6 +44,14 @@ struct Inner {
     /// Shipped runtimes this process already loaded and self-checked; the
     /// next inventory reuses evidence only while their file stamps agree.
     checked_runtimes: std::sync::Mutex<CheckedRuntimes>,
+    /// Set once bytes listed from saved preparation fail their background
+    /// check. From then on this process adopts nothing, saves no record and
+    /// commits no candidate that listed a file without reading it.
+    distrusted: AtomicBool,
+    /// Serializes saving and removing the preparation record with `distrusted`.
+    record_gate: Mutex<()>,
+    /// Foreground preparations running now; the background check waits.
+    preparing: AtomicUsize,
 }
 struct RetainedPublication {
     finalized: Finalized,
@@ -55,6 +74,9 @@ impl Distribution {
             slots: Arc::new(tokio::sync::Semaphore::new(4)),
             prepared_set: std::sync::Mutex::new(None),
             checked_runtimes: Default::default(),
+            distrusted: AtomicBool::new(false),
+            record_gate: Mutex::new(()),
+            preparing: AtomicUsize::new(0),
         })))
     }
     pub fn router(&self) -> Router {
@@ -94,8 +116,14 @@ impl Distribution {
         if shutdown.requested() {
             return Err(Stopped.into());
         }
+        if finalized.inherited_preparation && self.0.distrusted.load(Ordering::Acquire) {
+            return Err(PreparationChanged(
+                "saved display preparation failed its check; preparing again",
+            )
+            .into());
+        }
         if active.as_ref().map(|(current, _)| current.revision) != expected {
-            return Err("display authority changed before commit".into());
+            return Err(PreparationChanged("display authority changed before commit").into());
         }
         let current = Current {
             schema: SCHEMA.into(),
@@ -119,19 +147,139 @@ impl Distribution {
         *active = Some((
             current,
             Arc::new(RetainedPublication {
-                finalized,
+                finalized: finalized.clone(),
                 _lease: lease,
             }),
         ));
+        drop(active);
+        self.save_preparation(&finalized, &publication.directory);
         Ok(())
+    }
+    /// Save what a restarted publisher may adopt of the publication just
+    /// activated. Failure only costs that restart a full check: a record of
+    /// an earlier publication names another directory and is not adopted.
+    pub(super) fn save_preparation(&self, finalized: &Finalized, directory: &Path) {
+        let _gate = self.0.record_gate.lock().unwrap();
+        if self.0.distrusted.load(Ordering::Acquire) {
+            return;
+        }
+        let store = self
+            .0
+            .root
+            .join(transparent_shared::publication::OBJECT_STORE);
+        let saved = finalized
+            .preparation_record(directory, &store)
+            .and_then(|record| {
+                write_durable(
+                    &self.0.root.join(PREPARATION_FILE),
+                    &serde_json::to_vec(&record)?,
+                )
+            });
+        if let Err(error) = saved {
+            tracing::warn!(%error, "display preparation not saved; the next restart checks every file");
+        }
+    }
+    /// Seed a fresh process with the saved preparation of `active`, the
+    /// publication it restores. A missing, unreadable or mismatched record
+    /// seeds nothing, and the restore checks every file as before.
+    pub(super) fn adopt_saved(&self, active: &super::publisher::ActiveRecord) {
+        let bytes = match std::fs::read(self.0.root.join(PREPARATION_FILE)) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+            Err(error) => {
+                tracing::warn!(%error, "display preparation record is unreadable; checking every file");
+                return;
+            }
+        };
+        let adopted = serde_json::from_slice(&bytes)
+            .map_err(BoxError::from)
+            .and_then(|record| adopt_preparation(&active.directory, &active.map_sha256, &record));
+        match adopted {
+            Ok((set, runtimes)) => {
+                *self.0.prepared_set.lock().unwrap() = Some(set);
+                *self.0.checked_runtimes.lock().unwrap() = runtimes;
+            }
+            Err(error) => {
+                tracing::warn!(%error, "display preparation record not adopted; checking every file")
+            }
+        }
+    }
+    /// Check every byte of `directory`'s served inventory on the background
+    /// validation thread, yielding to foreground preparation, when it listed
+    /// any file from saved preparation.
+    fn validate_in_background(
+        &self,
+        directory: PathBuf,
+        shutdown: pir_pipeline::service::Shutdown,
+    ) {
+        let Some((_, retained)) = self.0.active.read().unwrap().clone() else {
+            return;
+        };
+        if !retained.inherited_preparation {
+            return;
+        }
+        let distribution = self.clone();
+        transparent_shared::runtime::validation_pool().spawn(move || {
+            let started = std::time::Instant::now();
+            let stop = || {
+                while distribution.0.preparing.load(Ordering::Acquire) > 0 && !shutdown.requested()
+                {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+                shutdown.requested()
+            };
+            match validate_until(&directory, &retained.inventory, &stop) {
+                Ok(()) => tracing::info!(
+                    seconds = started.elapsed().as_secs_f64(),
+                    inventory = %retained.sha256,
+                    "saved display preparation passed its background check"
+                ),
+                Err(_) if shutdown.requested() => {}
+                Err(error) => distribution.distrust(&error, &retained.sha256),
+            }
+        });
+    }
+    /// Act on bytes listed from saved preparation that are not what was
+    /// served: stop adopting and remove the record so a restart checks every
+    /// file, drop this process's evidence, and withdraw the current
+    /// publication so query servers revoke it. A later publication must pass
+    /// a full foreground check.
+    fn distrust(&self, error: &BoxError, inventory: &str) {
+        tracing::error!(
+            alert = "txid_display_integrity",
+            %error,
+            %inventory,
+            "display bytes listed from saved preparation failed their check; withdrawing"
+        );
+        let _gate = self.0.record_gate.lock().unwrap();
+        self.0.distrusted.store(true, Ordering::Release);
+        *self.0.prepared_set.lock().unwrap() = None;
+        *self.0.checked_runtimes.lock().unwrap() = Default::default();
+        if let Err(error) = self.withdraw_from(None) {
+            tracing::error!(%error, "could not withdraw the display publication");
+        }
+        let removed = match std::fs::remove_file(self.0.root.join(PREPARATION_FILE)) {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error),
+            _ => std::fs::File::open(&self.0.root).and_then(|root| root.sync_all()),
+        };
+        if let Err(error) = removed {
+            tracing::error!(%error, "display preparation record could not be removed; a restart may adopt it again");
+        }
     }
     /// Withdraw before any journal rollback; a failed write still fences this process.
     pub fn withdraw(&self, from: u64) -> Result<(), BoxError> {
+        self.withdraw_from(Some(from))
+    }
+    /// Withdraw the current publication; with `from`, also every publication
+    /// anchored at or above that height.
+    fn withdraw_from(&self, from: Option<u64>) -> Result<(), BoxError> {
         let mut active = self.0.active.write().unwrap();
         if let Some((current, _)) = active.as_mut() {
             current.eligibility = Eligibility::Withdrawn;
-            current.invalidated_from =
-                Some(current.invalidated_from.map_or(from, |old| old.min(from)));
+            if let Some(from) = from {
+                current.invalidated_from =
+                    Some(current.invalidated_from.map_or(from, |old| old.min(from)));
+            }
             // Keep the same revision negative if reserving the next revision fails.
             current.revision =
                 crate::history::distribution::advance_distribution_revision(&self.0.root)?;
@@ -178,6 +326,7 @@ impl Distribution {
         BoxError,
     > {
         let work = directory;
+        let _preparing = Preparing::enter(&self.0.preparing);
         let previous = self.0.prepared_set.lock().unwrap().take();
         let mut checked = std::mem::take(&mut *self.0.checked_runtimes.lock().unwrap());
         let started = std::time::Instant::now();
@@ -214,8 +363,14 @@ impl Distribution {
             seconds = started.elapsed().as_secs_f64(),
             "prepared display distribution inventory"
         );
-        *self.0.checked_runtimes.lock().unwrap() = checked;
-        *self.0.prepared_set.lock().unwrap() = kept;
+        // Once saved preparation fails its check, a preparation that may
+        // still carry it keeps nothing; one that read every file keeps its
+        // own evidence.
+        let tainted = self.0.distrusted.load(Ordering::Acquire)
+            && !matches!(&finalized, Ok((finalized, _)) if !finalized.inherited_preparation);
+        *self.0.checked_runtimes.lock().unwrap() =
+            if tainted { Default::default() } else { checked };
+        *self.0.prepared_set.lock().unwrap() = if tainted { None } else { kept };
         let finalized = match finalized {
             Err(_) if shutdown.requested() => return Err(Stopped.into()),
             result => result?,
@@ -294,17 +449,35 @@ impl Distribution {
         stop: impl Fn() -> bool + Send + Sync + 'static,
     ) -> Result<bool, BoxError> {
         let revision = self.revision();
-        executor
+        if self.0.prepared_set.lock().unwrap().is_none() {
+            match super::publisher::ActiveRecord::load(&self.0.root) {
+                Ok(active) if active.directory == directory => self.adopt_saved(&active),
+                Ok(_) => {}
+                Err(error) => tracing::warn!(%error, "display preparation not adopted"),
+            }
+        }
+        let restored = executor
             .publish(restoration::DisplayRestoration {
                 distribution: self,
-                directory,
+                directory: directory.clone(),
                 retained,
-                shutdown,
+                shutdown: shutdown.clone(),
                 stop: Some(stop),
                 revision,
                 canonical: false,
             })
-            .await
+            .await?;
+        if restored {
+            self.validate_in_background(directory, shutdown);
+        }
+        Ok(restored)
+    }
+    /// How many runtimes the last inventory loaded and self-checked, how many
+    /// it reused, and how many bytes it read to hash.
+    #[cfg(all(test, feature = "fixtures"))]
+    pub(super) fn checks(&self) -> (usize, usize, u64) {
+        let checked = self.0.checked_runtimes.lock().unwrap();
+        (checked.loaded, checked.reused, checked.bytes_hashed)
     }
     /// The map digest of the kept verified set, and how many runtimes the
     /// last inventory loaded and self-checked and how many it reused.
@@ -317,6 +490,19 @@ impl Distribution {
             checked.loaded,
             checked.reused,
         )
+    }
+}
+/// Counts one running foreground preparation for as long as it lives.
+struct Preparing<'a>(&'a AtomicUsize);
+impl<'a> Preparing<'a> {
+    fn enter(count: &'a AtomicUsize) -> Self {
+        count.fetch_add(1, Ordering::AcqRel);
+        Self(count)
+    }
+}
+impl Drop for Preparing<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
     }
 }
 async fn request(State(authority): State<Distribution>, request: Request) -> Response {
