@@ -68,9 +68,11 @@ def origin(url):
 
 
 def publisher_origins(settings):
-    """Every HTTPS publisher origin named anywhere in a role's settings."""
+    """Every HTTPS publisher origin used by enabled role settings."""
     found = set()
     if isinstance(settings, dict):
+        if settings.get('enabled') is False:
+            return found
         for key, value in settings.items():
             if key in PUBLISHER_KEYS and origin(value):
                 found.add(origin(value))

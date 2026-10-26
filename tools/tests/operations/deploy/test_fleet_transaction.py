@@ -280,6 +280,20 @@ class FleetTransactions(unittest.TestCase):
         self.new_target().recover('rollback')
         self.assertFalse(json.loads(self.ex.read('query', path))['status']['enabled'])
 
+    def test_disabled_previous_product_does_not_require_its_unused_publisher(self):
+        self.fixture()
+        path = '/etc/wallet-pir-query/query-server.json'
+        previous = json.loads(self.ex.read('query', path))
+        previous['status']['enabled'] = False
+        previous['status']['settings']['publisher'] = 'https://unused-publisher.example'
+        self.ex.put('query', path, json.dumps(previous))
+
+        plan = self.prepare()
+        self.target.deploy(plan['plan_sha256'])
+        self.assertTrue(json.loads(self.ex.read('query', path))['status']['enabled'])
+        self.new_target().recover('rollback')
+        self.assertEqual(json.loads(self.ex.read('query', path)), previous)
+
     def test_lost_start_reply_is_restored_from_remote_journal(self):
         self.fixture()
         plan = self.prepare()
