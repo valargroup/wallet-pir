@@ -215,6 +215,39 @@ fn repeated_digest_with_a_different_length_is_rejected() {
     );
 }
 
+/// A stop that arrives once a changed shard's rows are installed ends the shard's
+/// build before the engine reads them again.
+#[test]
+fn a_stop_ends_shard_building_before_the_next_unit_is_read() {
+    use enhance_shared::RECORD_BYTES;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    let root = tempfile::tempdir().unwrap();
+    let coverage = Lifecycle::default()
+        .coverage(1, Geometry::default())
+        .unwrap();
+    let units = coverage.shards[0].units.len();
+    let (installed, stopped) = (AtomicUsize::new(0), AtomicBool::new(false));
+    let error = construct_publication(
+        root.path(),
+        coverage,
+        &[(0, "0".into())].into(),
+        |_, count| {
+            assert!(!stopped.load(Ordering::SeqCst), "rows read after the stop");
+            Ok(vec![0; count * RECORD_BYTES])
+        },
+        // The shard check, then one check per installed unit, then the engine's.
+        &|| {
+            let stop = installed.fetch_add(1, Ordering::SeqCst) > units;
+            stopped.store(stop, Ordering::SeqCst);
+            stop
+        },
+    )
+    .unwrap_err();
+    assert_eq!(error, STOPPED);
+    assert!(installed.load(Ordering::SeqCst) > units + 1);
+}
+
 #[test]
 fn invalid_geometry_and_recovery_are_rejected_before_reading_records() {
     let scratch = tempfile::tempdir().unwrap();
