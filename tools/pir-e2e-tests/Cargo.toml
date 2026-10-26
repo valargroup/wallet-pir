@@ -17,7 +17,8 @@ cuda = ["enhance-shared?/cuda"]
 # Larger hint oracles. Ordinary correctness leaves this off.
 qualification-tests = []
 # The copied query-host entrypoint the process tests start.
-query-host = ["dep:pir-query-server"]
+# The entrypoint reports its contract identity through pir-sync-manager.
+query-host = ["dep:pir-query-server", "dep:pir-sync-manager"]
 receiver = ["dep:receiver-indexer", "pir-publisher/receiver", "pir-query-server/receiver", "zakura-server-chain/receiver", "zakura-server-chain/testing-node", "zakura-pir-client/receiver", "zakura-pir-publisher/receiver-crypto"]
 receiver-tests = ["reqwest/stream", "receiver", "publisher-host", "query-host", "dep:zakura-server-chain", "dep:zakura-pir-client", "dep:zakura-pir-publisher"]
 publisher-host = ["dep:pir-publisher"]
@@ -113,6 +114,7 @@ transparent-publisher = { path = "../../src/transparent/transparent-publisher", 
 transparent-tools = { path = "../transparent", optional = true }
 enhance-shared = { path = "../../src/enhance/enhance-shared", optional = true }
 pir-query-server = { path = "../../src/pir-query-server", optional = true }
+pir-sync-manager = { path = "../../src/shared/pir-sync-manager", optional = true }
 transparent-shared = { path = "../../src/transparent/transparent-shared", optional = true }
 zakura-server-chain = { path = "../../src/shared/pir-chain", default-features = false, optional = true }
 zakura-pir-client = { version = "=0.0.1-rc2", default-features = false, optional = true }
