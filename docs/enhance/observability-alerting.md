@@ -126,9 +126,10 @@ An incident already firing in shadow is queued once on promotion.
 
 Optional `PIR_APM_RECEIVER_HEALTH_URL` names the shared publisher's Receiver
 health route (`http://127.0.0.1:18380/operator/receiver/health`). When set, APM
-samples it every 30 seconds and adds `receiver_payout_audit_stale` (warning, no
+samples it every 30 seconds and adds `receiver_payout_crosscheck_paused` (warning, no
 successful NEAR payout audit read for `receiver_audit_stale_seconds`, default
-30 minutes) and `receiver_health` (warning, route unavailable for 120 s). The
+30 minutes, which means a bad key or a NEAR outage; lookups keep working, only
+the payout cross-check pauses) and `receiver_health` (warning, route unavailable for 120 s). The
 audit's read time is the newer of the in-memory read and the stored feed
 cursor, and APM keeps the last one it saw, so a publisher restart does not fire
 it. With no read reported yet, the threshold counts from APM's first sample, so
@@ -232,7 +233,7 @@ Investigate by check family:
 | `coverage_*` | Restore the named scraper/source/inventory before trusting retained values. |
 | `canary_*` | Inspect transport/category and pinned oracle validity; distinguish wrong bytes from unavailable service. |
 | `external_monitor`, `apm_progress` | Inspect systemd, loop progress, and state-database permissions on the named monitoring host. |
-| `receiver_payout_audit_stale`, `receiver_health` | Read the Receiver health route on the coordinator, then the publisher journal for `near feed deferred`; a feed with no stored cursor starts from `near_since`. |
+| `receiver_payout_crosscheck_paused`, `receiver_health` | Read the Receiver health route on the coordinator, then the publisher journal for `near feed deferred`; a feed with no stored cursor starts from `near_since`. |
 | `*delivery*` | Check credential presence, sanitized last failure, and oldest pending age; preserve the outbox. |
 | `scaling_*` | Read `scaler/status.json` and `scaler/journal/operation.json` on the coordinator. A fenced operation proceeds only after `resolve-apply` ([elastic recent](../transparent/elastic-recent.md#actuator-operations)). |
 

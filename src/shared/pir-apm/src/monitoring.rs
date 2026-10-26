@@ -865,7 +865,7 @@ pub fn conditions(d: &DashboardData, now: u64, p: &Policy) -> Vec<Condition> {
     if receiver.sampled_at > 0 {
         let sampled = fresh(receiver.sampled_at, now) && !receiver.error;
         add(
-            "receiver_payout_audit_stale".into(),
+            "receiver_payout_crosscheck_paused".into(),
             "receiver".into(),
             "warning",
             // Before any read the grace is unknown, not healthy, so an APM
@@ -877,14 +877,20 @@ pub fn conditions(d: &DashboardData, now: u64, p: &Policy) -> Vec<Condition> {
                         .then_some(true),
                 })
                 .flatten(),
-            receiver
-                .last_read
-                .map_or("no payout audit read".into(), |read| {
-                    format!("last payout audit read {read}")
-                }),
+            // A NEAR outage or bad key stops only the cross-check, so say so.
             format!(
-                "no successful payout audit read for {}s",
-                p.receiver_audit_stale_seconds
+                "{}. Receiver lookups are unaffected, but new payouts are not \
+                 cross-checked against NEAR until reads resume.",
+                receiver.last_read.map_or("No NEAR payout read yet".into(), |read| {
+                    format!(
+                        "Last NEAR payout read {} min ago",
+                        now.saturating_sub(read) / 60
+                    )
+                })
+            ),
+            format!(
+                "no NEAR payout read for {} min (key or NEAR API; see `near feed deferred` in the publisher journal)",
+                p.receiver_audit_stale_seconds / 60
             ),
             0,
             receiver.sampled_at,
@@ -1414,13 +1420,13 @@ mod tests {
             error: false,
         };
         assert_eq!(
-            check(&d, now, "receiver_payout_audit_stale").firing,
+            check(&d, now, "receiver_payout_crosscheck_paused").firing,
             Some(false)
         );
         assert_eq!(check(&d, now, "receiver_health").firing, Some(false));
         d.monitoring.receiver.last_read = Some(now - 1800);
         assert_eq!(
-            check(&d, now, "receiver_payout_audit_stale").firing,
+            check(&d, now, "receiver_payout_crosscheck_paused").firing,
             Some(true)
         );
         // Without any reported read, staleness counts from the first sample, so
@@ -1428,10 +1434,13 @@ mod tests {
         // grace leaves an incident from before an APM restart open.
         d.monitoring.receiver.last_read = None;
         d.monitoring.receiver.since = now - 60;
-        assert_eq!(check(&d, now, "receiver_payout_audit_stale").firing, None);
+        assert_eq!(
+            check(&d, now, "receiver_payout_crosscheck_paused").firing,
+            None
+        );
         d.monitoring.receiver.since = now - 1800;
         assert_eq!(
-            check(&d, now, "receiver_payout_audit_stale").firing,
+            check(&d, now, "receiver_payout_crosscheck_paused").firing,
             Some(true)
         );
         // An unreachable route leaves staleness unknown and fails health instead.
@@ -1441,7 +1450,10 @@ mod tests {
             since: 0,
             error: true,
         };
-        assert_eq!(check(&d, now, "receiver_payout_audit_stale").firing, None);
+        assert_eq!(
+            check(&d, now, "receiver_payout_crosscheck_paused").firing,
+            None
+        );
         let health = check(&d, now, "receiver_health");
         assert_eq!((health.firing, health.hold_seconds), (Some(true), 120));
         d.monitoring.receiver = ReceiverAudit {
