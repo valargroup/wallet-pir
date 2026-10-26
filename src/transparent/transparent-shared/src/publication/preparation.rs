@@ -1,18 +1,10 @@
 //! Local publisher preparation, separate from this process's content checks.
 use super::*;
+use pir_publication::{is_sealed_object, PreparationRecord};
 
 /// Publisher-local preparation receipt, never part of the distributed inventory.
 pub const PREPARATION_FILE: &str = "history-preparation.json";
 const SEMANTICS: &str = "history-publisher-preparation-v1";
-
-/// A local receipt has no serving authority and is never a verified-object proof.
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PreparationRecord {
-    semantics: String,
-    completion_sha256: String,
-    files: BTreeMap<String, (String, u64, FileIdentity)>,
-}
 
 /// Preparation inherited by the publisher while independent validation is pending.
 pub struct PreparationReuse {
@@ -50,7 +42,9 @@ impl Finalized {
         if completion.inventory_sha256 != self.sha256 {
             return Err("preparation completion differs from inventory".into());
         }
-        let mut files = BTreeMap::new();
+        let mut record =
+            PreparationRecord::new(SEMANTICS, digest(&serde_json::to_vec(completion)?));
+        let store = root.parent().map(|p| p.join(OBJECT_STORE));
         for artifact in &self.inventory.artifacts {
             let reference = ObjectReference {
                 sha256: artifact.sha256.clone(),
@@ -59,8 +53,11 @@ impl Finalized {
             let (physical, file) = open_artifact(root, &artifact.path, Some(&reference))?;
             // Only publisher-owned immutable-store bodies may bypass preparation.
             if !matches!(artifact.kind, Kind::Metadata)
-                && (physical.parent() != root.parent().map(|p| p.join(OBJECT_STORE)).as_deref()
-                    || !file.metadata()?.permissions().readonly())
+                && !store
+                    .as_deref()
+                    .map(|store| is_sealed_object(store, &physical, &file))
+                    .transpose()?
+                    .unwrap_or(false)
             {
                 return Err("preparation requires sealed publisher objects".into());
             }
@@ -72,16 +69,14 @@ impl Finalized {
             {
                 return Err("artifact changed after publisher preparation".into());
             }
-            files.insert(
+            record.insert(
                 artifact.path.clone(),
-                (artifact.sha256.clone(), artifact.bytes, identity),
+                artifact.sha256.clone(),
+                artifact.bytes,
+                identity,
             );
         }
-        Ok(PreparationRecord {
-            semantics: SEMANTICS.into(),
-            completion_sha256: digest(&serde_json::to_vec(completion)?),
-            files,
-        })
+        Ok(record)
     }
 }
 
@@ -100,19 +95,8 @@ impl Restored {
         let saved = saved
             .map(serde_json::from_slice::<PreparationRecord>)
             .transpose()?;
-        if let Some(saved) = &saved {
-            if saved.semantics != current.semantics
-                || saved.completion_sha256 != current.completion_sha256
-                || saved.files.len() != current.files.len()
-                || current.files.iter().any(|(name, (digest, bytes, _))| {
-                    saved
-                        .files
-                        .get(name)
-                        .is_none_or(|(d, b, _)| d != digest || b != bytes)
-                })
-            {
-                return Err("publisher preparation record is invalid".into());
-            }
+        if saved.as_ref().is_some_and(|saved| !current.agrees(saved)) {
+            return Err("publisher preparation record is invalid".into());
         }
         let mut tables = ShardSet::open_for_serving(
             root,
@@ -123,7 +107,7 @@ impl Restored {
         let mut identities = BTreeMap::new();
         let mut runtimes = CheckedRuntimes::default();
         for artifact in &self.finalized.inventory.artifacts {
-            let (_, _, identity) = current.files[&artifact.path];
+            let (_, _, identity) = current.files()[&artifact.path];
             let (physical, file) = open_artifact(
                 root,
                 &artifact.path,
@@ -133,10 +117,13 @@ impl Restored {
                 }),
             )?;
             identity.check(&physical, &file)?;
-            if !identity.settled_before(std::time::SystemTime::now())
-                || saved
-                    .as_ref()
-                    .is_some_and(|saved| saved.files[&artifact.path].2 != identity)
+            // Without a saved record the first restart adopts what it finds.
+            let now = std::time::SystemTime::now();
+            if !saved
+                .as_ref()
+                .map_or(identity.settled_before(now), |saved| {
+                    saved.adopts(&artifact.path, identity, now)
+                })
             {
                 continue;
             }
