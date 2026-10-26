@@ -744,6 +744,18 @@ class FleetTransaction:
             if key in self.data['children']:
                 enabled = self.data['processes'][key]['previous_products' if restored else 'products']
                 checks += [(key + '#' + product, probe) for product, probe in products.items() if product in enabled]
+        selected = self.request.get('probe_products')
+        if selected is not None:
+            # An explicitly scoped rollout retains readiness for the complete
+            # process, but runs each requested retrieval command only once.
+            seen = set()
+            scoped = []
+            for label, probe in checks:
+                identity = (probe['host'], tuple(probe['argv']), probe.get('timeout', 120))
+                if label.split('#')[-1] in selected and identity not in seen:
+                    scoped.append((label, probe))
+                    seen.add(identity)
+            return scoped
         return checks
 
     def run_probe(self, label, probe, *, restored=False):

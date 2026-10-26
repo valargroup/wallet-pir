@@ -435,6 +435,14 @@ adoption uses `reconcile` or `rollback`, followed by a fresh plan; ordinary
 four-product installation recovery remains unchanged. Later publisher requests
 retain Receiver but omit `receiver_adoption`.
 
+For an explicitly scoped operational rollout, publisher and fleet-release
+requests may set `probe_products: ["receiver"]` to run only Receiver retrieval
+acceptance. All enabled product configuration and process readiness checks
+remain in place; receipts record the requested scope. Identical fleet probes
+are run once in this mode. `publisher-cutover-rollback --skip-exact-checks`
+restores services and verifies readiness without repeating retrieval probes,
+for example when a retired query hostname invalidates the original probe.
+
 Publisher updates preserve the installed product settings exactly. Retired
 transport, replay and trust settings must already be absent from the installed
 configuration. Planning never silently converts settings or moves storage roots

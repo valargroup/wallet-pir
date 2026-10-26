@@ -68,6 +68,7 @@ def load_request(path, expected):
                 | ({'resume_load'} if 'resume_load' in request else set())
                 | ({'expected_disk_latch_sha256'} if 'expected_disk_latch_sha256' in request else set())
                 | ({'preserve_serving'} if 'preserve_serving' in request else set())
+                | ({'probe_products'} if 'probe_products' in request else set())
                 | ({'receiver_adoption'} if 'receiver_adoption' in request else set())),
             'publisher request has unknown or missing fields')
     if 'expected_disk_latch_sha256' in request:
@@ -106,6 +107,9 @@ def load_request(path, expected):
                 'every cutover product must be enabled')
     checks = request['checks']
     require(isinstance(checks, dict) and set(checks) == set(products), 'each product needs an independent exact check')
+    selected = request.get('probe_products', products)
+    require(isinstance(selected, list) and selected and all(p in products for p in selected)
+            and len(selected) == len(set(selected)), 'probe_products must select enabled products')
     for check in checks.values():
         require(isinstance(check, dict) and set(check) == {'host', 'argv', 'timeout'} and isinstance(check['argv'], list) and check['argv']
                 and all(isinstance(a, str) and a for a in check['argv'])
@@ -457,6 +461,9 @@ class Cutover:
     def exact(self, journal):
         from .publisher_probe_repair import checks_for
         for product, check in checks_for(self, journal).items():
+            if product not in self.request.get('probe_products', self.request['checks']):
+                journal.setdefault('skipped_checks', {})[product] = 'outside requested probe_products'
+                continue
             code, output = self.ex.run(check['host'], check['argv'], check['timeout'])
             require(code == 0, product + ' independent encrypted-answer probe failed: ' + output[-1000:])
             journal.setdefault('checks', {})[product] = {'passed': True, 'output': output[-2000:]}

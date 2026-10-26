@@ -118,6 +118,16 @@ class Receiver:
         absent = self.run(owner.host, 'import json,pathlib,sys; p=pathlib.Path(sys.argv[1]); '
                           'print(json.dumps(not p.exists() and not p.is_symlink()))', STATE)
         require(absent, 'Receiver destination state already exists; inspect its owner before adopting')
+        retained = None
+        previous = owner.latest()
+        if (self.reingesting() and previous and previous['phase'] == 'rolled-back'
+                and previous['request'].get('receiver_adoption', {}).get('mode') == 'reingest'
+                and previous['request']['configuration'].get('receiver') == owner.request['configuration']['receiver']
+                and previous['request']['release'] == owner.request['release']):
+            candidate = STATE + '.rolled-back-' + previous['id']
+            if self.run(owner.host, 'import json,pathlib,sys; '
+                        'print(json.dumps(pathlib.Path(sys.argv[1]).is_dir()))', candidate):
+                retained = candidate
         owner.resources(allocations={STATE + '/distribution/authority.json': info['bytes']})
         before = owner.ex.read(source, EDGE)
         after = self.source_edge(before)
@@ -126,6 +136,7 @@ class Receiver:
         Routing(owner.inventory, owner.ex, owner.state_dir, {'host': source, 'phase': 'distribution',
             'query_host': owner.host}).validate(after)
         return {'unit': state, 'executable': executable, 'configuration': configuration,
+                **({'reingested_state': retained} if retained else {}),
                 'user': effective.get('Service', {}).get('User', 'root'),
                 'environments': environments, 'edge_before': before, 'edge_after': after}
 
@@ -152,8 +163,12 @@ class Receiver:
             return
         owner, source = self.owner, self.request['host']
         if self.reingesting():
-            owner.effect(journal, 'prepare fresh Receiver index',
-                         lambda: owner.ex.mkdir(owner.host, STATE, 0o700))
+            if plan.get('reingested_state'):
+                owner.effect(journal, 'reuse completed Receiver ingestion',
+                             lambda: owner.ex.rename(owner.host, plan['reingested_state'], STATE))
+            else:
+                owner.effect(journal, 'prepare fresh Receiver index',
+                             lambda: owner.ex.mkdir(owner.host, STATE, 0o700))
             journal['receiver_reingesting'] = True
             owner.save(journal)
             return
