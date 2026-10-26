@@ -206,10 +206,10 @@ class Receiver:
                      lambda: owner.ex.write(source, EDGE, plan['edge_after'].encode(), 0o644))
         owner.effect(journal, 'reload Receiver edge', lambda: owner.ex.systemctl(source, 'reload', 'caddy.service'))
 
-    def handover_authority(self, journal, source, destination):
+    def handover_authority(self, journal, source, destination, source_root=STATE):
         """Preserve counter and withdrawal floors without copying index data."""
         path = STATE + '/distribution/authority.json'
-        previous = json.loads(self.owner.ex.read(source, path))
+        previous = json.loads(self.owner.ex.read(source, source_root + '/distribution/authority.json'))
         current = json.loads(self.owner.ex.read(destination, path))
         require(previous['scope'] == current['scope'], 'Receiver authority scope differs')
         previous['sequence'] = max(previous['sequence'], current['sequence'])
@@ -217,7 +217,7 @@ class Receiver:
             previous['fence'][name] = max(previous['fence'][name], current['fence'][name])
         self.owner.effect(journal, 'handover Receiver authority to ' + destination,
                           lambda: self.owner.ex.write(destination, path,
-                              (json.dumps(previous) + '\n').encode(), 0o600))
+                              (json.dumps(previous) + '\n').encode(), 0o644))
 
     def restore_state(self, journal):
         plan = journal['plan'].get('receiver')
@@ -233,13 +233,17 @@ class Receiver:
             return
         if self.reingesting():
             require(not state['main_pid'], 'Receiver source must stop before authority returns')
-            self.handover_authority(journal, owner.host, source)
+            retained = STATE + '.rolled-back-' + journal['id']
+            present = self.run(owner.host, 'import json,pathlib,sys; '
+                               'print(json.dumps(pathlib.Path(sys.argv[1]).exists()))', STATE)
+            self.handover_authority(journal, owner.host, source, STATE if present else retained)
             owner.effect(journal, 'restore Receiver edge',
                          lambda: owner.ex.write(source, EDGE, plan['edge_before'].encode(), 0o644))
             owner.effect(journal, 'reload restored Receiver edge',
                          lambda: owner.ex.systemctl(source, 'reload', 'caddy.service'))
-            owner.effect(journal, 'retain Receiver ingestion after rollback', lambda: owner.ex.rename(
-                owner.host, STATE, STATE + '.rolled-back-' + journal['id']))
+            if present:
+                owner.effect(journal, 'retain Receiver ingestion after rollback', lambda: owner.ex.rename(
+                    owner.host, STATE, retained))
             return
         receipt = self.receipt(owner.host, STATE)
         if receipt is not None:

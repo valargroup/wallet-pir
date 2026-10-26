@@ -755,7 +755,10 @@ class Cutover:
         self.receiver.restore_service(journal)
         self.ready()
         self.serving.verify(journal, restored=True)
-        self.exact(journal)
+        if getattr(self, 'skip_rollback_probes', False):
+            journal['rollback_probes_skipped'] = True
+        else:
+            self.exact(journal)
         if plan['units'][LOAD]['active_state'] == 'active':
             self.effect(journal, 'restore continuous load', lambda: self.ex.systemctl(self.host, 'start', LOAD))
         self.save(journal, 'rolled-back')
@@ -768,6 +771,9 @@ def register(commands):
         command.add_argument('--request', required=True)
         command.add_argument('--request-sha256', required=True)
         command.add_argument('--serving-binary')
+        if operation == 'rollback':
+            command.add_argument('--skip-exact-checks', action='store_true',
+                                 help='restore services and verify readiness without repeating retrieval probes')
         if operation in ('preflight', 'deploy', 'repair-release-plan', 'repair-release'):
             command.add_argument('--archive', required=True)
         if operation in ('deploy', 'repair-sandbox', 'repair-release', 'repair-probe-verify'):
@@ -780,6 +786,7 @@ def dispatch(args, executor=None, **_options):
     request, inventory = load_request(args.request, args.request_sha256)
     executor = executor or SSHExecutor(inventory)
     target = Cutover(request, inventory, executor, args.state_dir)
+    target.skip_rollback_probes = getattr(args, 'skip_exact_checks', False)
     target.serving.binary = getattr(args, 'serving_binary', None)
     if operation in ('repair-probe-plan', 'repair-probe-verify'):
         from .publisher_probe_repair import dispatch as repair_probe
