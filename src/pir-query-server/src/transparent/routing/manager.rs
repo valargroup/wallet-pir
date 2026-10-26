@@ -1345,6 +1345,45 @@ mod collection_tests {
     }
 
     #[test]
+    fn a_failed_first_download_keeps_its_verified_objects_for_the_next_attempt() {
+        // A first download refused partway (the publisher retired an artifact)
+        // keeps its tree of verified links; collection between attempts must
+        // not discard them, and the next attempt's tree takes them over.
+        let root = tempfile::tempdir().unwrap();
+        let objects = root.path().join("objects");
+        std::fs::create_dir(&objects).unwrap();
+        let object = |name: char, body: &[u8]| {
+            let path = objects.join(name.to_string().repeat(64));
+            std::fs::write(&path, body).unwrap();
+            path
+        };
+        let (map, rows) = (object('a', b"map"), object('b', b"rows"));
+        let attempt = |revision: u64, linked: &[&Path]| {
+            let tree = root.path().join(format!("staging-{revision}-100"));
+            std::fs::create_dir(&tree).unwrap();
+            std::fs::hard_link(linked[0], tree.join("shards.json")).unwrap();
+            for (n, path) in linked[1..].iter().enumerate() {
+                std::fs::hard_link(path, tree.join(format!("part-{n}"))).unwrap();
+            }
+            std::fs::File::open(&tree)
+                .unwrap()
+                .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(revision + 1))
+                .unwrap();
+        };
+        attempt(0, &[&map, &rows]);
+        collect_saved(root.path()).unwrap();
+        assert!(
+            map.exists() && rows.exists(),
+            "the first attempt's downloads survive"
+        );
+        // The next attempt re-links both and downloads only what is new.
+        let later = object('c', b"more");
+        attempt(1, &[&map, &rows, &later]);
+        collect_saved(root.path()).unwrap();
+        assert!(map.exists() && rows.exists() && later.exists());
+    }
+
+    #[test]
     fn downloads_from_an_interrupted_first_stage_are_collected_without_a_map() {
         let root = tempfile::tempdir().unwrap();
         std::fs::create_dir(root.path().join("objects")).unwrap();

@@ -245,7 +245,12 @@ pub(crate) async fn stage_holdings(
         })
     }
     .await;
-    if result.is_err() {
+    // A failed cache-mode tree links only verified objects, so keep it: the
+    // next attempt re-links them instead of downloading them again. A first
+    // download outlasts the publisher's retention of superseded artifacts, so
+    // without this every retry restarts from nothing. Collection bounds kept
+    // trees like any unused publication. Copy mode can leave a truncated body.
+    if result.is_err() && !cache {
         let _ = std::fs::remove_dir_all(&stage);
     }
     result
