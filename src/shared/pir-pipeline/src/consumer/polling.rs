@@ -33,7 +33,7 @@ pub trait SyncTask: Send {
     /// Whether `error` is expected to clear within seconds, such as a publisher
     /// that is restarting. The next pass then starts after [`TRANSIENT_RETRY`]
     /// instead of the failure backoff, for up to [`TRANSIENT_ATTEMPTS`] failures
-    /// in a row.
+    /// in a row. Those retries do not lengthen the backoff that follows.
     fn transient(&self, _error: &Self::Error) -> bool {
         false
     }
@@ -47,8 +47,9 @@ pub trait SyncTask: Send {
 /// Retry delay after a [`SyncTask::transient`] failure.
 pub const TRANSIENT_RETRY: Duration = Duration::from_secs(1);
 /// Consecutive failures retried after [`TRANSIENT_RETRY`] before the ordinary
-/// backoff applies, so an outage longer than a restart stops fast polling.
-pub const TRANSIENT_ATTEMPTS: u32 = 30;
+/// backoff applies, so an outage longer than a restart stops fast polling. A
+/// publisher stop, start and first publication fit well inside it.
+pub const TRANSIENT_ATTEMPTS: u32 = 90;
 
 /// Owns one adapter and runs complete, non-overlapping synchronization passes.
 /// Dropping the outer future retains the product's existing cancellation rules;
@@ -104,6 +105,7 @@ impl<T: SyncTask> SyncManager<T> {
     pub async fn run_until(mut self, stop: impl Future<Output = ()>) -> Option<T::Error> {
         tokio::pin!(stop);
         let mut failures = 0u32;
+        let mut restarting = 0u32;
         loop {
             tokio::select! {
                 biased;
@@ -113,18 +115,19 @@ impl<T: SyncTask> SyncManager<T> {
             let result = self.poll_once().await;
             self.task.report(&result);
             let mut transient = false;
-            failures = match result {
-                Ok(_) => 0,
+            match result {
+                Ok(_) => (failures, restarting) = (0, 0),
                 Err(error) if self.task.terminal(&error) => return Some(error),
-                Err(error) => {
-                    transient = self.task.transient(&error);
-                    failures.saturating_add(1)
+                Err(error) if self.task.transient(&error) && restarting < TRANSIENT_ATTEMPTS => {
+                    restarting += 1;
+                    transient = true;
                 }
-            };
+                Err(_) => failures = failures.saturating_add(1),
+            }
             let jitter = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .map_or(0, |d| u64::from(d.subsec_nanos()) % 1000);
-            let wait = if transient && failures <= TRANSIENT_ATTEMPTS {
+            let wait = if transient {
                 TRANSIENT_RETRY
             } else {
                 self.success_interval

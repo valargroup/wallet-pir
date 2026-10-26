@@ -511,9 +511,15 @@ impl<A: PublicationAdapter> Consumer for EnvelopeConsumer<A> {
     /// A publisher that does not answer, or whose proxy reports it down, is
     /// restarting; a deploy makes that a gap of seconds.
     fn transient(&self, error: &Error) -> bool {
+        // A publisher that just started answers 503 for its envelope until it
+        // publishes again.
         error
             .downcast_ref::<crate::DiscoveryError>()
             .is_some_and(crate::DiscoveryError::unavailable)
+            || matches!(
+                error.downcast_ref::<PublicationLifecycleError>(),
+                Some(PublicationLifecycleError::EnvelopeUnavailable(502..=504))
+            )
     }
     fn phase_finished(&mut self, phase: &'static str, elapsed: Duration) {
         self.adapter.phase_finished(phase, elapsed);

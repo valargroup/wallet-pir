@@ -191,6 +191,16 @@ async fn a_transient_failure_retries_after_a_second_until_it_lasts_too_long() {
         "fatal"
     );
     assert!(started.elapsed() > TRANSIENT_RETRY * (TRANSIENT_ATTEMPTS + 5));
+    // A long restart followed by an ordinary failure waits the first backoff
+    // step, not one lengthened by the restart's retries.
+    let started = tokio::time::Instant::now();
+    assert_eq!(
+        SyncManager::new(Restarting(TRANSIENT_ATTEMPTS + 1))
+            .run()
+            .await,
+        "fatal"
+    );
+    assert!(started.elapsed() < TRANSIENT_RETRY * (TRANSIENT_ATTEMPTS + 20));
 }
 
 /// A stop requested during a pass lets that pass, with its durable writes,
