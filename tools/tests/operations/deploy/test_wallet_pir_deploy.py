@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(ROOT / 'tools/lib'))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from fake_fleet import FakeFleet, sha256  # noqa: E402
-from wallet_pir_ops.deploy import cli, descriptors, units  # noqa: E402
+from wallet_pir_ops.deploy import cli, descriptors, host_helper, units  # noqa: E402
 from wallet_pir_ops.deploy.engine import Deployer, DeployError  # noqa: E402
 from wallet_pir_ops.deploy.remote import HELPER, LockHeld, SSHExecutor  # noqa: E402
 from wallet_pir_ops.deploy.transaction import Journal  # noqa: E402
@@ -1320,6 +1320,19 @@ class MultiplexTests(unittest.TestCase):
 
 
 class HelperTests(unittest.TestCase):
+    def test_readiness_observations_share_one_call_and_keep_identity_and_endpoint_failures(self):
+        state = {'active_state': 'active', 'exe_sha256': 'expected'}
+        with mock.patch.object(host_helper, 'probe_unit', return_value=state), \
+                mock.patch.object(host_helper, 'http_get', side_effect=lambda url, timeout:
+                                  {'status': 200 if url == '/health' else 503, 'body': 'sample'}) as get:
+            observed = host_helper.observe_service('unit', 'expected', ['/health', '/ready', '/health'])
+            self.assertEqual(observed['unit'], state)
+            self.assertEqual(observed['http']['/ready']['status'], 503)
+            self.assertEqual(get.call_count, 2)
+            get.reset_mock()
+            self.assertEqual(host_helper.observe_service('unit', 'other', ['/health'])['http'], {})
+            get.assert_not_called()
+
     def test_staged_executable_copy_streams_and_refuses_changed_source(self):
         executor = LocalExecutor(None)
         with tempfile.TemporaryDirectory() as directory:

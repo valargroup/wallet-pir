@@ -118,6 +118,7 @@ class Deployer:
         self.poll_seconds = poll_seconds
         self.hold_on_failure = hold_on_failure
         self.targets = descriptors.select(descriptors.targets(service, inventory), only)
+        self.coordinated = False
 
     def transaction_binary(self):
         """The one executable file this transaction stages.
@@ -425,13 +426,20 @@ class Deployer:
     # ---------------------------------------------------------- verification
 
     def check(self, record, expected):
-        state = self.ex.probe_unit(record['host'], record['unit'])
+        verify = record['verify']
+        observation = (self.ex.observe_service(record['host'], record['unit'], expected,
+                       [verify['health'], verify.get('ready_url')]) if self.coordinated else None)
+        state = observation['unit'] if observation is not None else self.ex.probe_unit(record['host'], record['unit'])
+        def http_get(url):
+            if observation is None:
+                return self.ex.http_get(record['host'], url)
+            reply = observation['http'][url]
+            return reply['status'], reply['body']
         if state['active_state'] != 'active':
             return False, 'unit is %s' % state['active_state']
         if state['exe_sha256'] != expected:
             return False, 'running executable is %s, expected %s' % (state['exe_sha256'], expected)
-        verify = record['verify']
-        status, body = self.ex.http_get(record['host'], verify['health'])
+        status, body = http_get(verify['health'])
         if status != 200:
             return False, 'health answered %s' % status
         try:
@@ -455,7 +463,7 @@ class Deployer:
                 if restored_ready is None or not restored_ready(record, expected, document):
                     return False, 'health %s is %r' % (ready['field'], value)
         if verify.get('ready_url'):
-            status, _ = self.ex.http_get(record['host'], verify['ready_url'])
+            status, _ = http_get(verify['ready_url'])
             if not 200 <= status < 300:
                 return False, 'ready answered %s' % status
         if guard is not None:

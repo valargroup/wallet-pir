@@ -65,6 +65,16 @@ class Executor:
         """`host_helper.probe_unit`: loaded state, unit files and running executable digest."""
         raise NotImplementedError
 
+    def observe_service(self, host, unit, expected, urls):
+        """One readiness sample: executable identity and its unique HTTP endpoints."""
+        state = self.probe_unit(host, unit)
+        http = {}
+        if state['active_state'] == 'active' and state['exe_sha256'] == expected:
+            for url in dict.fromkeys(url for url in urls if url):
+                status, body = self.http_get(host, url)
+                http[url] = {'status': status, 'body': body}
+        return {'unit': state, 'http': http}
+
     def sha256(self, host, path):
         raise NotImplementedError
 
@@ -267,6 +277,9 @@ class SSHExecutor(Executor):
 
     def systemctl(self, host, *args):
         self.call(host, 'systemctl', deadline=600, args=list(args))
+
+    def observe_service(self, host, unit, expected, urls):
+        return self.call(host, 'observe_service', deadline=45, unit=unit, expected=expected, urls=list(urls))
 
     def http_get(self, host, url, timeout=5):
         reply = self.call(host, 'http_get', deadline=timeout + 30, url=url, timeout=timeout)

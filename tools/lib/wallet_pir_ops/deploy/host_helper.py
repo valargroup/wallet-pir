@@ -218,6 +218,15 @@ def run(argv, timeout):
     return {'returncode': result.returncode, 'output': (result.stdout + result.stderr)[-4000:]}
 
 
+def observe_service(unit, expected, urls):
+    """Observe identity and readiness through one SSH call without retrying or relaxing checks."""
+    state = probe_unit(unit)
+    http = {}
+    if state['active_state'] == 'active' and state['exe_sha256'] == expected:
+        http = {url: http_get(url, 5) for url in dict.fromkeys(url for url in urls if url)}
+    return {'unit': state, 'http': http}
+
+
 WRAPPER_MARKER = b'wallet-pir-deploy.py'
 INHERITED_MARKER = b'WALLET_PIR_PRODUCTION_LOCK_FDS='
 
@@ -648,6 +657,7 @@ OPERATIONS = {
     'remove': remove,
     'free_bytes': free_bytes,
     'probe_unit': probe_unit,
+    'observe_service': observe_service,
     'provider_collection': provider_collection,
     'systemctl': systemctl,
     'http_get': http_get,
