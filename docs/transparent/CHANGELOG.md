@@ -11,6 +11,8 @@ Covers the crates a wallet uses to recover transparent history over PIR:
 
 - History publishers can activate a fully verified external initial publication
   at the journal's current height without an immutable-store preparation receipt.
+  All candidates still recheck file identities at activation, including external
+  publications whose tables or runtimes changed after preparation.
   An inherited successor cannot undo a corruption withdrawal when saving its
   failure record fails; recovery requires ordinary verification.
 

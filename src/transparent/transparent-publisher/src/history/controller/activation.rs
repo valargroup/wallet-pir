@@ -115,12 +115,9 @@ pub(super) async fn activate_history(
             {
                 return Err("inherited preparation cannot clear an integrity failure".into());
             }
-            if stored {
-                // Recheck prepared identities under the final activation gate.
-                let record =
-                    distribution.restore_record(true, config.recent_from, height, &hash)?;
-                distribution.preparation_record(&publication.directory, &record)?;
-            }
+            // Every candidate must still name the files preparation checked,
+            // including external initial publications that cannot supply receipts.
+            distribution.check_prepared_files(&publication.directory)?;
         }
         crate::storage::layout::complete(&config.publication_root, "transparent_history")?;
         publication::write_durable(

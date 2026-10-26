@@ -1209,6 +1209,16 @@ async fn an_external_initial_publication_activates_at_the_current_journal_height
         authority.0.status.read().unwrap()["integrity_validation"]["state"],
         "passed"
     );
+    let Restore::Restored(restored) = restore_public(&follow.config, &active).unwrap() else {
+        panic!("valid completion restores the external publication");
+    };
+    assert!(
+        restored
+            .finalized
+            .check_prepared_files(&saved.directory)
+            .is_err(),
+        "restored metadata alone is not evidence of preparation in this process"
+    );
 
     // Skipping the local receipt must not skip full verification on startup.
     let table = distribution
@@ -1230,6 +1240,82 @@ async fn an_external_initial_publication_activates_at_the_current_journal_height
     );
     assert!(restarted.0.withdrawn.load(Ordering::Acquire));
     follow.server.abort();
+}
+
+async fn external_prepared_file_change_is_refused(kind: Kind, replace: bool) {
+    let follow = follow_fixture_with_rows(true).await;
+    follow.chain.write().unwrap().truncate(3);
+    let authority = follow.authority(Default::default());
+    authority.0.withdrawn.store(true, Ordering::Release);
+    let Input::Work(work) =
+        acquire_history(&follow.config, &follow.client, &follow.store, &authority)
+            .await
+            .unwrap()
+    else {
+        panic!("the withdrawn initial publication needs preparation");
+    };
+    let Input::Work(ready) = prepare_follow(&follow.config, &follow.client, &authority, work)
+        .await
+        .unwrap()
+    else {
+        panic!("a prepared external publication expected");
+    };
+    let candidate = &ready.candidate().candidate;
+    assert_eq!(
+        candidate.publication.directory,
+        follow.config.initial_publication
+    );
+    let distribution = candidate.distribution.as_ref().unwrap();
+    distribution
+        .check_prepared_files(&candidate.publication.directory)
+        .unwrap();
+    let artifact = distribution
+        .inventory()
+        .artifacts
+        .iter()
+        .find(|a| a.kind == kind)
+        .unwrap();
+    let path = candidate.publication.directory.join(&artifact.path);
+    let permissions = std::fs::metadata(&path).unwrap().permissions();
+    let mut bytes = std::fs::read(&path).unwrap();
+    bytes[0] ^= 1;
+    if replace {
+        let replacement = path.with_extension("replacement");
+        std::fs::write(&replacement, &bytes).unwrap();
+        std::fs::set_permissions(&replacement, permissions).unwrap();
+        std::fs::rename(replacement, &path).unwrap();
+    } else {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        std::fs::write(&path, &bytes).unwrap();
+        std::fs::set_permissions(&path, permissions).unwrap();
+    }
+    assert_eq!(std::fs::metadata(path).unwrap().len(), artifact.bytes);
+    let error = ready.commit().await.unwrap_err();
+    assert!(error.to_string().contains("changed"), "{error}");
+    assert!(authority.0.withdrawn.load(Ordering::Acquire));
+    assert!(!follow.config.publication_root.join("active.json").exists());
+    follow.server.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_external_table_changed_after_preparation_cannot_activate() {
+    external_prepared_file_change_is_refused(Kind::RecentTable, false).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_external_table_replaced_after_preparation_cannot_activate() {
+    external_prepared_file_change_is_refused(Kind::RecentTable, true).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_external_runtime_changed_after_preparation_cannot_activate() {
+    external_prepared_file_change_is_refused(Kind::RecentRuntime, false).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_external_runtime_replaced_after_preparation_cannot_activate() {
+    external_prepared_file_change_is_refused(Kind::RecentRuntime, true).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]

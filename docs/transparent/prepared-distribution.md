@@ -69,7 +69,9 @@ by the first fresh publication. Modified or replaced objects take the ordinary
 verification path; malformed or incompatible preparation records disable reuse.
 An operator-supplied initial publication outside the publication root still
 activates after ordinary full preparation, without a preparation receipt or
-adoption into the publisher's immutable store.
+adoption into the publisher's immutable store. Every candidate, including an
+external initial publication, must still match its prepared file identities
+under the final activation lock; changed or replaced files refuse activation.
 
 For first adoption, only an active, publisher-owned publication with valid
 completion evidence and no unresolved intent, withdrawal or recorded failure
