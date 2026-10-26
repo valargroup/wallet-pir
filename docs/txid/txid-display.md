@@ -691,3 +691,8 @@ pausing while a preparation runs. If that check fails, the publisher withdraws
 the current publication, deletes the record and distrusts saved checks for the
 rest of the process, so its next preparation checks every file. Measurements
 are in the [restart reuse evidence](../../evidence/txid/display-restart-reuse-2026-10-26/README.md).
+
+If that withdrawal races with a successor's activation, the successor is
+rejected before activation writes start and preparation retries. It does not
+persist a controller halt. Failures while saving activation state still halt
+the controller for crash recovery.

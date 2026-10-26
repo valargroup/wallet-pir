@@ -27,6 +27,12 @@ use transparent_shared::tx_detail::{set::DisplaySet, DisplayRole};
 
 #[derive(Clone)]
 pub struct Distribution(Arc<Inner>);
+/// Preparation lost authority before any durable activation write. The caller
+/// may prepare again; failures after activation starts must still halt.
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+pub(super) struct PreparationChanged(&'static str);
+
 struct Inner {
     root: PathBuf,
     rpc: NodeClient,
@@ -105,16 +111,19 @@ impl Distribution {
         {
             return Err("display prepared files and restart record have different owners".into());
         }
-        if finalized.inherited_preparation && self.0.distrusted.load(Ordering::Acquire) {
-            return Err("saved display preparation failed its check; preparing again".into());
-        }
         let lease = crate::storage::PublicationLease::acquire(&publication.directory)?;
         let mut active = self.0.active.write().unwrap();
         if shutdown.requested() {
             return Err(Stopped.into());
         }
+        if finalized.inherited_preparation && self.0.distrusted.load(Ordering::Acquire) {
+            return Err(PreparationChanged(
+                "saved display preparation failed its check; preparing again",
+            )
+            .into());
+        }
         if active.as_ref().map(|(current, _)| current.revision) != expected {
-            return Err("display authority changed before commit".into());
+            return Err(PreparationChanged("display authority changed before commit").into());
         }
         let current = Current {
             schema: SCHEMA.into(),

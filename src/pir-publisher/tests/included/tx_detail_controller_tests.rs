@@ -1105,27 +1105,7 @@ async fn a_failed_background_check_withdraws_and_stops_adopting() {
     saved["files"][&runtime.path][0] = "ab".repeat(32).into();
     std::fs::write(preparation_file(&root), serde_json::to_vec(&saved).unwrap()).unwrap();
 
-    let node = axum::Router::new().route(
-        "/",
-        axum::routing::post(
-            |axum::Json(request): axum::Json<serde_json::Value>| async move {
-                let height = request["params"][0].as_u64().unwrap();
-                let hash = if height == 0 {
-                    fixture::GENESIS.to_string()
-                } else {
-                    fixture::block_hash(0, height).to_display_hex()
-                };
-                axum::Json(serde_json::json!({"id":request["id"],"result":hash,"error":null}))
-            },
-        ),
-    );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = listener.local_addr().unwrap();
-    let _node = tokio::spawn(async move { axum::serve(listener, node).await.unwrap() });
-    let cookie = temp.path().join("node-cookie");
-    std::fs::write(&cookie, "fixture:fixture").unwrap();
-    let rpc = crate::ingest::zakura::connect(format!("http://{address}"), cookie).unwrap();
-    let distribution = crate::tx_detail::distribution::Distribution::new(&root, rpc).unwrap();
+    let (distribution, node) = distribution_with_node(&root, temp.path()).await;
     assert!(distribution
         .restore(
             crate::host_engine::PublisherEngine,
@@ -1166,6 +1146,168 @@ async fn a_failed_background_check_withdraws_and_stops_adopting() {
     assert_eq!(distribution.checks().0, 0);
     distribution.save_preparation(&next, &active.directory);
     assert!(!preparation_file(&root).exists());
+    node.abort();
+}
+
+/// A local node answering the fixture chain's block hashes.
+async fn distribution_with_node(
+    root: &Path,
+    temp: &Path,
+) -> (
+    crate::tx_detail::distribution::Distribution,
+    tokio::task::JoinHandle<()>,
+) {
+    let node = axum::Router::new().route(
+        "/",
+        axum::routing::post(
+            |axum::Json(request): axum::Json<serde_json::Value>| async move {
+                let height = request["params"][0].as_u64().unwrap();
+                let hash = if height == 0 {
+                    fixture::GENESIS.to_string()
+                } else {
+                    fixture::block_hash(0, height).to_display_hex()
+                };
+                axum::Json(serde_json::json!({"id":request["id"],"result":hash,"error":null}))
+            },
+        ),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let node = tokio::spawn(async move { axum::serve(listener, node).await.unwrap() });
+    let cookie = temp.join("node-cookie");
+    std::fs::write(&cookie, "fixture:fixture").unwrap();
+    let rpc = crate::ingest::zakura::connect(format!("http://{address}"), cookie).unwrap();
+    let distribution = crate::tx_detail::distribution::Distribution::new(root, rpc).unwrap();
+    (distribution, node)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_background_withdrawal_during_activation_retries_without_halting() {
+    use pir_pipeline::publisher::{Publication, Publisher};
+    use std::future::Future;
+    use std::task::Poll;
+
+    let temp = tempfile::tempdir().unwrap();
+    let (root, active, first) = prepared_root(temp.path()).await;
+    let mut saved: Value =
+        serde_json::from_slice(&std::fs::read(preparation_file(&root)).unwrap()).unwrap();
+    let runtime = first
+        .inventory
+        .artifacts
+        .iter()
+        .find(|a| a.path.ends_with(".runtime"))
+        .unwrap();
+    saved["files"][&runtime.path][0] = "ab".repeat(32).into();
+    std::fs::write(preparation_file(&root), serde_json::to_vec(&saved).unwrap()).unwrap();
+
+    // Hold the single validation thread until activation has passed its last
+    // phase check. Dropping the sender also releases it if this test panics.
+    let (release, waiting) = std::sync::mpsc::channel::<()>();
+    let (entered, ready) = tokio::sync::oneshot::channel();
+    transparent_shared::runtime::validation_pool().spawn(move || {
+        let _ = entered.send(());
+        let _ = waiting.recv_timeout(Duration::from_secs(20));
+    });
+    tokio::time::timeout(Duration::from_secs(20), ready)
+        .await
+        .unwrap()
+        .unwrap();
+    let (distribution, node) = distribution_with_node(&root, temp.path()).await;
+    assert!(distribution
+        .restore(
+            crate::host_engine::PublisherEngine,
+            active.directory.clone(),
+            vec![active.directory.clone()],
+        )
+        .await
+        .unwrap());
+
+    let mut controller = Controller::open(
+        &root,
+        open_writer(&temp.path().join("journal")).unwrap(),
+        Source::Script(Script::new(vec![ScriptStep::Advance(8)])),
+        Settings {
+            distribution: Some(distribution.clone()),
+            runtime_preparation: Arc::new(crate::tx_detail::runtime_preparation::RequiredRuntimes),
+            ..settings()
+        },
+    )
+    .unwrap();
+    controller.poll_source().await.unwrap();
+    let fence = controller.fence();
+    // Complete the host's preparation and chain-check phases explicitly so
+    // the first poll of commit can only wait on the journal lock below.
+    let mut preparation = preparation::DisplayPreparation::new(&mut controller);
+    let material = preparation.build().await.unwrap();
+    let stored = preparation.store(material).await.unwrap();
+    let mut candidate = preparation.verify(stored).await.unwrap();
+    preparation.recheck(&mut candidate).await.unwrap();
+    let journal = fence.journal().await;
+    let mut committing = Box::pin(preparation.commit(candidate));
+    assert!(
+        std::future::poll_fn(|cx| Poll::Ready(committing.as_mut().poll(cx).is_pending())).await
+    );
+    drop(release);
+    tokio::time::timeout(Duration::from_secs(20), async {
+        while preparation_file(&root).exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("background validation withdraws while activation waits");
+    drop(journal);
+    let error = committing.await.unwrap_err();
+    assert!(matches!(
+        error.downcast_ref::<CycleError>(),
+        Some(CycleError::Retry(_))
+    ));
+    let mut workflow = workflow::DetailPublication {
+        controller: &mut controller,
+        wake: None,
+    };
+    assert_eq!(
+        workflow.failed(&error),
+        pir_pipeline::FailurePolicy::NextPoll
+    );
+    assert!(controller.halted.is_none());
+    assert!(!root.join(HALTED_FILE).exists());
+    assert_eq!(
+        ActiveRecord::load(&root).unwrap().map_sha256,
+        active.map_sha256
+    );
+
+    // The same process prepares again from bytes and activates successfully.
+    let next = crate::host_engine::PublisherEngine
+        .prepare(preparation::DisplayPreparation::new(&mut controller))
+        .await
+        .unwrap();
+    assert!(!next.candidate().1.as_ref().unwrap().inherited_preparation);
+    assert!(distribution.checks().0 > 0);
+    next.commit().await.unwrap();
+    assert_eq!(ActiveRecord::load(&root).unwrap().tip, 8);
+    assert!(!root.join(HALTED_FILE).exists());
+    assert!(!preparation_file(&root).exists());
+
+    // A real activation write failure remains fatal: retrying an uncertain
+    // durable commit would bypass its crash-recovery contract.
+    let next = crate::host_engine::PublisherEngine
+        .prepare(preparation::DisplayPreparation::new(&mut controller))
+        .await
+        .unwrap();
+    std::fs::remove_file(root.join("http-current.json")).unwrap();
+    std::fs::create_dir(root.join("http-current.json")).unwrap();
+    let error = next.commit().await.unwrap_err();
+    assert!(matches!(
+        error.downcast_ref::<CycleError>(),
+        Some(CycleError::Halt(Halt::Activation(_)))
+    ));
+    workflow::DetailPublication {
+        controller: &mut controller,
+        wake: None,
+    }
+    .failed(&error);
+    assert!(root.join(HALTED_FILE).is_file());
+    node.abort();
 }
 
 #[tokio::test]
