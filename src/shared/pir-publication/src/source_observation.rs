@@ -10,6 +10,10 @@
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+/// The furthest an observation may claim to lie after the local clock and
+/// still grant (shortened) authority.
+pub const MAX_CLOCK_SKEW: Duration = Duration::from_secs(1);
+
 /// Wall-clock time, in Unix milliseconds, of one actual source observation.
 /// Zero means the publisher made none.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -34,12 +38,21 @@ impl SourceObservation {
 
     /// Authority this observation still grants at `now` under a product's
     /// `lifetime`: none when no observation was made, when it claims a time
-    /// after `now`, or when the lifetime ended.
+    /// more than [`MAX_CLOCK_SKEW`] after `now`, or when the lifetime ended.
+    ///
+    /// Synchronized clocks still differ by tens of milliseconds, so a fresh
+    /// observation from a publisher whose clock runs ahead looks slightly in
+    /// the future. That skew is charged like age: it shortens the authority
+    /// and never extends it past the lifetime.
     pub fn remaining_at(self, lifetime: Duration, now: SystemTime) -> Option<Duration> {
         if self == Self::NONE {
             return None;
         }
-        let age = unix_ms(now).checked_sub(self.observed_unix_ms)?;
+        let now = unix_ms(now);
+        let age = now.abs_diff(self.observed_unix_ms);
+        if self.observed_unix_ms > now && age > MAX_CLOCK_SKEW.as_millis() as u64 {
+            return None;
+        }
         lifetime.checked_sub(Duration::from_millis(age))
     }
 }
@@ -87,13 +100,39 @@ mod tests {
     }
 
     #[test]
-    fn absent_and_future_observations_grant_nothing() {
+    fn a_publisher_clock_slightly_ahead_shortens_authority() {
+        // A publisher clock 33 ms ahead, as seen between two NTP-synced
+        // droplets, must not refuse a fresh observation.
+        let ahead = SourceObservation {
+            observed_unix_ms: 1_000_033,
+        };
+        assert_eq!(
+            ahead.remaining_at(FIVE_SECONDS, at(1_000_000)),
+            Some(Duration::from_millis(4_967)),
+            "skew is charged like age, never added to the lifetime"
+        );
+        let edge = SourceObservation {
+            observed_unix_ms: 1_001_000,
+        };
+        assert_eq!(
+            edge.remaining_at(FIVE_SECONDS, at(1_000_000)),
+            Some(Duration::from_secs(4))
+        );
+        assert_eq!(
+            edge.remaining_at(Duration::from_millis(500), at(1_000_000)),
+            None,
+            "skew beyond a short lifetime leaves no authority"
+        );
+    }
+
+    #[test]
+    fn absent_and_far_future_observations_grant_nothing() {
         assert_eq!(
             SourceObservation::NONE.remaining_at(FIVE_SECONDS, at(1)),
             None
         );
         let future = SourceObservation {
-            observed_unix_ms: 1_000_001,
+            observed_unix_ms: 1_001_001,
         };
         assert_eq!(future.remaining_at(FIVE_SECONDS, at(1_000_000)), None);
         assert!(SourceObservation::starting_now()
