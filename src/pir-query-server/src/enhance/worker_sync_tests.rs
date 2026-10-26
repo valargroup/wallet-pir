@@ -43,6 +43,7 @@ async fn evaluation_failure(backend: MatvecConfig) {
     )
     .unwrap();
     worker.evaluation = Arc::new(Semaphore::new(1));
+    worker.evaluations = 1;
     let coverage = Lifecycle::default()
         .coverage(67, Geometry::default())
         .unwrap();
@@ -242,4 +243,13 @@ fn cuda_without_feature_fails_before_creating_worker_state() {
     );
     assert!(matches!(result, Err(e) if e.to_string().contains("--features cuda")));
     assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
+}
+
+#[test]
+fn evaluation_slots_grow_with_cores_but_never_below_two() {
+    assert_eq!(evaluation_slots(1), 2);
+    assert_eq!(evaluation_slots(4), 2);
+    assert_eq!(evaluation_slots(8), 2);
+    assert_eq!(evaluation_slots(16), 4);
+    assert_eq!(evaluation_slots(48), 12);
 }

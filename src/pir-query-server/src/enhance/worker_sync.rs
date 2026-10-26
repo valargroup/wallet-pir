@@ -42,8 +42,14 @@ use tokio::sync::{Mutex as AsyncMutex, Semaphore};
 /// renews them while waiting, loading, and serving; a lost process cannot pin forever.
 pub const PIN_LIFETIME: Duration = Duration::from_secs(30);
 const MAX_PINS: usize = 64;
-/// Evaluations admitted at once.
-const EVALUATIONS: u32 = 2;
+/// Evaluations admitted at once on a host with `cores` usable cores. One
+/// evaluation spreads its matrix product over every core but keeps only about
+/// four busy: on 16 cores, two admitted evaluations refused a tenth of a
+/// 20 QPS load with under half the cores busy. Small workers keep two, so one
+/// query's setup still overlaps another's product.
+fn evaluation_slots(cores: usize) -> u32 {
+    u32::try_from(cores / 4).unwrap_or(u32::MAX).max(2)
+}
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -126,6 +132,7 @@ pub struct Worker {
     inner: Arc<Mutex<Inner>>,
     authority: Arc<AsyncMutex<Client>>,
     evaluation: Arc<Semaphore>,
+    evaluations: u32,
     synchronization: Arc<Semaphore>,
     pub incarnation: String,
     matvec_latency: Arc<prometheus::Histogram>,
@@ -185,6 +192,8 @@ impl Worker {
         }
         let safety = Safety::open(root, &config.source.publisher_origin)?;
         let authority = Client::new(root, &config.source, safety.clone())?;
+        let evaluations =
+            evaluation_slots(std::thread::available_parallelism().map_or(1, |n| n.get()));
         Ok(Self {
             root: root.into(),
             config,
@@ -193,7 +202,8 @@ impl Worker {
             safety,
             inner: Arc::new(Mutex::new(Inner::default())),
             authority: Arc::new(AsyncMutex::new(authority)),
-            evaluation: Arc::new(Semaphore::new(EVALUATIONS as usize)),
+            evaluation: Arc::new(Semaphore::new(evaluations as usize)),
+            evaluations,
             synchronization: Arc::new(Semaphore::new(1)),
             incarnation: format!("{:032x}", rand::random::<u128>()),
             matvec_latency: Arc::new(prometheus::Histogram::with_opts(
@@ -621,7 +631,7 @@ impl Worker {
         );
         metrics.number(
             "enhance_worker_queries_in_flight",
-            (EVALUATIONS as usize - self.evaluation.available_permits()) as u64,
+            (self.evaluations as usize - self.evaluation.available_permits()) as u64,
         );
         let plans = plans.iter().collect::<Vec<_>>();
         match self.reservation(&plans) {
@@ -767,7 +777,7 @@ impl Worker {
     /// Waits until admitted evaluation has ended, including work whose
     /// request was cancelled. The role keeps its state until then.
     pub(crate) async fn drained(&self) {
-        let _all = self.evaluation.acquire_many(EVALUATIONS).await;
+        let _all = self.evaluation.acquire_many(self.evaluations).await;
     }
 
     fn evaluation_permit(&self) -> ApiResult<tokio::sync::OwnedSemaphorePermit> {
