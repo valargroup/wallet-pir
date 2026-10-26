@@ -67,6 +67,9 @@ requires the same sealed objects, controlled store links and opened-file
 identities. Unchanged source preparation and runtime checks can then be reused
 by the first fresh publication. Modified or replaced objects take the ordinary
 verification path; malformed or incompatible preparation records disable reuse.
+An operator-supplied initial publication outside the publication root still
+activates after ordinary full preparation, without a preparation receipt or
+adoption into the publisher's immutable store.
 
 For first adoption, only an active, publisher-owned publication with valid
 completion evidence and no unresolved intent, withdrawal or recorded failure
@@ -94,6 +97,8 @@ mismatch is recorded in `integrity-failures.json` and withdraws every
 publication listing those bytes, in this and later processes, until freshly
 verified replacement bytes are published; `recorded` is false in its status
 when the record could not be made durable, so only this process withdraws it.
+The final activation gate honors that in-memory failure too: an already
+prepared successor using inherited evidence cannot clear the withdrawal.
 After a confirmed integrity failure, the next candidate uses ordinary
 preparation so inherited evidence cannot clear the failure or block recovery
 with verified replacement bytes.

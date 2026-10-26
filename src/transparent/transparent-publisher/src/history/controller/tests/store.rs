@@ -1175,6 +1175,64 @@ async fn background_validation_keeps_completed_artifacts_across_successors() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn an_external_initial_publication_activates_at_the_current_journal_height() {
+    use transparent_shared::publication::{PREPARATION_FILE, RESTORE_FILE};
+    let follow = follow_fixture_with_rows(true).await;
+    follow.chain.write().unwrap().truncate(3);
+    let authority = follow.authority(Default::default());
+    authority.0.withdrawn.store(true, Ordering::Release);
+    assert_eq!(follow.store.lock().await.covered_through(), Some(2));
+    assert_ne!(
+        follow.config.initial_publication.parent(),
+        Some(follow.config.publication_root.as_path())
+    );
+
+    follow.cycle(&authority).await;
+    assert!(!authority.0.withdrawn.load(Ordering::Acquire));
+    let active = authority.0.active.read().unwrap().clone();
+    assert_eq!(active.publication.height, 2);
+    assert_eq!(
+        active.publication.directory,
+        follow.config.initial_publication
+    );
+    let saved: ActivePublication = serde_json::from_slice(
+        &std::fs::read(follow.config.publication_root.join("active.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(saved.directory, follow.config.initial_publication);
+    assert!(saved.directory.join(RESTORE_FILE).is_file());
+    assert!(!saved.directory.join(PREPARATION_FILE).exists());
+    assert!(!follow.config.publication_root.join(OBJECT_STORE).exists());
+    let distribution = active.distribution.as_ref().unwrap();
+    assert!(!distribution.requires_validation());
+    assert_eq!(
+        authority.0.status.read().unwrap()["integrity_validation"]["state"],
+        "passed"
+    );
+
+    // Skipping the local receipt must not skip full verification on startup.
+    let table = distribution
+        .inventory()
+        .artifacts
+        .iter()
+        .find(|a| matches!(a.kind, Kind::RecentTable | Kind::ArchiveTable))
+        .unwrap();
+    let path = saved.directory.join(&table.path);
+    let mut bytes = std::fs::read(&path).unwrap();
+    bytes[0] ^= 1;
+    std::fs::write(path, bytes).unwrap();
+    let restarted = follow.authority(Default::default());
+    restarted.0.withdrawn.store(true, Ordering::Release);
+    assert!(
+        publish_follow(&follow.config, &follow.client, &follow.store, &restarted)
+            .await
+            .is_err()
+    );
+    assert!(restarted.0.withdrawn.load(Ordering::Acquire));
+    follow.server.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn bootstrap_corruption_withdraws_until_a_verified_replacement_is_published() {
     use crate::history::validator::{Event, Identity};
     use std::os::unix::fs::{FileExt, PermissionsExt};
@@ -1275,6 +1333,138 @@ async fn bootstrap_corruption_withdraws_until_a_verified_replacement_is_publishe
     assert!(integrity_failures(&follow.config.publication_root)
         .unwrap()
         .is_empty());
+    follow.server.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_inherited_candidate_cannot_clear_an_unrecorded_integrity_failure() {
+    use crate::history::validator::{Event, Identity};
+    use std::os::unix::fs::PermissionsExt;
+    use transparent_shared::publication::{IntegrityError, PREPARATION_FILE};
+    let follow = follow_fixture_with_rows(true).await;
+    let authority = follow.authority(Default::default());
+    follow.ingest(&authority).await;
+    follow.cycle(&authority).await;
+    let old = authority.0.active.read().unwrap().clone();
+    let distribution = old.distribution.as_ref().unwrap();
+    let prefix = &old.filters.map().shards[0].manifest_digest;
+    let artifact = distribution
+        .inventory()
+        .artifacts
+        .iter()
+        .find(|a| {
+            a.path.starts_with(prefix) && matches!(a.kind, Kind::RecentTable | Kind::ArchiveTable)
+        })
+        .unwrap();
+    let physical = old
+        .publication
+        .directory
+        .join(&artifact.path)
+        .canonicalize()
+        .unwrap();
+    let correct = std::fs::read(&physical).unwrap();
+    let mut corrupt = correct.clone();
+    corrupt[0] ^= 1;
+    std::fs::set_permissions(&physical, std::fs::Permissions::from_mode(0o644)).unwrap();
+    std::fs::write(&physical, corrupt).unwrap();
+    std::fs::set_permissions(&physical, std::fs::Permissions::from_mode(0o444)).unwrap();
+    std::fs::remove_file(old.publication.directory.join(PREPARATION_FILE)).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    let (restarted, restored) = follow.restart();
+    assert!(restored);
+    follow.advance(&restarted, 1).await;
+    let Input::Work(work) =
+        acquire_history(&follow.config, &follow.client, &follow.store, &restarted)
+            .await
+            .unwrap()
+    else {
+        panic!("new durable work expected");
+    };
+    let Input::Work(ready) = prepare_follow(&follow.config, &follow.client, &restarted, work)
+        .await
+        .unwrap()
+    else {
+        panic!("a prepared candidate expected");
+    };
+    assert!(ready
+        .candidate()
+        .candidate
+        .distribution
+        .as_ref()
+        .unwrap()
+        .requires_validation());
+    let validation = distribution
+        .validation(&old.publication.directory, follow.config.recent_from, true)
+        .unwrap();
+    let failure = validation
+        .integrity(distribution.inventory(), None, &|| false)
+        .unwrap_err();
+    assert!(matches!(failure, IntegrityError::Mismatch { .. }));
+
+    // Deliver the completed background hash after foreground preparation.
+    // Removing its parent temporarily makes the actual durable write fail
+    // without leaving an unreadable record that would independently block activation.
+    let unavailable = follow._root.path().join("unavailable-publications");
+    std::fs::rename(&follow.config.publication_root, &unavailable).unwrap();
+    validation_event(
+        &follow.config.publication_root,
+        &restarted,
+        &Identity {
+            directory: old.publication.directory.clone(),
+            map_sha256: old.publication.map_sha256.clone(),
+            inventory_sha256: distribution.sha256().into(),
+            height: old.publication.height,
+            hash: old.publication.hash.clone(),
+            epoch: 0,
+        },
+        Event::Integrity(Err(failure)),
+    );
+    std::fs::rename(unavailable, &follow.config.publication_root).unwrap();
+    assert_eq!(
+        restarted.0.status.read().unwrap()["integrity_validation"]["recorded"],
+        false
+    );
+    assert!(integrity_failures(&follow.config.publication_root)
+        .unwrap()
+        .is_empty());
+    assert!(restarted.0.integrity_failed.load(Ordering::Acquire));
+    assert!(restarted.0.withdrawn.load(Ordering::Acquire));
+
+    let error = ready.commit().await.unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("inherited preparation cannot clear an integrity failure"));
+    assert!(restarted.0.integrity_failed.load(Ordering::Acquire));
+    assert!(restarted.0.withdrawn.load(Ordering::Acquire));
+    assert_eq!(
+        restarted.0.active.read().unwrap().publication.directory,
+        old.publication.directory
+    );
+    let saved: ActivePublication = serde_json::from_slice(
+        &std::fs::read(follow.config.publication_root.join("active.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(saved.directory, old.publication.directory);
+
+    // Ordinary verification of replacement bytes can still recover at the
+    // same pending height, despite the rejected candidate's activation intent.
+    let replacement = physical.with_extension("repair");
+    std::fs::write(&replacement, correct).unwrap();
+    std::fs::set_permissions(&replacement, std::fs::Permissions::from_mode(0o444)).unwrap();
+    std::fs::rename(replacement, physical).unwrap();
+    follow.cycle(&restarted).await;
+    assert_eq!(restarted.0.active.read().unwrap().publication.height, 5);
+    assert!(!restarted.0.integrity_failed.load(Ordering::Acquire));
+    assert!(!restarted.0.withdrawn.load(Ordering::Acquire));
+    assert!(!restarted
+        .0
+        .active
+        .read()
+        .unwrap()
+        .distribution
+        .as_ref()
+        .unwrap()
+        .requires_validation());
     follow.server.abort();
 }
 

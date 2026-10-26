@@ -9,6 +9,11 @@ Covers the crates a wallet uses to recover transparent history over PIR:
 
 ## Unreleased
 
+- History publishers can activate a fully verified external initial publication
+  at the journal's current height without an immutable-store preparation receipt.
+  An inherited successor cannot undo a corruption withdrawal when saving its
+  failure record fails; recovery requires ordinary verification.
+
 - Display sets rehash tables whose stamps changed, for example after relinking
   into a new candidate, but no longer re-read their rows one at a time when this
   process already checked the rows of a revision with the same manifest digest.
