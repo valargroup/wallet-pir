@@ -103,10 +103,18 @@ impl Distribution {
             return Ok(());
         }
         let revision = publications.history_revision();
+        let recovery_epoch = self
+            .authority
+            .lock()
+            .unwrap()
+            .current()
+            .fence
+            .recovery_epoch;
         let descriptor = Descriptor {
             history_revision: revision,
             directory: directory.as_ref().map(|d| d.id()),
             filters: filters.as_ref().map(|f| f.head().clone()),
+            recovery_epoch,
         };
         {
             let authority = self.authority.lock().unwrap();
@@ -115,7 +123,15 @@ impl Distribution {
                     .current()
                     .publication
                     .as_ref()
-                    .is_some_and(|p| p.descriptor == descriptor)
+                    // Recovery moves the epoch inside one process without new
+                    // tables; only a restart, which starts withdrawn, needs one.
+                    .is_some_and(|p| {
+                        p.descriptor
+                            == Descriptor {
+                                recovery_epoch: p.descriptor.recovery_epoch,
+                                ..descriptor.clone()
+                            }
+                    })
             {
                 return Ok(());
             }
@@ -128,6 +144,7 @@ impl Distribution {
                 directory,
                 filters,
                 revision,
+                recovery_epoch,
             })
             .await
     }
@@ -175,6 +192,7 @@ impl Distribution {
         directory: Option<Arc<receiver_pir_server::Publication>>,
         filters: Option<Arc<receiver_pir_server::blocks::BlockWindow>>,
         revision: u64,
+        recovery_epoch: u64,
     ) -> Result<Inventory, Error> {
         let root = self.data_dir.join(crate::durable::TABLES_DIR);
         let directory = directory
@@ -236,6 +254,7 @@ impl Distribution {
             history_revision: revision,
             directory,
             filters,
+            recovery_epoch,
         })
     }
 }
@@ -346,6 +365,7 @@ struct Export {
     directory: Option<Arc<receiver_pir_server::Publication>>,
     filters: Option<Arc<receiver_pir_server::blocks::BlockWindow>>,
     revision: u64,
+    recovery_epoch: u64,
 }
 struct Candidate {
     inventory: Inventory,
@@ -369,8 +389,11 @@ impl pir_pipeline::publisher::Publication for Export {
         let this = self.distribution.clone();
         let directory = self.directory.clone();
         let filters = self.filters.clone();
-        let revision = self.revision;
-        tokio::task::spawn_blocking(move || this.material(directory, filters, revision)).await?
+        let (revision, recovery_epoch) = (self.revision, self.recovery_epoch);
+        tokio::task::spawn_blocking(move || {
+            this.material(directory, filters, revision, recovery_epoch)
+        })
+        .await?
     }
     async fn store(&mut self, inventory: Inventory) -> Result<Inventory, Error> {
         Ok(inventory)
@@ -497,7 +520,7 @@ mod tests {
         )
         .unwrap();
         let inventory = distribution
-            .material(Some(publication.clone()), None, 0)
+            .material(Some(publication.clone()), None, 0, 0)
             .unwrap();
         inventory
             .validate(crate::blocks::ironwood_activation())
@@ -517,7 +540,9 @@ mod tests {
             .unwrap()
             .write_all(&[1])
             .unwrap();
-        let damaged = distribution.material(Some(publication), None, 0).unwrap();
+        let damaged = distribution
+            .material(Some(publication), None, 0, 0)
+            .unwrap();
         assert!(damaged
             .validate(crate::blocks::ironwood_activation())
             .is_err());
@@ -719,6 +744,58 @@ mod tests {
         assert!(reopened.sequence > withdrawn.sequence);
         assert!(reopened.fence.recovery_epoch > withdrawn.fence.recovery_epoch);
         server.abort();
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn a_restarted_publisher_republishes_the_same_tables_under_a_new_publication() {
+        let genesis = Network::Mainnet.genesis_hash();
+        let activation = crate::blocks::ironwood_activation();
+        let node = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let rpc = NodeClient::new(format!("http://{}", node.local_addr().unwrap()), None).unwrap();
+        let task = tokio::spawn(async move {
+            axum::serve(node, Router::new().route("/", post(move |Json(request): Json<serde_json::Value>| async move {
+                let hash = if request["params"][0] == 0 { genesis } else { [3; 32] };
+                Json(serde_json::json!({"result":zakura_server_chain::hash::display(&hash),"error":null}))
+            }))).await.unwrap();
+        });
+        let filter = BlockFilter::build(
+            &genesis,
+            BlockId {
+                height: activation,
+                hash: [3; 32],
+            },
+            [0; 32],
+            &[],
+        )
+        .unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let export = |distribution: Distribution| {
+            let filter = filter.clone();
+            async move {
+                let publications = Publications::default();
+                distribution.attach(&publications);
+                assert!(publications.publish_filters(
+                    receiver_pir_server::blocks::BlockWindow::new(genesis, 0, vec![filter])
+                        .unwrap(),
+                    0
+                ));
+                distribution
+                    .export(&publications, &pir_pipeline::engine::PublisherEngine)
+                    .await
+                    .unwrap();
+                let current = distribution.authority.lock().unwrap().current().clone();
+                assert!(current.eligible);
+                current.publication.unwrap()
+            }
+        };
+        let first = export(Distribution::open(root.path().into(), rpc.clone(), 600).unwrap()).await;
+        // The restart offers no authority until it exports again; a query server
+        // that saw that withdrawal never serves the earlier publication again.
+        let second = export(Distribution::open(root.path().into(), rpc, 600).unwrap()).await;
+        assert_ne!(second.publication, first.publication);
+        assert!(second.descriptor.recovery_epoch > first.descriptor.recovery_epoch);
+        assert_eq!(second.descriptor.filters, first.descriptor.filters);
         task.abort();
     }
 }

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- A restarted publisher republishes the same Receiver tables under a new
+  publication. Inventories and descriptors carry the publisher's recovery epoch,
+  so query servers no longer refuse the restarted publication as the one they saw
+  withdrawn during the restart, and Receiver is ready again without waiting for the
+  next block. Query servers built before this change refuse the new field, so deploy
+  it with the publisher (`pir-deploy all` or `--breaking`).
+
 - Use wallet-libraries' functional-area PIR packages for Receiver: formats and
   validation from `zakura-pir-protocol`, publication building from
   `zakura-pir-publisher`, the evaluator from `zakura-pir-query-server` and the client
