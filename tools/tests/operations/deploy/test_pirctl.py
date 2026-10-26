@@ -303,20 +303,44 @@ class PirctlTest(unittest.TestCase):
         self.assertEqual(self.fleet.pirctl(self.host, 'rollback', 'query').returncode, 0)
         self.assertTrue(self.fleet.current(self.host, 'query').startswith('adopted-'))
 
-    def test_adopt_refuses_a_drop_in_that_changes_the_command(self):
-        old = self.host / 'opt/enhance-pir/releases/9b89/pir-query-server'
-        old.parent.mkdir(parents=True)
-        write_executable(old, EXECUTABLE)
+    def unit_with_release_drop_in(self, drop_in):
+        for release in ('d374', '9b89'):
+            binary = self.host / 'opt/old/releases' / release / 'pir-query-server'
+            binary.parent.mkdir(parents=True)
+            write_executable(binary, EXECUTABLE + '# ' + release + '\n')
         units = self.host / 'etc/systemd/system'
         (units / 'query.service').write_text(
-            '[Service]\nExecStart=/opt/enhance-pir/releases/9b89/pir-query-server --config /etc/query.json\n')
+            '[Service]\nExecStartPre=\nExecStart=/opt/old/releases/d374/pir-query-server --config /etc/query.json\n'
+            'MemoryMax=10G\n')
         (units / 'query.service.d').mkdir()
-        (units / 'query.service.d/zz.conf').write_text(
-            '[Service]\nExecStart=\nExecStart=/opt/enhance-pir/releases/9b89/pir-query-server --config /etc/other.json\n')
+        (units / 'query.service.d/zz-release.conf').write_text(drop_in)
         subprocess.run(['systemctl', 'restart', 'query.service'], env=self.fleet.env(self.host), check=True)
+        return units
+
+    def test_adopt_keeps_the_command_a_release_drop_in_overrides(self):
+        units = self.unit_with_release_drop_in(
+            '[Service]\nExecStart=\nExecStart=/opt/old/releases/9b89/pir-query-server --config /etc/query.json\n')
+        result = self.fleet.pirctl(self.host, 'adopt', 'query')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        unit = (units / 'query.service').read_text()
+        self.assertEqual([l for l in unit.splitlines() if l.startswith('ExecStart=')],
+                         ['ExecStart=/opt/wallet-pir/query/current/pir-query-server --config /etc/query.json'])
+        self.assertIn('MemoryMax=10G', unit)
+        self.assertEqual(list((units / 'query.service.d').iterdir()), [])
+        adopted = self.host / 'opt/wallet-pir/query/current/pir-query-server'
+        self.assertIn('# 9b89', adopted.read_text())
+
+    def test_adopt_refuses_a_drop_in_mixing_the_command_with_other_settings(self):
+        units = self.unit_with_release_drop_in(
+            '[Service]\nExecStart=\nExecStart=/opt/old/releases/9b89/pir-query-server --config /etc/query.json\n'
+            'Nice=5\n')
+        before = (units / 'query.service').read_text()
         result = self.fleet.pirctl(self.host, 'adopt', 'query')
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn('drop-ins change its command', result.stderr)
+        self.assertIn('mixes ExecStart with other settings', result.stderr)
+        self.assertEqual((units / 'query.service').read_text(), before)
+        self.assertTrue((units / 'query.service.d/zz-release.conf').exists())
+        self.assertIsNone(self.fleet.current(self.host, 'query'))
 
 
 class DriverTest(unittest.TestCase):

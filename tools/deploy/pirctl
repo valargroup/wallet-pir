@@ -182,35 +182,37 @@ status() {
 # Moves a unit that runs a release by absolute path onto current/. Drop-ins that
 # only repeat ExecStart are set aside; any other ExecStart override is refused.
 adopt() {
-  local pid exe path hash dir unit_file effective main dropin saved new
+  local pid exe path hash dir unit_file effective dropin saved new aside
   pid=$(systemctl show -p MainPID --value "$C_UNIT")
   exe=$(readlink "$PROC/$pid/exe" 2>/dev/null || true)
   [ -n "$exe" ] && [ -f "$exe" ] || die "$C_UNIT is not running a binary that still exists (${exe:-none})"
   [ -L "$C_DIR/current" ] && die "$C_NAME is already adopted"
   unit_file=$(systemctl show -p FragmentPath --value "$C_UNIT")
+  # The command systemd runs: the last non-empty ExecStart across the unit and drop-ins.
   effective=$(systemctl cat "$C_UNIT" | grep '^ExecStart=.' | tail -1)
-  main=$(grep '^ExecStart=.' "$ROOT$unit_file" | tail -1)
-  [ "$effective" = "$main" ] || die "$C_UNIT's drop-ins change its command; reconcile them by hand first"
   path=${exe#"$ROOT"}
-  [[ "$main " == *"$path "* ]] || die "$C_UNIT's ExecStart does not name $path"
-  saved=$ROOT/etc/wallet-pir/adopted/$C_UNIT
-  mkdir -p "$saved"
-  cp -p "$ROOT$unit_file" "$saved/"
+  [[ "$effective " == *"=$path "* ]] || die "$C_UNIT's ExecStart does not name $path"
+  aside=()
   for dropin in $(systemctl show -p DropInPaths --value "$C_UNIT"); do
     if grep -qv -e '^ExecStart=' -e '^\[Service\]' -e '^#' -e '^[[:space:]]*$' "$ROOT$dropin"; then
       grep -q '^ExecStart=' "$ROOT$dropin" && die "$dropin mixes ExecStart with other settings"
-      continue
+    else
+      aside+=("$ROOT$dropin")
     fi
-    mv "$ROOT$dropin" "$saved/"
   done
+  saved=$ROOT/etc/wallet-pir/adopted/$C_UNIT
+  mkdir -p "$saved"
+  cp -p "$ROOT$unit_file" "$saved/"
+  [ ${#aside[@]} -eq 0 ] || mv "${aside[@]}" "$saved/"
   hash=$(sha256sum "$exe" | cut -c1-12)
   dir=$OPT/$C_ASSET/releases/adopted-$hash
   mkdir -p "$dir" "$C_DIR"
   [ -x "$dir/$C_ASSET" ] || cp -p "$exe" "$dir/$C_ASSET"
   ln -sfn "$dir" "$C_DIR/current"
-  new=/opt/wallet-pir/$C_NAME/current/$C_ASSET
-  sed -i.pirctl -e "/^ExecStart=/s|$path |$new |" -e "/^ExecStart=/s|$path\$|$new|" "$ROOT$unit_file"
-  rm -f "$ROOT$unit_file.pirctl"
+  # The unit file now holds the running command itself, through current/.
+  new=${effective/"=$path"/=/opt/wallet-pir/$C_NAME/current/$C_ASSET}
+  awk -v line="$new" '/^ExecStart=/ {if (!done) print line; done = 1; next} {print}' "$ROOT$unit_file" >"$ROOT$unit_file.pirctl"
+  mv "$ROOT$unit_file.pirctl" "$ROOT$unit_file"
   systemctl daemon-reload
   say "$C_NAME: adopted $path as adopted-$hash; the unit switches at its next restart (old files in $saved)"
 }
