@@ -167,6 +167,9 @@ impl Distribution {
             return Ok(());
         }
         let revision = publications.history_revision();
+        if directory.is_none() && self.serves_tables(revision) {
+            return Ok(());
+        }
         let recovery_epoch = self
             .authority
             .lock()
@@ -211,6 +214,18 @@ impl Distribution {
                 recovery_epoch,
             })
             .await
+    }
+    /// Whether the eligible publication serves tables of `revision`. A restarted
+    /// process restores its previous tables before it has built its own, and an
+    /// export without tables must not replace them meanwhile. Losing tables any
+    /// other way revokes them, which withdraws that publication first.
+    fn serves_tables(&self, revision: u64) -> bool {
+        let authority = self.authority.lock().unwrap();
+        let current = authority.current();
+        current.eligible
+            && current.publication.as_ref().is_some_and(|p| {
+                p.descriptor.directory.is_some() && p.descriptor.history_revision == revision
+            })
     }
     fn file(&self, path: &FilePath) -> Result<pir_publication::ObjectReference, Error> {
         let file = pir_publication::open_object_file(path, None)?;
@@ -610,6 +625,78 @@ mod tests {
         assert!(damaged
             .validate(crate::blocks::ironwood_activation())
             .is_err());
+    }
+
+    /// While a restarted process has only block filters, its exports leave the
+    /// restored publication and its tables in place.
+    #[tokio::test]
+    async fn an_export_without_tables_keeps_restored_tables() {
+        use zakura_pir_publisher::receiver::snapshot::SnapshotPublisherExt as _;
+        use zakura_pir_query_server::receiver::{session::MIN_ROWS, snapshot::Snapshot};
+        let root = tempfile::tempdir().unwrap();
+        let genesis = Network::Mainnet.genesis_hash();
+        let activation = crate::blocks::ironwood_activation();
+        let mut manifest = common::manifest(MIN_ROWS);
+        manifest.genesis = genesis;
+        manifest.start_height = activation;
+        manifest.end_height = activation + 1;
+        let snapshot = Snapshot::build(manifest, &[]).unwrap();
+        let witnesses = crate::prepared::placeholder(&snapshot);
+        let mut durable = crate::durable::Durable::open(
+            root.path(),
+            Arc::new(receiver_pir_server::tables::Tables::new(4 << 30)),
+        )
+        .unwrap();
+        let segment = durable.segment(snapshot, witnesses).unwrap();
+        let publication = Arc::new(
+            receiver_pir_server::Publication::assemble(
+                genesis,
+                0,
+                vec![(false, vec![segment], None)],
+            )
+            .unwrap(),
+        );
+        // No node answers: keeping the restored tables needs no chain check.
+        let distribution = Distribution::open(
+            root.path().into(),
+            NodeClient::new("http://127.0.0.1:1".into(), None).unwrap(),
+            600,
+        )
+        .unwrap();
+        let inventory = distribution
+            .material(Some(publication), None, 0, 0)
+            .unwrap();
+        let object = distribution
+            .objects
+            .store(&serde_json::to_vec(&inventory).unwrap())
+            .unwrap();
+        distribution
+            .authority
+            .lock()
+            .unwrap()
+            .apply(AuthorityTransition::Publish(inventory.reference(object)))
+            .unwrap();
+        let restored = distribution.authority.lock().unwrap().current().clone();
+        let publications = Publications::default();
+        let filter = BlockFilter::build(
+            &genesis,
+            BlockId {
+                height: activation,
+                hash: [3; 32],
+            },
+            [0; 32],
+            &[],
+        )
+        .unwrap();
+        assert!(publications.publish_filters(
+            receiver_pir_server::blocks::BlockWindow::new(genesis, 0, vec![filter]).unwrap(),
+            0
+        ));
+        distribution
+            .export(&publications, &pir_pipeline::engine::PublisherEngine)
+            .await
+            .unwrap();
+        assert_eq!(*distribution.authority.lock().unwrap().current(), restored);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
