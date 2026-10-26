@@ -134,6 +134,10 @@ pub trait Consumer: Send {
     fn terminal(&self, _error: &Error) -> bool {
         false
     }
+    /// See [`polling::SyncTask::transient`].
+    fn transient(&self, _error: &Error) -> bool {
+        false
+    }
     fn phase_finished(&mut self, _phase: &'static str, _elapsed: Duration) {}
     fn pass_started(&mut self) -> impl Future<Output = ()> + Send {
         async {}

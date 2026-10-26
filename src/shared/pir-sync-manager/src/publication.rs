@@ -508,6 +508,13 @@ impl<A: PublicationAdapter> Consumer for EnvelopeConsumer<A> {
     fn terminal(&self, error: &Error) -> bool {
         crate::is_incompatible(error.as_ref())
     }
+    /// A publisher that does not answer, or whose proxy reports it down, is
+    /// restarting; a deploy makes that a gap of seconds.
+    fn transient(&self, error: &Error) -> bool {
+        error
+            .downcast_ref::<crate::DiscoveryError>()
+            .is_some_and(crate::DiscoveryError::unavailable)
+    }
     fn phase_finished(&mut self, phase: &'static str, elapsed: Duration) {
         self.adapter.phase_finished(phase, elapsed);
     }
