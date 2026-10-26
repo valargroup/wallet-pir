@@ -406,7 +406,7 @@ service entry with no `server` role and retain its routing ancillary entry.
 The optional `receiver_adoption` object has `host`, `machine_id`,
 `config_path` (`/etc/receiver-pir-publisher.json`), `data_dir`
 (`/srv/receiver-pir/index`) and `publisher_origin` (the main publisher's existing
-HTTPS origin), and an optional `mode` (`transfer` or `reingest`). It is accepted only when the installed shared configuration has
+HTTPS origin), and `mode: reingest`. It is accepted only when the installed shared configuration has
 no Receiver. Preserve all Receiver settings except changing `bind` to
 `127.0.0.1:18380`; the shared chain connection replaces its separate node.
 Provision the source unit's existing Infisical environment file at the same path
@@ -421,19 +421,18 @@ It then switches the HTTPS provider edge and disables the old owner. Databases
 and publication objects are rebuilt on the destination. Rollback returns the
 authority floor before restarting the old owner against its retained index.
 
-The default transfer transaction stops and disables the old Receiver owner, verifies its state
-lock, streams its complete stopped directory through gzip with a checked file manifest and
-starts Receiver inside the shared process. It adds the exact writable path and
-increases the shared service's memory ceiling from 40 to 47 GiB. Receiver's
-hostname keeps its wallet upstream and forwards provider requests and discovery
-over verified HTTPS to the shared publisher. Query replicas keep their existing
-Receiver origin. Verify fresh synchronization and an encrypted Receiver lookup
-on both replicas; a cached inventory is not evidence of a successful move.
-Rollback returns the latest Receiver state before restarting the old owner, so
-publication authority does not return to pre-cutover counters. Interrupted
-adoption uses `reconcile` or `rollback`, followed by a fresh plan; ordinary
-four-product installation recovery remains unchanged. Later publisher requests
-retain Receiver but omit `receiver_adoption`.
+The shared unit adds Receiver's writable path and increases its memory ceiling
+from 40 to 47 GiB. Receiver's hostname preserves its wallet upstream and forwards
+provider requests and discovery over verified HTTPS to the shared publisher.
+Query hosts retain their Receiver origin. Verify a fresh fetch and an encrypted
+Receiver lookup through each selected query endpoint; cached inventory alone is
+not evidence of a successful cutover.
+
+The retired complete-state transfer path is absent from new operations packages.
+Historical transfer transactions use their recorded package. Current reingestion
+transactions retain authority handover and rollback against the old index.
+Interrupted adoption uses `reconcile` or `rollback`, followed by a fresh plan.
+Later publisher requests retain Receiver but omit `receiver_adoption`.
 
 For an explicitly scoped operational rollout, publisher and fleet-release
 requests may set `probe_products: ["receiver"]` to run only Receiver retrieval

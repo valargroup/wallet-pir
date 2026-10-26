@@ -21,8 +21,10 @@ project-membership resource sets. `services.tf` passes shared references and
 `moves.tf` extracts the resources without changing their instance keys;
 `shared.tf` retains the earlier rename and archive-key move chains.
 
-`receiver.tf` holds the opt-in receiver
-directory Droplet and DNS record; import the existing Droplet and record as the
+`receiver.tf` retains the Receiver HTTPS edge/rollback Droplet and DNS record.
+Receiver ingestion runs in the shared publisher, and wallet queries run on the
+shared query host. Keep the existing Terraform resource addresses and DNS;
+removing this block would remove the active public edge. Import existing resources as the
 [receiver deployment](../../../receiver/digitalocean/README.md#infrastructure)
 describes before enabling it. Use the [transparent deployment target](../../../../docs/transparent/deployment.md)
 and [verified-status record](../../../../docs/transparent/status.md) before changing them.
@@ -110,15 +112,14 @@ Wallet PIR hosts intentionally have no DigitalOcean cloud firewalls. SSH access
 does not depend on operator or VPN source addresses. Bind private services to
 loopback or the VPC interface; public routing remains owned by Caddy.
 
-## Unified query candidate
+## Shared query node
 
-`query_serving_enabled` defaults to false. Enabling it adds the separate
-`wallet-pir-query-01` node, its 1 TiB volume and candidate DNS through the
-`../query-serving` module. Existing routing stays unchanged. Follow the
-[query node procedure](../../../../docs/query-node.md) for the approved 192 GiB
-capacity, saved-plan guard, branch staging and application deployment.
-Receiver support is still required before all-products acceptance.
+`query_serving_02_enabled` (default false) declares `wallet-pir-query-02`, with
+its existing 128 GB capacity, 512 GiB volume and hostname. Preserve
+`module.query_serving_02[0]`, the existing backend and installed enabled input;
+defaults do not describe the live fleet's operator variables.
 
-`query_serving_02_enabled` (default false) adds `wallet-pir-query-02`, the
-128 GB (`m-16vcpu-128gb`) replacement with its own 512 GiB volume and
-hostname, beside the first node. Retiring the first node is a separate step.
+The retired Query 01 declaration and the one-time additive node provisioning
+workflow are removed. Application deployments use the shared publisher and
+`fleet-release-*` commands; see the [query node guide](../../../../docs/query-node.md).
+No node, volume or DNS change should accompany a routine binary update.

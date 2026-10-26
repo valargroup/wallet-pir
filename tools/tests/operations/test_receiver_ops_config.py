@@ -21,6 +21,14 @@ QUERY = {
 
 
 class ReceiverOpsConfig(unittest.TestCase):
+    def test_shared_deployment_replaces_one_off_cutover_commands(self):
+        from wallet_pir_ops.deploy import cli
+        help_text = cli.parser().format_help()
+        self.assertIn('publisher-cutover-deploy', help_text)
+        self.assertIn('fleet-release-deploy', help_text)
+        self.assertNotIn('receiver-routing-', help_text)
+        self.assertNotIn('query-node-provision', help_text)
+
     def test_query_uses_https_only_and_preserves_capacity_and_sandbox(self):
         rendered = roles.query(QUERY, release='/opt/receiver/releases/test')
         config = json.loads(rendered.files[QUERY['config_path']])
@@ -92,8 +100,9 @@ class ReceiverOpsConfig(unittest.TestCase):
         self.assertEqual(set(wallet), expected)
         provider = re.search(r'@provider path (.*)', text).group(1).split()
         self.assertEqual(provider, ['/provider/receiver/v1/*'])
-        self.assertRegex(text, r'handle @provider\s*\{\s*reverse_proxy 127\.0\.0\.1:18380')
-        self.assertRegex(text, r'handle /\.well-known/pir-service-discovery\s*\{\s*reverse_proxy 127\.0\.0\.1:18381')
+        self.assertRegex(text, r'handle @provider\s*\{\s*reverse_proxy \{\$RECEIVER_PUBLISHER_UPSTREAM\}')
+        self.assertRegex(text, r'handle /\.well-known/pir-service-discovery\s*\{\s*reverse_proxy \{\$RECEIVER_PUBLISHER_UPSTREAM\}')
+        self.assertNotIn('127.0.0.1:1838', text)
         self.assertIn('header_up Host {upstream_hostport}', text)
         self.assertNotIn('/v1/receiver/health', wallet)
         self.assertIn('reverse_proxy {$RECEIVER_QUERY_UPSTREAM}', text)

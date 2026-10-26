@@ -14,6 +14,7 @@ class PublisherTests(PublisherFixture, unittest.TestCase):
         self.request['configuration']['receiver'] = {'enabled': True, 'settings': {
             'data_dir': publisher_receiver.STATE, 'bind': '127.0.0.1:18380', 'depth': 2}}
         self.request['receiver_adoption'] = {
+            'mode': 'reingest',
             'host': 'receiver-01', 'machine_id': 'b' * 32,
             'config_path': '/etc/receiver-pir-publisher.json', 'data_dir': publisher_receiver.STATE,
             'publisher_origin': 'https://publisher.example.test'}
@@ -60,6 +61,21 @@ class PublisherTests(PublisherFixture, unittest.TestCase):
         self.assertNotIn('receiver_source_touched', journal)
         self.assertFalse(any(effect[:2] in (('stop', 'receiver-pir.service'),
                                            ('disable', 'receiver-pir.service')) for effect in self.ex.effects))
+
+    def test_receiver_handover_preserves_both_authority_floors_without_copying_an_index(self):
+        from wallet_pir_ops.deploy.publisher_receiver import Receiver, STATE
+        self.receiver_request()
+        target = self.make_target()
+        target.effect = lambda journal, _description, action: action()
+        path = STATE + '/distribution/authority.json'
+        self.ex.put('receiver-01', path, json.dumps({'scope': 'receiver', 'sequence': 40,
+                    'fence': {'recovery_epoch': 3, 'latest_withdrawal': 30}}))
+        self.ex.put('coordinator', path, json.dumps({'scope': 'receiver', 'sequence': 20,
+                    'fence': {'recovery_epoch': 4, 'latest_withdrawal': 12}}))
+        Receiver(target).handover_authority({}, 'receiver-01', 'coordinator')
+        transferred = json.loads(self.ex.read('coordinator', path))
+        self.assertEqual(transferred['sequence'], 40)
+        self.assertEqual(transferred['fence'], {'recovery_epoch': 4, 'latest_withdrawal': 30})
 
     def install_product_local_chain(self):
         installed = copy.deepcopy(self.request['configuration'])

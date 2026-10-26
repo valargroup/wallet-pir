@@ -79,13 +79,13 @@ class Serving:
                                  only=ROLES, clock=cutover.clock, sleep=cutover.sleep, out=lambda _message: None)
         self.binary = None
 
-    def validate_edge(self, text):
+    def validate_edge(self, text, host=None):
         payload = base64.b64encode(text.encode()).decode()
         program = ('import base64,subprocess,sys;'
                    'r=subprocess.run(["caddy","validate","--config","/dev/stdin","--adapter","caddyfile"],'
                    'input=base64.b64decode(sys.argv[1]),capture_output=True);'
                    'print((r.stdout+r.stderr).decode()[-1500:]);raise SystemExit(r.returncode)')
-        code, output = self.cutover.ex.run(self.cutover.host, ['python3', '-c', program, payload], 30)
+        code, output = self.cutover.ex.run(host or self.cutover.host, ['python3', '-c', program, payload], 30)
         require(code == 0, 'candidate wallet edge is invalid: ' + output[-1500:])
 
     def capture(self):

@@ -19,8 +19,8 @@ receiver-pir.valargroup.dev {
 
 	# Only the wallet-facing routes, at the canonical `/receiver/v1/` prefix and the
 	# deployed `/v1/receiver/` one. `/v1/receiver/health` and `/metrics` are
-	# deliberately not here. Publisher health stays on its loopback management
-	# listener on port 18381; the public edge forwards only the discovery route.
+	# deliberately not here. Publisher health stays on the shared publisher's
+	# private management listener; this edge forwards only public discovery.
 	@wallet path /receiver/v1/inventory /receiver/v1/inventory/* /receiver/v1/query /receiver/v1/public/* /receiver/v1/shard-filters/* /receiver/v1/block-filters/* /v1/receiver/inventory /v1/receiver/inventory/* /v1/receiver/query /v1/receiver/public/* /v1/receiver/shard-filters/* /v1/receiver/block-filters/*
 	handle @wallet {
 		reverse_proxy {$RECEIVER_QUERY_UPSTREAM} {
@@ -28,15 +28,19 @@ receiver-pir.valargroup.dev {
 		}
 	}
 
-	# The Receiver host publishes prepared inputs; queries run on the configured
-	# existing query host. Set RECEIVER_QUERY_UPSTREAM during the approved cutover.
+	# Both upstreams are existing HTTPS origins. The shared publisher serves
+	# prepared inputs; the query host serves wallet requests.
 	@provider path /provider/receiver/v1/*
 	handle @provider {
-		reverse_proxy 127.0.0.1:18380
+		reverse_proxy {$RECEIVER_PUBLISHER_UPSTREAM} {
+			header_up Host {upstream_hostport}
+		}
 	}
 
 	handle /.well-known/pir-service-discovery {
-		reverse_proxy 127.0.0.1:18381
+		reverse_proxy {$RECEIVER_PUBLISHER_UPSTREAM} {
+			header_up Host {upstream_hostport}
+		}
 	}
 
 	handle {

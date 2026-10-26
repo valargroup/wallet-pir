@@ -1,12 +1,10 @@
-"""Adopt one stopped Receiver publisher into the existing shared process.
+"""Reingest Receiver in the shared publisher, then hand over its HTTPS origin.
 
-The parent publisher journal owns the source unit, state transfer and edge
-changes. The original host stays an HTTPS proxy. Rollback returns the latest
-state before restarting that host, so query-server authority never goes back to
-a pre-cutover counter. No node, wallet or publication format changes here.
+The journal owns source shutdown, authority handover and edge changes. The old
+host stays an HTTPS proxy and retains its index for rollback. Only authority
+counters cross hosts; databases and publications are built on the destination.
 """
 import json
-from pathlib import PurePosixPath
 import re
 import shlex
 from urllib.parse import urlsplit
@@ -27,7 +25,8 @@ def validate(request, inventory):
     require(isinstance(adoption, dict) and set(adoption) - {'mode'} == {
         'host', 'machine_id', 'config_path', 'data_dir', 'publisher_origin'},
         'Receiver adoption needs source host, machine_id, config_path, data_dir and publisher_origin')
-    require(adoption.get('mode', 'transfer') in ('transfer', 'reingest'), 'unknown Receiver adoption mode')
+    require(adoption.get('mode') == 'reingest',
+            'Receiver adoption requires mode reingest; recover old transfers with their recorded operations package')
     require(adoption['host'] in inventory.hosts and adoption['host'] != request['host'],
             'Receiver adoption must name a separate known source host')
     require(isinstance(adoption['machine_id'], str) and re.fullmatch('[a-f0-9]{32}', adoption['machine_id']),
@@ -56,10 +55,6 @@ class Receiver:
         code, output = self.owner.ex.run(host, ['python3', '-c', program, *arguments], 60)
         require(code == 0, 'Receiver adoption check failed: ' + output[-1000:])
         return json.loads(output)
-
-    def receipt(self, host, root):
-        return self.run(host, 'import json,pathlib,sys; p=pathlib.Path(sys.argv[1]); '
-                        'print(p.read_text() if p.exists() else "null")', root + '/.receiver-transfer.json')
 
     def edge(self, text):
         if not self.request:
@@ -132,9 +127,7 @@ class Receiver:
         before = owner.ex.read(source, EDGE)
         after = self.source_edge(before)
         # Validate with the source host's installed Caddy before touching its owner.
-        from tools.receiver.lib.routing import Routing
-        Routing(owner.inventory, owner.ex, owner.state_dir, {'host': source, 'phase': 'distribution',
-            'query_host': owner.host}).validate(after)
+        owner.serving.validate_edge(after, host=source)
         return {'unit': state, 'executable': executable, 'configuration': configuration,
                 **({'reingested_state': retained} if retained else {}),
                 'user': effective.get('Service', {}).get('User', 'root'),
@@ -161,34 +154,15 @@ class Receiver:
         plan = journal['plan'].get('receiver')
         if plan is None:
             return
-        owner, source = self.owner, self.request['host']
-        if self.reingesting():
-            if plan.get('reingested_state'):
-                owner.effect(journal, 'reuse completed Receiver ingestion',
-                             lambda: owner.ex.rename(owner.host, plan['reingested_state'], STATE))
-            else:
-                owner.effect(journal, 'prepare fresh Receiver index',
-                             lambda: owner.ex.mkdir(owner.host, STATE, 0o700))
-            journal['receiver_reingesting'] = True
-            owner.save(journal)
-            return
-        def stop():
-            owner.ex.systemctl(source, 'stop', UNIT)
-            state = owner.ex.probe_unit(source, UNIT)
-            require(not state['main_pid'] and state['active_state'] in ('inactive', 'failed'),
-                    'Receiver source did not stop')
-            owner.ex.publisher_unlocked(source, [STATE + '/publisher.lock'])
-        journal['receiver_source_touched'] = True
-        owner.effect(journal, 'stop Receiver source', stop)
-        owner.effect(journal, 'disable Receiver source', lambda: owner.ex.systemctl(source, 'disable', UNIT))
-        parent = str(PurePosixPath(STATE).parent)
-        staged = parent + '/.receiver-adoption-' + journal['id']
-        owner.effect(journal, 'prepare Receiver destination', lambda: owner.ex.mkdir(owner.host, parent, 0o700))
-        def transfer():
-            journal['receiver_transfer'] = owner.ex.receiver_copy_state(source, owner.host, STATE,
-                                                                        staged, journal['id'])
-        owner.effect(journal, 'copy Receiver state', transfer)
-        owner.effect(journal, 'install Receiver state', lambda: owner.ex.rename(owner.host, staged, STATE))
+        owner = self.owner
+        if plan.get('reingested_state'):
+            owner.effect(journal, 'reuse completed Receiver ingestion',
+                         lambda: owner.ex.rename(owner.host, plan['reingested_state'], STATE))
+        else:
+            owner.effect(journal, 'prepare fresh Receiver index',
+                         lambda: owner.ex.mkdir(owner.host, STATE, 0o700))
+        journal['receiver_reingesting'] = True
+        owner.save(journal)
 
     def route(self, journal):
         plan = journal['plan'].get('receiver')
@@ -246,43 +220,19 @@ class Receiver:
                 owner.effect(journal, 'retain incomplete Receiver ingestion', lambda: owner.ex.rename(
                     owner.host, STATE, STATE + '.rolled-back-' + journal['id']))
             return
-        if self.reingesting():
-            require(not state['main_pid'], 'Receiver source must stop before authority returns')
-            retained = STATE + '.rolled-back-' + journal['id']
-            present = self.run(owner.host, 'import json,pathlib,sys; '
-                               'print(json.dumps(pathlib.Path(sys.argv[1]).exists()))', STATE)
-            self.handover_authority(journal, owner.host, source, STATE if present else retained)
-            owner.effect(journal, 'restore Receiver edge',
-                         lambda: owner.ex.write(source, EDGE, plan['edge_before'].encode(), 0o644))
-            owner.effect(journal, 'reload restored Receiver edge',
-                         lambda: owner.ex.systemctl(source, 'reload', 'caddy.service'))
-            if present:
-                owner.effect(journal, 'retain Receiver ingestion after rollback', lambda: owner.ex.rename(
-                    owner.host, STATE, retained))
-            return
-        receipt = self.receipt(owner.host, STATE)
-        if receipt is not None:
-            require(not state['main_pid'], 'Receiver source must stay stopped until its latest state is returned')
-            require(receipt.get('transaction') == journal['id'], 'Receiver destination belongs to another transaction')
-            staged = str(PurePosixPath(STATE).parent) + '/.receiver-return-' + journal['id']
-            returned = self.receipt(source, STATE)
-            if returned is None or returned.get('transaction') != journal['id']:
-                def transfer():
-                    owner.ex.receiver_copy_state(owner.host, source, STATE, staged, journal['id'], plan['user'])
-                staged_receipt = self.receipt(source, staged)
-                if staged_receipt is None or staged_receipt.get('transaction') != journal['id']:
-                    owner.effect(journal, 'return latest Receiver state', transfer)
-                backup = STATE + '.before-' + journal['id']
-                exists = self.run(source, 'import json,pathlib,sys; '
-                                  'print(json.dumps(pathlib.Path(sys.argv[1]).exists()))', STATE)
-                if exists:
-                    owner.effect(journal, 'retain original Receiver state', lambda: owner.ex.rename(source, STATE, backup))
-                owner.effect(journal, 'restore latest Receiver state', lambda: owner.ex.rename(source, staged, STATE))
-            retained = STATE + '.rolled-back-' + journal['id']
-            owner.effect(journal, 'retain returned Receiver destination', lambda: owner.ex.rename(owner.host, STATE, retained))
+        require(not state['main_pid'], 'Receiver source must stop before authority returns')
+        retained = STATE + '.rolled-back-' + journal['id']
+        present = self.run(owner.host, 'import json,pathlib,sys; '
+                           'print(json.dumps(pathlib.Path(sys.argv[1]).exists()))', STATE)
+        self.handover_authority(journal, owner.host, source, STATE if present else retained)
         owner.effect(journal, 'restore Receiver edge',
                      lambda: owner.ex.write(source, EDGE, plan['edge_before'].encode(), 0o644))
-        owner.effect(journal, 'reload restored Receiver edge', lambda: owner.ex.systemctl(source, 'reload', 'caddy.service'))
+        owner.effect(journal, 'reload restored Receiver edge',
+                     lambda: owner.ex.systemctl(source, 'reload', 'caddy.service'))
+        if present:
+            owner.effect(journal, 'retain Receiver ingestion after rollback', lambda: owner.ex.rename(
+                owner.host, STATE, retained))
+        return
 
     def restore_service(self, journal):
         plan = journal['plan'].get('receiver')

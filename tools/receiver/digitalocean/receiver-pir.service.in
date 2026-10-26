@@ -7,7 +7,7 @@ User=receiver-pir
 Group=receiver-pir
 # NEAR_INTENTS_EXPLORER=<partner key> for the optional payout audit, from the
 # inventory's NEAR_KEY id. Without the file the service indexes and serves
-# without the audit. near-key.py installs these; see README.md.
+# without the audit. Provision these from Infisical; see README.md.
 EnvironmentFile=-/etc/receiver-pir/near-@NEAR_KEY@.env
 # Configuration and writable paths are supplied by the root role renderer.
 ExecStart=/bin/false

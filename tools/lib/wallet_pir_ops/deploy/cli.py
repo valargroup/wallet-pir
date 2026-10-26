@@ -274,21 +274,18 @@ def parser():
     top.add_argument('--state-dir', default=str(default_state_dir()))
     top.add_argument('--baseline', help='baseline file (default <state-dir>/baselines/<service>.json)')
     commands = top.add_subparsers(dest='command', required=True)
-    from . import query_provision
-    query_provision.register(commands)
     command = commands.add_parser('fleet', help='read configured hosts and roles; makes no host connections')
     command.add_argument('--complete', action='store_true',
                          help='also require every registered service, role, responsibility and ancillary kind')
-    for product in ('status', 'receiver'):
-        for operation in ('plan', 'preflight', 'deploy', 'status', 'rollback'):
-            command = commands.add_parser(product + '-routing-' + operation,
-                                          help=product.title() + ' wallet-route cutover only')
-            command.add_argument('--request', type=Path, required=True)
-            command.add_argument('--request-sha256', required=True)
-            if operation == 'deploy':
-                command.add_argument('--expect-plan-sha256', required=True)
-            if operation in ('status', 'rollback'):
-                command.add_argument('--transaction')
+    for operation in ('plan', 'preflight', 'deploy', 'status', 'rollback'):
+        command = commands.add_parser('status-routing-' + operation,
+                                      help='Status wallet-route cutover only')
+        command.add_argument('--request', type=Path, required=True)
+        command.add_argument('--request-sha256', required=True)
+        if operation == 'deploy':
+            command.add_argument('--expect-plan-sha256', required=True)
+        if operation in ('status', 'rollback'):
+            command.add_argument('--transaction')
     for operation in ('plan', 'preflight', 'deploy', 'status', 'rollback', 'verify', 'dns-plan', 'dns-stage',
                       'history-relay-plan', 'history-relay-repair'):
         command = commands.add_parser('coordinator-edge-' + operation,
@@ -465,18 +462,14 @@ def run(args, executor, out, package_layout, package_github, **options):
         from ..bundle import check_installed
         product_command = args.command.startswith(('schema-', 'txid-display-', 'transparent-binary-', 'transparent-alerts-',
                                                    'transparent-load-repair-', 'transparent-provider-maintenance-',
-                                                   'ops-package-', 'publisher-cutover-', 'fleet-release-', 'status-routing-', 'receiver-routing-',
-                                                   'coordinator-edge-', 'cache-storage-', 'cache-volume-', 'cache-data-', 'query-node-'))
+                                                   'ops-package-', 'publisher-cutover-', 'fleet-release-', 'status-routing-',
+                                                   'coordinator-edge-', 'cache-storage-', 'cache-volume-', 'cache-data-'))
         mutation = (args.command in ('deploy', 'rollback') or getattr(args, 'stage', False)
                     or product_command and not args.command.endswith(('-plan', '-preflight', '-status', '-summary', '-recipe')))
         # A clean installed package may install a newer package revision; every
         # binary change still names the same source revision as the package.
         package_command = args.command.startswith('ops-package-')
         check_installed(mutation=mutation, revision=None if package_command else getattr(args, 'sha', None))
-        if args.command.startswith('query-node-'):
-            from . import query_provision
-            out(json.dumps(query_provision.dispatch(args), sort_keys=True))
-            return 0
         if args.command.startswith('cache-data-'):
             from . import cache_data
             out(json.dumps(cache_data.dispatch(args, executor), sort_keys=True))
@@ -516,14 +509,10 @@ def run(args, executor, out, package_layout, package_github, **options):
             check_installed(mutation=mutation, revision=request['source']['revision'])
             out(json.dumps(fleet_release.dispatch(args, executor), sort_keys=True))
             return 0
-        if args.command.startswith(('status-routing-', 'receiver-routing-')):
+        if args.command.startswith('status-routing-'):
             from .engine import mutation_fence
-            if args.command.startswith('receiver-routing-'):
-                from tools.receiver.lib.routing import Routing, load_request, digest
-                prefix = 'receiver-routing-'
-            else:
-                from tools.status.lib.routing import Routing, load_request, digest
-                prefix = 'status-routing-'
+            from tools.status.lib.routing import Routing, load_request, digest
+            prefix = 'status-routing-'
             inventory = descriptors.load_inventory(args.inventory)
             request = load_request(args.request, args.request_sha256)
             routing = Routing(inventory, executor or SSHExecutor(inventory), args.state_dir, request,

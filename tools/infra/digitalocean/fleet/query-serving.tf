@@ -1,42 +1,5 @@
-variable "query_serving_enabled" {
-  description = "Opt in to the separate unified query candidate; preserves the existing fleet."
-  type        = bool
-  default     = false
-}
-variable "query_serving_size" {
-  type    = string
-  default = "m-24vcpu-192gb"
-}
-variable "query_serving_volume_gib" {
-  type    = number
-  default = 1024
-}
-variable "query_serving_hostname" {
-  type    = string
-  default = "wallet-pir-query-01.valargroup.dev"
-}
-
-module "query_serving" {
-  source             = "../query-serving"
-  count              = var.query_serving_enabled ? 1 : 0
-  project_id         = var.wallet_pir_project_id
-  region             = var.region
-  image              = var.image
-  vpc_id             = digitalocean_vpc.wallet.id
-  ssh_key_ids        = var.ssh_key_ids
-  cloudflare_zone_id = var.cloudflare_zone_id
-  size               = var.query_serving_size
-  data_volume_gib    = var.query_serving_volume_gib
-  hostname           = var.query_serving_hostname
-}
-
-output "query_serving_node" {
-  value = try(module.query_serving[0].node, null)
-}
-
-# The smaller replacement for wallet-pir-query-01 (ams3 offers no 16 vCPU,
-# 96 GB size). It runs beside the first node until routing moves to it, so
-# retiring the first node is a separate step.
+# The shared query node. The retired Query 01 provisioning path is removed.
+# Keep this module address and its installed inputs unchanged.
 variable "query_serving_02_enabled" {
   description = "Opt in to the 128 GB replacement query node; preserves the existing fleet."
   type        = bool

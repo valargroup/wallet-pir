@@ -4,8 +4,10 @@ Start here for the shared operating model. Product runbooks own their publicatio
 authority, resource and encrypted-answer checks. Source and release preparation do
 not establish what is running; inspect the fleet and retained deployment evidence.
 
-See [the unified publisher](publisher.md) for the opt-in executable that composes
-these product owners into one process. Packaging it does not establish deployment.
+The standard deployment uses [one shared publisher](publisher.md) for all five
+products and [shared query hosts](query-server.md) for serving. Product-specific
+roles also support distributed workers and isolated qualification. Packaging an
+executable alone does not establish what is running.
 
 ## Architecture and ownership
 
@@ -15,7 +17,7 @@ these product owners into one process. Packaging it does not establish deploymen
 | Status | Separate observation controller, packing router and evaluation worker; implementation shares the Enhance package | [Architecture](status/architecture_status.md), [distributed topology](status/status_distributed.md) |
 | Transparent history | Event journal writer, publication controller, recent/archive workers and public routing | [Architecture](transparent/architecture.md), [deployment](transparent/deployment.md) |
 | Transparent display | Its own transaction journal, publication controller and display workers | [Display contract](txid/txid-display.md) |
-| Receiver | One process indexes, publishes and serves receiver payments | [Overview](receiver/README.md), [deployment](../tools/receiver/digitalocean/README.md) |
+| Receiver | Indexes and publishes inside the shared publisher; shared query hosts fetch prepared publications over HTTPS | [Overview](receiver/README.md), [deployment](../tools/receiver/digitalocean/README.md) |
 
 The [serving contract](serving-contract.md) records their shared process identity
 and deliberate differences. A running process is not necessarily authorized,
@@ -119,7 +121,10 @@ ingress wait for their peers. A machine preparing a query process cannot run a
 native acceptance workload concurrently. Transparent's query-prioritized
 background artifact validation policy is unchanged.
 
-Every enabled product must pass before commit. A failure drains outstanding host
+Every enabled product must pass readiness before commit. Independent retrieval
+acceptance covers every affected product by default; a request can explicitly
+select `probe_products` for a scoped operational rollout. The request digest and
+journal retain that scope. A failure drains outstanding host
 operations, stops candidate consumers, restores and verifies the publisher, then
 restores complete consumer units/configurations/executables in dependency order.
 Failure to deploy and failure to restore are recorded separately. An interruption
