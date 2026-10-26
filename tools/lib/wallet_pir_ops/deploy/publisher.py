@@ -437,8 +437,8 @@ class Cutover:
         self.ex.mkdir(self.host, str(Path(path).parent), 0o755)
         self.ex.write(self.host, path, text.encode(), mode)
 
-    def ready(self):
-        deadline = self.clock() + 900
+    def ready(self, timeout=900):
+        deadline = self.clock() + timeout
         probes = [('http://127.0.0.1:18080/ready', lambda value: value.get('ready') is True)]
         while True:
             self.lock.verify()
@@ -508,7 +508,7 @@ class Cutover:
             self.effect(journal, 'enable publisher', lambda: self.ex.systemctl(self.host, 'enable', UNIT))
             self.effect(journal, 'start publisher', lambda: self.ex.systemctl(self.host, 'start', UNIT))
             self.save(journal, 'verifying')
-            self.ready()
+            self.ready(timeout=21600 if self.receiver.reingesting() else 900)
             self.serving.verify(journal)
             self.serving.route(journal)
             self.receiver.route(journal)

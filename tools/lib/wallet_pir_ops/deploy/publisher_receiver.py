@@ -24,9 +24,10 @@ def validate(request, inventory):
     adoption = request.get('receiver_adoption')
     if adoption is None:
         return
-    require(isinstance(adoption, dict) and set(adoption) == {
+    require(isinstance(adoption, dict) and set(adoption) - {'mode'} == {
         'host', 'machine_id', 'config_path', 'data_dir', 'publisher_origin'},
         'Receiver adoption needs source host, machine_id, config_path, data_dir and publisher_origin')
+    require(adoption.get('mode', 'transfer') in ('transfer', 'reingest'), 'unknown Receiver adoption mode')
     require(adoption['host'] in inventory.hosts and adoption['host'] != request['host'],
             'Receiver adoption must name a separate known source host')
     require(isinstance(adoption['machine_id'], str) and re.fullmatch('[a-f0-9]{32}', adoption['machine_id']),
@@ -47,6 +48,9 @@ class Receiver:
     def __init__(self, owner):
         self.owner = owner
         self.request = owner.request.get('receiver_adoption')
+
+    def reingesting(self):
+        return self.request is not None and self.request.get('mode') == 'reingest'
 
     def run(self, host, program, *arguments):
         code, output = self.owner.ex.run(host, ['python3', '-c', program, *arguments], 60)
@@ -147,6 +151,12 @@ class Receiver:
         if plan is None:
             return
         owner, source = self.owner, self.request['host']
+        if self.reingesting():
+            owner.effect(journal, 'prepare fresh Receiver index',
+                         lambda: owner.ex.mkdir(owner.host, STATE, 0o700))
+            journal['receiver_reingesting'] = True
+            owner.save(journal)
+            return
         def stop():
             owner.ex.systemctl(source, 'stop', UNIT)
             state = owner.ex.probe_unit(source, UNIT)
@@ -171,11 +181,43 @@ class Receiver:
             return
         self.guard(plan)
         owner, source = self.owner, self.request['host']
+        if self.reingesting() and not journal.get('receiver_authority_handed_over'):
+            # The old HTTPS origin keeps serving throughout the new ingestion.
+            # Only counters cross hosts, after both writers have stopped.
+            journal['receiver_source_touched'] = True
+            owner.effect(journal, 'stop Receiver source after reingestion',
+                         lambda: owner.ex.systemctl(source, 'stop', UNIT))
+            stopped = owner.ex.probe_unit(source, UNIT)
+            require(not stopped['main_pid'], 'Receiver source did not stop')
+            owner.effect(journal, 'disable Receiver source', lambda: owner.ex.systemctl(source, 'disable', UNIT))
+            from .publisher import UNIT as SHARED_UNIT
+            owner.effect(journal, 'stop shared publisher for authority handover', lambda: owner.stop(SHARED_UNIT))
+            owner.ex.publisher_unlocked(source, [STATE + '/publisher.lock'])
+            owner.unlocked()
+            self.handover_authority(journal, source, owner.host)
+            journal['receiver_authority_handed_over'] = True
+            owner.save(journal)
+            owner.effect(journal, 'restart shared publisher after authority handover',
+                         lambda: owner.ex.systemctl(owner.host, 'start', SHARED_UNIT))
+            owner.ready()
         state = owner.ex.probe_unit(source, UNIT)
         require(not state['main_pid'] and state['unit_file_state'] == 'disabled', 'Receiver source became active again')
         owner.effect(journal, 'route Receiver to shared publisher',
                      lambda: owner.ex.write(source, EDGE, plan['edge_after'].encode(), 0o644))
         owner.effect(journal, 'reload Receiver edge', lambda: owner.ex.systemctl(source, 'reload', 'caddy.service'))
+
+    def handover_authority(self, journal, source, destination):
+        """Preserve counter and withdrawal floors without copying index data."""
+        path = STATE + '/distribution/authority.json'
+        previous = json.loads(self.owner.ex.read(source, path))
+        current = json.loads(self.owner.ex.read(destination, path))
+        require(previous['scope'] == current['scope'], 'Receiver authority scope differs')
+        previous['sequence'] = max(previous['sequence'], current['sequence'])
+        for name in ('recovery_epoch', 'latest_withdrawal'):
+            previous['fence'][name] = max(previous['fence'][name], current['fence'][name])
+        self.owner.effect(journal, 'handover Receiver authority to ' + destination,
+                          lambda: self.owner.ex.write(destination, path,
+                              (json.dumps(previous) + '\n').encode(), 0o600))
 
     def restore_state(self, journal):
         plan = journal['plan'].get('receiver')
@@ -185,6 +227,19 @@ class Receiver:
         state = owner.ex.probe_unit(source, UNIT)
         # A failure before the source stop must leave its live state untouched.
         if not journal.get('receiver_source_touched'):
+            if self.reingesting() and journal.get('receiver_reingesting'):
+                owner.effect(journal, 'retain incomplete Receiver ingestion', lambda: owner.ex.rename(
+                    owner.host, STATE, STATE + '.rolled-back-' + journal['id']))
+            return
+        if self.reingesting():
+            require(not state['main_pid'], 'Receiver source must stop before authority returns')
+            self.handover_authority(journal, owner.host, source)
+            owner.effect(journal, 'restore Receiver edge',
+                         lambda: owner.ex.write(source, EDGE, plan['edge_before'].encode(), 0o644))
+            owner.effect(journal, 'reload restored Receiver edge',
+                         lambda: owner.ex.systemctl(source, 'reload', 'caddy.service'))
+            owner.effect(journal, 'retain Receiver ingestion after rollback', lambda: owner.ex.rename(
+                owner.host, STATE, STATE + '.rolled-back-' + journal['id']))
             return
         receipt = self.receipt(owner.host, STATE)
         if receipt is not None:

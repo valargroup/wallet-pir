@@ -47,6 +47,20 @@ class PublisherTests(PublisherFixture, unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'both own publishing'):
             self.make_target()
 
+    def test_receiver_reingestion_keeps_the_old_publisher_running_during_ingestion(self):
+        from wallet_pir_ops.deploy.publisher_receiver import Receiver
+        self.receiver_request()
+        self.request['receiver_adoption']['mode'] = 'reingest'
+        target = self.make_target()
+        target.effect = lambda journal, _description, action: action()
+        target.save = lambda journal: None
+        journal = {'plan': {'receiver': {}}, 'id': 'reingest-test'}
+        Receiver(target).adopt(journal)
+        self.assertTrue(journal['receiver_reingesting'])
+        self.assertNotIn('receiver_source_touched', journal)
+        self.assertFalse(any(effect[:2] in (('stop', 'receiver-pir.service'),
+                                           ('disable', 'receiver-pir.service')) for effect in self.ex.effects))
+
     def install_product_local_chain(self):
         installed = copy.deepcopy(self.request['configuration'])
         chain = installed.pop('chain')

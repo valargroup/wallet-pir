@@ -403,17 +403,25 @@ matches the request checks. Credentials stay in their existing files.
 To adopt Receiver into that process, add its enabled `receiver` configuration,
 independent `checks.receiver`, and `receiver` managed product. Keep the Receiver
 service entry with no `server` role and retain its routing ancillary entry.
-The optional `receiver_adoption` object has exactly `host`, `machine_id`,
+The optional `receiver_adoption` object has `host`, `machine_id`,
 `config_path` (`/etc/receiver-pir-publisher.json`), `data_dir`
 (`/srv/receiver-pir/index`) and `publisher_origin` (the main publisher's existing
-HTTPS origin). It is accepted only when the installed shared configuration has
+HTTPS origin), and an optional `mode` (`transfer` or `reingest`). It is accepted only when the installed shared configuration has
 no Receiver. Preserve all Receiver settings except changing `bind` to
 `127.0.0.1:18380`; the shared chain connection replaces its separate node.
 Provision the source unit's existing Infisical environment file at the same path
 on the destination before preflight. The plan compares its digest without
 reading credential values into requests or journals.
 
-The transaction stops and disables the old Receiver owner, verifies its state
+With `mode: reingest`, the shared publisher starts with a fresh Receiver index
+while the old publisher and its HTTPS origin keep serving. After ingestion is
+ready, the transaction stops both writers briefly, carries forward only the
+authority counters and withdrawal floor, and restarts the shared publisher.
+It then switches the HTTPS provider edge and disables the old owner. Databases
+and publication objects are rebuilt on the destination. Rollback returns the
+authority floor before restarting the old owner against its retained index.
+
+The default transfer transaction stops and disables the old Receiver owner, verifies its state
 lock, streams its complete stopped directory through gzip with a checked file manifest and
 starts Receiver inside the shared process. It adds the exact writable path and
 increases the shared service's memory ceiling from 40 to 47 GiB. Receiver's
