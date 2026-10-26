@@ -128,12 +128,19 @@ impl pir_pipeline::publisher::Publication for EnhancePublication<'_> {
                 let root = self.distribution.root().to_path_buf();
                 let coverage = self.manifest.coverage.clone();
                 let epochs = self.manifest.domain_recovery_epochs.clone();
+                let shutdown = self.shutdown.clone();
                 tokio::task::spawn_blocking(move || {
-                    publication::construct_publication(&root, coverage, &epochs, |start, count| {
-                        snapshot
-                            .read_records(start, count)
-                            .map_err(|e| e.to_string())
-                    })
+                    publication::construct_publication(
+                        &root,
+                        coverage,
+                        &epochs,
+                        |start, count| {
+                            snapshot
+                                .read_records(start, count)
+                                .map_err(|e| e.to_string())
+                        },
+                        &|| shutdown.requested(),
+                    )
                     .map(Material::Inventory)
                 })
                 .await
@@ -151,9 +158,15 @@ impl pir_pipeline::publisher::Publication for EnhancePublication<'_> {
     }
     async fn verify(&mut self, material: Material) -> Result<PreparedPublication, String> {
         let root = self.distribution.root().to_path_buf();
-        tokio::task::spawn_blocking(move || match material {
-            Material::Inventory(inventory) => publication::verify_publication(&root, inventory),
-            Material::Prepared(prepared) => prepared.recheck(&root),
+        let shutdown = self.shutdown.clone();
+        tokio::task::spawn_blocking(move || {
+            let stop = || shutdown.requested();
+            match material {
+                Material::Inventory(inventory) => {
+                    publication::verify_publication_until(&root, inventory, &stop)
+                }
+                Material::Prepared(prepared) => prepared.recheck_until(&root, &stop),
+            }
         })
         .await
         .map_err(|e| e.to_string())?
