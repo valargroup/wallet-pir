@@ -124,6 +124,15 @@ the durable outbox. Active mode requires a state path, RPC URL/cookie, and peer
 status URL. Promote both APM and external checker only after the shadow gate.
 An incident already firing in shadow is queued once on promotion.
 
+Optional `PIR_APM_RECEIVER_HEALTH_URL` names the shared publisher's Receiver
+health route (`http://127.0.0.1:18380/operator/receiver/health`). When set, APM
+samples it every 30 seconds and adds `receiver_payout_audit_stale` (warning, no
+successful NEAR payout audit read for `receiver_audit_stale_seconds`, default
+30 minutes) and `receiver_health` (warning, route unavailable for 120 s). The
+audit's read time is the newer of the in-memory read and the stored feed
+cursor, so a publisher restart does not fire it. Missing payouts are checked by
+the external monitor's Receiver canary, which reads the same route.
+
 Optional `PIR_APM_ALERT_POLICY` names a JSON file. Fields and defaults:
 
 ```json
@@ -143,6 +152,7 @@ Optional `PIR_APM_ALERT_POLICY` names a JSON file. Fields and defaults:
   "publication_warning_blocks": 8,
   "publication_critical_blocks": 16,
   "publication_failure_hold_seconds": 120,
+  "receiver_audit_stale_seconds": 1800,
   "quality": {
     "history_unpublished_warning_seconds": 30,
     "history_unpublished_critical_seconds": 60,
@@ -220,6 +230,7 @@ Investigate by check family:
 | `coverage_*` | Restore the named scraper/source/inventory before trusting retained values. |
 | `canary_*` | Inspect transport/category and pinned oracle validity; distinguish wrong bytes from unavailable service. |
 | `external_monitor`, `apm_progress` | Inspect systemd, loop progress, and state-database permissions on the named monitoring host. |
+| `receiver_payout_audit_stale`, `receiver_health` | Read the Receiver health route on the coordinator, then the publisher journal for `near feed deferred`; a feed with no stored cursor starts from `near_since`. |
 | `*delivery*` | Check credential presence, sanitized last failure, and oldest pending age; preserve the outbox. |
 | `scaling_*` | Read `scaler/status.json` and `scaler/journal/operation.json` on the coordinator. A fenced operation proceeds only after `resolve-apply` ([elastic recent](../transparent/elastic-recent.md#actuator-operations)). |
 
