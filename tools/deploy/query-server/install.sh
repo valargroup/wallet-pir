@@ -11,8 +11,8 @@
 set -euo pipefail
 
 # Bumped after each `query-server-v*` release (.github/workflows/release-query-server.yml).
-RELEASE_TAG=""
-ARCHIVE_SHA256=""
+RELEASE_TAG="query-server-v0.1.3"
+ARCHIVE_SHA256="196e7608bcdb02b7ddf25248b0d6a07fbb6722b18ce7d661749df1f1a224c3e0"
 
 REPOSITORY="valargroup/wallet-pir"
 PUBLISHER="https://enhance-pir.valargroup.dev"
