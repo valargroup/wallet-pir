@@ -55,12 +55,26 @@ pub(super) fn prepare_domains(
             domains.push(domain);
             continue;
         }
-        let (evaluation, _) = engine
-            .prepare(plan.clone(), &mut *read)
-            .map_err(|e| e.to_string())?;
+        // Building a changed shard takes seconds per unit: a stop ends it
+        // before the next unit's rows are read and between the later steps.
+        let checked = || match stop() {
+            true => Err(String::from(super::STOPPED)),
+            false => Ok(()),
+        };
+        let (evaluation, _) = match engine.prepare(plan.clone(), |start, count| {
+            checked()?;
+            read(start, count)
+        }) {
+            Ok(prepared) => prepared,
+            Err(_) if stop() => return Err(super::STOPPED.into()),
+            Err(error) => return Err(error.to_string()),
+        };
+        checked()?;
         let hint = evaluation.hint()?;
+        checked()?;
         let packing =
             runtime::Packing::new(shard.logical_rows, &hint, &PackingBudget::coordinator())?;
+        checked()?;
         let prepared = prepared_packing::persist(root, &packing)?;
         install_packing_object(
             objects,
