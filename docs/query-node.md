@@ -126,87 +126,25 @@ with this page's role renderer, checks them with the binary and publishes the
 archive and `SHA256SUMS` as a GitHub release. Then pin its tag and archive
 checksum in `install.sh`, which the plain one-liner then installs.
 
-## Provisioning from a branch
+## Infrastructure ownership
 
-The query module can be added to the installed Terraform root without moving
-existing fleet addresses. Prefer this additive path when the installed root
-still uses the flat layout. Under the production lock, copy its configuration,
-templates, provider lock and operator variable files into a private staging
-root, then add only `fleet/query-serving.tf` and its sibling `query-serving`
-module. Initialize and save a fresh plan with the query role enabled. The plan
-must contain exactly the six approved creations, no existing-resource actions,
-no state moves and no drift. Reconcile unrelated drift separately; never apply
-a broader fleet migration as part of this operation.
+The maintained fleet Terraform root owns the shared query node through
+`module.query_serving_02[0]`, enabled by its existing
+`query_serving_02_enabled` input. Keep that address, persistent volume, DNS and
+installed production inputs unchanged during application deployments.
 
-Use `wallet-pir-deploy.py query-node-plan` and `query-node-preflight` on the
-coordinator with a private request and receipt path. The request binds the
-coordinator machine ID, exact query-extension source SHA, staged root, saved plan
-path and digest, Wallet PIR project ID and the installed configuration's file
-hashes (`wallet_pir_ops.deploy.query_provision.inputs`), external production
-variables digest and current desired worker-group count. Both commands return a
-plan digest. Run `query-node-provision --expect-plan-sha256 <digest>` through the
-coordinator's existing encrypted runtime credential loader. It rechecks the
-source and inputs under the production lock, adds only the query module and its
-enabled setting to the maintained root, initializes that root and applies the
-pinned plan. The existing backend, variables, resource addresses and services
-remain in place. `query-node-status` reads the retained receipt after a lost
-connection. An interrupted apply retains source and reports `needs-reconcile`;
-do not remove that source or retry creation blindly. Persistent storage has no
-automatic destruction rollback.
+The one-time Query 01/02 additive provisioning commands and creation-only plan
+checker have been retired. Query 01's infrastructure declaration is removed;
+application releases use the shared `fleet-release-*` transaction. Historical
+provisioning receipts and their original operations packages remain available
+for inspection.
 
-The broader [service-module activation](../tools/infra/digitalocean/fleet/activation.md)
-remains a separate operation with its own moves-only comparator. Its source and
-interface gates do not need to be waived to create this candidate.
-
-The fleet root includes `../query-serving` only when
-`query_serving_enabled=true`. Defaults provision nothing. The module reuses the
-existing Wallet PIR project, VPC, region and public SSH key IDs. Ensure Roman's
-existing public key is in that key set; never copy a private key onto the node.
-The persistent volume refuses Terraform destruction. Cloud-init mounts only the
-named volume, checks its filesystem identity and leaves serving stopped if it
-cannot mount it. Caddy obtains the candidate's HTTPS certificate and forwards
-wallet paths to loopback; management and private APIs stay inaccessible publicly.
-
-1. Pin the source branch revision and stage its complete Terraform module tree
-   on the current coordinator. Discover the current inventory and trusted host
-   pins first. Retain private inputs and receipts outside Git.
-2. Run that revision's `tools/scripts/wallet-pir-terraform.sh --root
-   /absolute/staged/tools/infra/digitalocean/fleet init -input=false` on the
-   coordinator. The wrapper uses the existing encrypted runtime credential and
-   production lock. It preserves the existing backend key and autoscaling count.
-   Never initialize a separate local production state or overwrite remote state.
-3. Save a plan through the same wrapper with `plan -input=false
-   -var=query_serving_enabled=true -out=/absolute/private/query.tfplan`.
-   Review the saved plan with `tools/scripts/wallet-pir-query-plan.py --root
-   /absolute/staged/tools/infra/digitalocean/fleet --plan
-   /absolute/private/query.tfplan --project-id <verified-wallet-pir-project-id>`.
-   It prints only the digest and allowed creation addresses. Saved plans contain
-   sensitive inputs and must remain private. The guard rejects drift, partial
-   plans, replacements and changes to existing resources.
-4. Use the query-node deployment transaction above to install the additive source
-   and enabled setting and apply that exact saved plan under one production lock.
-   An ephemeral staging tree alone is insufficient: the next autoscaling or
-   regular fleet operation must know about the new node. If the guard refuses,
-   stop; do not target resources to evade a fleet change. Retain the transaction
-   receipt and saved plan privately.
-5. Verify cloud-init completion, the node's actual RAM and CPU capacity, volume identity,
-   mount, free space and TLS before staging the application. Obtain the new host's
-   SSH pins through the trusted provisioning channel; never use unverified
-   `ssh-keyscan` output as trust.
-
-To add `wallet-pir-query-02` beside an installed first node, stage the
-maintained root with the reviewed `query-serving.tf` and module, save the plan
-with `-var=query_serving_02_enabled=true`, review it with
-`wallet-pir-query-plan.py --node 02`, and set `"node": "02"` in the
-`query-node-*` request. The transaction refuses a second node without the
-installed module, replaces the module and declaration with the reviewed source,
-keeps the previous module beside it for inspection and adds
-`query-serving-02.auto.tfvars`. Its plan may create only the second node's six
-resources; the first node and the rest of the fleet must stay unchanged.
-
-The wrapper's default still operates the installed legacy Terraform root. Its
-`--root` option allows a pinned staging tree while retaining the same credential,
-lock and production variables. Provisioning never activates a query application.
+For an explicitly approved infrastructure change, use the existing
+[production Terraform root](../tools/infra/digitalocean/fleet/README.md) and its
+locked `wallet-pir-terraform.sh` wrapper. Save and review a complete plan using
+the existing backend and production variables before applying it. Persistent
+storage is protected from destruction. Do not recreate a retired query host or
+apply a broad fleet migration as part of an application release.
 
 ## Application deployment
 

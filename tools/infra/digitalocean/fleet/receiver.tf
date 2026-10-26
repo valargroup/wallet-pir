@@ -1,6 +1,6 @@
-# The receiver directory's single indexing and serving Droplet
-# (ops/receiver/digitalocean). Opt in to manage it; the existing Droplet and DNS
-# record are imported as its README describes, never recreated.
+# Receiver's retained HTTPS edge and rollback Droplet. Ingestion belongs to
+# the shared pir-publisher. Keep these resource addresses and the existing DNS
+# record: removing them would destroy the active public edge.
 variable "receiver_pir_enabled" {
   type    = bool
   default = false

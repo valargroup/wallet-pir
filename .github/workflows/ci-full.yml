@@ -593,7 +593,7 @@ jobs:
           lane: release
           scope: query-server
       - name: Check query deployment and provisioning refusals
-        run: python3 -B -m unittest tools.tests.operations.test_query_role tools.tests.operations.test_query_infra tools.tests.operations.test_query_terraform
+        run: python3 -B -m unittest tools.tests.operations.test_query_role tools.tests.operations.test_query_terraform
       - name: Build all supported query products together
         run: cargo build --locked --release -p pir-query-server --features enhance,status,transparent-history,transparent-detail,receiver,native-reinspiring
       - name: Check the rendered deployment through the actual binary

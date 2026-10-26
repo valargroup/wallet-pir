@@ -9,6 +9,74 @@ from wallet_pir_ops.deploy.remote import RemoteError
 
 
 class PublisherTests(PublisherFixture, unittest.TestCase):
+    def receiver_request(self):
+        from wallet_pir_ops.deploy import publisher_receiver
+        self.request['configuration']['receiver'] = {'enabled': True, 'settings': {
+            'data_dir': publisher_receiver.STATE, 'bind': '127.0.0.1:18380', 'depth': 2}}
+        self.request['receiver_adoption'] = {
+            'mode': 'reingest',
+            'host': 'receiver-01', 'machine_id': 'b' * 32,
+            'config_path': '/etc/receiver-pir-publisher.json', 'data_dir': publisher_receiver.STATE,
+            'publisher_origin': 'https://publisher.example.test'}
+        self.request['checks']['receiver'] = {'host': 'coordinator', 'argv': ['/bin/check-receiver'], 'timeout': 20}
+        fleet = self.request['inventory']
+        fleet['services']['publisher']['managed_products'] = [*publisher.PRODUCTS, 'receiver']
+        fleet['services']['receiver'] = {'roles': {}}
+        fleet['ancillary']['receiver-edge'] = {'host': 'receiver-01', 'unit': 'caddy.service',
+                                              'kind': 'routing', 'consumers': ['receiver']}
+
+    def test_receiver_adoption_accepts_fifth_product_and_preserves_existing_settings(self):
+        from wallet_pir_ops.deploy import publisher_products
+        installed = copy.deepcopy(self.request['configuration'])
+        self.receiver_request()
+        self.make_target()
+        candidate = self.request['configuration']
+        self.assertFalse(publisher.configuration_preserves_products(candidate, installed))
+        self.assertTrue(publisher.configuration_preserves_products(candidate, installed,
+                                                                   self.request['receiver_adoption']))
+        states = {publisher.UNIT: self.ex.probe_unit('coordinator', publisher.UNIT)}
+        rendered = publisher_products.render(candidate, '/bin/new-publisher', states,
+                                             receiver_environments=['-/etc/receiver-pir/near-test.env'])
+        self.assertIn('MemoryMax=47G', rendered)
+        self.assertIn('"/srv/receiver-pir/index"', rendered)
+        self.assertIn('EnvironmentFile=-/etc/receiver-pir/near-test.env', rendered)
+        self.assertIn('/srv/receiver-pir/index/publisher.lock', publisher_products.locks(candidate))
+
+    def test_receiver_adoption_refuses_a_second_publishing_owner(self):
+        self.receiver_request()
+        self.request['inventory']['services']['receiver']['roles']['server'] = [{'host': 'receiver-01'}]
+        with self.assertRaisesRegex(ValueError, 'both own publishing'):
+            self.make_target()
+
+    def test_receiver_reingestion_keeps_the_old_publisher_running_during_ingestion(self):
+        from wallet_pir_ops.deploy.publisher_receiver import Receiver
+        self.receiver_request()
+        self.request['receiver_adoption']['mode'] = 'reingest'
+        target = self.make_target()
+        target.effect = lambda journal, _description, action: action()
+        target.save = lambda journal: None
+        journal = {'plan': {'receiver': {}}, 'id': 'reingest-test'}
+        Receiver(target).adopt(journal)
+        self.assertTrue(journal['receiver_reingesting'])
+        self.assertNotIn('receiver_source_touched', journal)
+        self.assertFalse(any(effect[:2] in (('stop', 'receiver-pir.service'),
+                                           ('disable', 'receiver-pir.service')) for effect in self.ex.effects))
+
+    def test_receiver_handover_preserves_both_authority_floors_without_copying_an_index(self):
+        from wallet_pir_ops.deploy.publisher_receiver import Receiver, STATE
+        self.receiver_request()
+        target = self.make_target()
+        target.effect = lambda journal, _description, action: action()
+        path = STATE + '/distribution/authority.json'
+        self.ex.put('receiver-01', path, json.dumps({'scope': 'receiver', 'sequence': 40,
+                    'fence': {'recovery_epoch': 3, 'latest_withdrawal': 30}}))
+        self.ex.put('coordinator', path, json.dumps({'scope': 'receiver', 'sequence': 20,
+                    'fence': {'recovery_epoch': 4, 'latest_withdrawal': 12}}))
+        Receiver(target).handover_authority({}, 'receiver-01', 'coordinator')
+        transferred = json.loads(self.ex.read('coordinator', path))
+        self.assertEqual(transferred['sequence'], 40)
+        self.assertEqual(transferred['fence'], {'recovery_epoch': 4, 'latest_withdrawal': 30})
+
     def install_product_local_chain(self):
         installed = copy.deepcopy(self.request['configuration'])
         chain = installed.pop('chain')

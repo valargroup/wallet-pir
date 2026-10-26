@@ -46,7 +46,7 @@ SERVICE_PRODUCTS = {'enhance': ('enhance',), 'status': ('status',),
 DEPENDENCY_RANK = {'packing-router': 1, 'router': 1, 'query-ingress': 2}
 PUBLISHER_KEYS = ('publisher', 'publisher_origin')
 REQUEST_KEYS = {'schema', 'source', 'inventory_sha256', 'executables', 'select', 'publishers', 'probes'}
-OPTIONAL_KEYS = {'product_requests', 'loads', 'process_probes', 'preparation', 'publisher_policies'}
+OPTIONAL_KEYS = {'product_requests', 'loads', 'process_probes', 'preparation', 'publisher_policies', 'probe_products'}
 
 
 def digest(document):
@@ -92,6 +92,10 @@ def validate_request(request):
     unknown = set(request) - REQUEST_KEYS - OPTIONAL_KEYS
     if unknown:
         problems.append('request has unknown fields %s' % sorted(unknown))
+    selected = request.get('probe_products', list(QUERY_PRODUCTS))
+    if not (isinstance(selected, list) and selected and all(p in QUERY_PRODUCTS for p in selected)
+            and len(selected) == len(set(selected))):
+        problems.append('probe_products must select enabled product probes')
     for field in ('process_probes', 'product_requests', 'publisher_policies'):
         if field in request and not isinstance(request[field], dict):
             return [field + ' must be an object']

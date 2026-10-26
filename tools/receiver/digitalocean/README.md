@@ -1,82 +1,72 @@
-# Receiver PIR on DigitalOcean
+# Receiver deployment and retained HTTPS edge
 
-Receiver uses the shared publisher and query hosts. The existing Receiver
-Droplet remains an ingestion host with its current SQLite index and sealed
-material. Query serving can join the existing unified query host or use the
-Receiver-only root configuration. No infrastructure change is applied by these
-examples.
+Receiver ingestion and publishing run inside the shared `pir-publisher`, alongside
+Enhance, Status, Transparent history and transaction details. Wallet requests run
+inside `pir-query-server`. Use the [shared publisher deployment](../../../docs/publisher.md)
+and [fleet operator workflow](../../../docs/operations.md) for builds, preparation,
+activation, status and rollback.
+
+## One publishing owner
+
+Enable Receiver in the shared publisher configuration and managed-product list.
+Do not assign a standalone `receiver.server` role to the same fleet. Query hosts
+use the existing Receiver HTTPS publisher origin and keep their own serving state;
+they receive no node or payout-audit credentials.
+
+For first adoption, the shared publisher transaction owns source shutdown,
+reingestion, authority handover and edge routing.
+Reingestion keeps the old owner serving until the new index is ready. Later
+publisher updates retain Receiver and omit the one-time adoption section.
+
+The old three-phase Receiver routing commands and separate Caddy cutover helper
+have been removed. Retained operations packages contain the commands needed for
+their historical transactions. Current shared-publisher transactions retain their
+own recovery journal and rollback paths.
 
 ## Infrastructure
 
-The existing Terraform resource names, Droplet size, DNS identity, account and
-installation root remain unchanged. The Receiver host has 8 GiB of memory; its
-unit retains `MemoryHigh=6G`, `MemoryMax=7G` and no swap. Run query serving on an
-appropriately budgeted existing host rather than duplicating the full publisher
-and query budgets on that Droplet.
+The existing Receiver Droplet remains an HTTPS edge and rollback location. Its
+publishing service is disabled after adoption. Preserve its state and predecessor
+artifacts while the current transaction can still roll back to it.
 
-The Receiver edge exposes `/.well-known/pir-service-discovery` and
-`/provider/receiver/v1/*` from the local root publisher. Wallet routes proxy to
-`RECEIVER_QUERY_UPSTREAM`, set to the chosen existing query listener during the
-separately approved cutover. Operator routes remain absent from the public edge.
-Validate the rendered edge with that environment before deploying it.
+The Terraform resource addresses, Droplet identity and public DNS record remain
+unchanged. `receiver.tf` protects this active edge from destruction. This cleanup
+does not retire that host or change DNS. The retained cloud-init and standalone
+role resources support the existing host and recovery; they are not the normal
+shared deployment recipe.
 
-## Release and deploy
+## HTTPS routing
 
-The `receiver-pir` bundle contains `pir-publisher`, `pir-query-server` and
-`receiver-probe`. The `receiver.server` role retains `receiver-pir.service` and
-`/opt/receiver-pir`, and renders the root publisher configuration from inventory.
-Its root chain section owns RPC settings. Use the existing
-`/srv/receiver-pir/index` to resume ingestion without reindexing.
-Place its non-secret configuration at `/etc/receiver-pir-publisher.json` so the
-`receiver-pir` account can read it. Keep `/etc/receiver-pir` root-only for the
-audit environment files; systemd reads those before changing user.
+The [edge template](Caddyfile) accepts two existing HTTPS origins:
 
-The optional `receiver.query` role renders a Receiver-only root query host;
-alternatively enable Receiver in the root query-server role's combined settings.
-Both query forms accept HTTPS publisher settings and local state only. They
-return an offline `--check` command, with precise writable state and read-only
-certificate paths. The publisher retains the optional audit environment file;
-the query unit has none.
+- `RECEIVER_PUBLISHER_UPSTREAM`: the shared publisher, for discovery and
+  `/provider/receiver/v1/*`, including object downloads and authority checks.
+- `RECEIVER_QUERY_UPSTREAM`: the shared query host, for wallet Receiver routes.
 
-Use `tools/scripts/wallet-pir-deploy.py` for plan, preflight, install and rollback.
-Root offline checks precede installation. Publisher readiness, query readiness
-and the independent encrypted `receiver-probe` are separate observations. Keep
-all changes draft until full qualification and separate production approval.
+TLS verification remains enabled. Operator health and metrics stay private.
+Changing the publisher upstream preserves the wallet upstream, request paths,
+methods and bodies. Render and activate edge changes through the locked publisher
+transaction rather than editing a live Caddyfile by hand.
 
-For the first shared-host cutover, `receiver-routing-*` uses checksum-bound
-`receiver-routing/1` requests to update one Caddyfile under the fleet lock.
-Prepare its `distribution` phase on the Receiver host and its `query` phase on
-the query host before replacing the old runtime. Those phases preserve the
-existing wallet upstream and the other products. After the publisher and query
-server are ready, the `wallet` phase switches the existing Receiver hostname
-to the HTTPS query origin and runs the inventory's encrypted Receiver probe.
-Use `plan`, `preflight`, `deploy`, `status` and `rollback` for each phase; retain
-the same state directory. Each journal saves the predecessor Caddyfile and
-refuses rollback over another operator's changes. Defer the binary transactions'
-public exact check until this final routing phase, when the complete path exists.
+## Optional payout audit credentials
 
-### Installing or rotating the NEAR key
+Infisical is the source of truth. Provision the audit environment file on the
+shared publisher at the path referenced by its unit, under `/etc/receiver-pir/`.
+Systemd reads that file before starting the publisher; query hosts need no copy.
+Never put credential values in requests, inventories, archives or command
+arguments. The old installer targeted a standalone publishing role and has been
+removed. Credential activation belongs to the normal locked publisher deployment.
 
-Use `near-key.py` and Infisical-backed credentials as before. The publisher's
-`near_key_id` publisher-role setting selects `/etc/receiver-pir/near-<id>.env`; the optional
-file is read by the publisher only. Never put a partner key in query settings,
-release archives, command arguments or repository files. Optional audit failure
-does not grant or revoke wallet publication authority.
+## Validation and diagnostics
 
-## Host provisioning
+The shared offline `--check` validates product configuration before activation.
+Use the existing `receiver-probe` for encrypted retrieval and independent chain
+anchors, and publication identities to establish a fresh fetch. Cached inventory
+alone does not prove synchronization. Scope operational retrieval checks with the
+existing deployment request's `probe_products` when appropriate; keep readiness
+for every enabled product.
 
-Existing cloud-init provisions the same system account and state directories.
-New provisioning is outside this integration. The examples in `../deploy/`
-show the root publisher and Receiver-only query configurations; the combined
-example is under `tools/deploy/query-server/`.
-
-## Monitoring
-
-`receiver-probe --origin URL --rpc-url INDEPENDENT_NODE --no-auth` checks real
-wallet retrieval and chain anchors. A node cookie may replace `--no-auth` on the
-monitor. Query configuration itself contains no node credentials. The optional
-private health check uses the query host management listener's
-`/v1/receiver/health`; aggregate readiness uses `/ready` on that listener.
-
-The historical [deployment evidence](../../../evidence/receiver/deployment-2026-10-08/README.md)
-describes the former runtime and does not establish deployment of this stack.
+Receiver-only examples and role renderers remain useful for isolated
+qualification and shared configuration composition. They do not require a second
+production publisher. The historical [deployment evidence](../../../evidence/receiver/deployment-2026-10-08/README.md)
+describes the former topology.
