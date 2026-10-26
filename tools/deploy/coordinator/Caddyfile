@@ -133,6 +133,11 @@ wallet-pir.valargroup.dev {
 			}
 		}
 	}
+	# The one-line query node installer (`curl -fsSL .../install | sudo bash`)
+	# is kept in this repository; curl -L follows the redirect.
+	handle /install {
+		redir https://raw.githubusercontent.com/valargroup/wallet-pir/main/tools/deploy/query-server/install.sh 302
+	}
 	handle {
 		respond 404
 	}

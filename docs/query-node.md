@@ -61,6 +61,64 @@ stop and report the missing capacity rather than reducing history silently.
 Record steady-state and replacement peaks, exact wallet answers, refusal rates,
 HTTPS transfer progress and shutdown completion on the candidate.
 
+## Installing on an operator host
+
+An operator, or an agent acting for one, installs the same four-product node on
+their own Linux host with one command:
+
+```sh
+curl -fsSL https://wallet-pir.valargroup.dev/install | sudo bash
+curl -fsSL https://wallet-pir.valargroup.dev/install | sudo bash -s -- --domain pir.example.org
+```
+
+`/install` on the unified site redirects to
+[`tools/deploy/query-server/install.sh`](../tools/deploy/query-server/install.sh)
+on `main`. There is one configuration: the settings in
+[`install-node.json`](../tools/deploy/query-server/install-node.json), which are
+this page's example with `wallet-pir-query-02`'s cache budgets and no Receiver.
+The installer never prompts. It:
+
+1. Refuses anything but Linux on an x86-64-v3 CPU with `pclmulqdq`, systemd and
+   root, and a host already provisioned as a fleet query node (one with
+   `wallet-pir-query-data.service`), which the deployment transaction owns.
+2. Refuses the host unless it has **16 vCPUs, 92 GiB RAM and 500 GB** (10^9
+   bytes) for `/srv/wallet-pir-query`, counting container CPU and memory limits
+   instead of the host's totals. Every shortfall is listed together; there is
+   no override.
+3. Checks the publisher's discovery document and reads the current Enhance
+   shard list from `/enhance/v1/init`, since a combined role must hold them all.
+4. Downloads the pinned `query-server-v*` release archive and checks its
+   SHA-256, which `install.sh` embeds. `--version TAG` installs another release
+   and trusts that release's published `SHA256SUMS` over HTTPS only.
+5. Writes `/etc/wallet-pir-query/query-server.json` with those shards, runs the
+   binary's `--check`, installs `wallet-pir-query.service` with `MemoryMax` 12 GiB
+   below the host's memory and `MemoryHigh` 8 GiB below that, and starts it.
+6. With `--domain`, installs Caddy and serves the wallet paths over HTTPS. It
+   refuses to overwrite a Caddyfile it did not write.
+
+It waits for `/health`, not for readiness: a cold start downloads tens of GiB
+(about 21 minutes on the first node). `--wait-ready` waits up to three hours.
+`--check-only` runs steps 1 and 2 without root and changes nothing; `--dry-run`
+prints every change instead of making it. The last stdout line is always
+`wallet-pir-install: ok ...` or `wallet-pir-install: error <class>: <reason>`.
+Exit codes: 2 usage, 3 hardware, 4 platform or prerequisite, 5 download or
+verification, 6 configuration check or start.
+
+Re-running upgrades the binary and rewrites the configuration. To remove it,
+`systemctl disable --now wallet-pir-query`, delete the unit, `/opt/wallet-pir-query`,
+`/etc/wallet-pir-query` and `/srv/wallet-pir-query`, and remove the Caddyfile
+if the installer wrote it.
+
+The 92 GiB floor is below the first node's measured 92 GiB cold-start service
+peak, which used larger caches; a 92 GiB host is not yet qualified.
+
+To release, push a `query-server-v<version>` tag. The
+[release workflow](../.github/workflows/release-query-server.yml) builds the
+CPU native binary, renders the unit and configuration from `install-node.json`
+with this page's role renderer, checks them with the binary and publishes the
+archive and `SHA256SUMS` as a GitHub release. Then pin its tag and archive
+checksum in `install.sh`; until then the one-liner needs `--version`.
+
 ## Provisioning from a branch
 
 The query module can be added to the installed Terraform root without moving
