@@ -631,10 +631,8 @@ mod tests {
 
         let query = client.prepare(common::receiver(), 0).unwrap();
         let rotated = held_query(&url, &queue, query.body().to_vec(), || {
-            let mut next = common::manifest(MIN_ROWS);
-            (next.end_height, next.end_hash) = (102, [9; 32]);
             let next = crate::receiver::tests::prepared::prepare_payments(
-                Snapshot::build(next, &[]).unwrap(),
+                crate::receiver::tests::empty_snapshot(1),
             );
             assert!(publications.publish(next.unwrap(), 0));
         })
