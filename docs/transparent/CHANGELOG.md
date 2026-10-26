@@ -9,6 +9,12 @@ Covers the crates a wallet uses to recover transparent history over PIR:
 
 ## Unreleased
 
+- A restarted history publisher serves its restored publication under a newer
+  distribution revision than the withdrawn record it offered while starting.
+  Query servers that saw that withdrawal refused the live record at the same
+  revision until the next block's publication, so a query server restarted
+  shortly after a publisher restart stayed not ready for minutes.
+
 - History publishers can activate a fully verified external initial publication
   at the journal's current height without an immutable-store preparation receipt.
   All candidates still recheck file identities at activation, including external
