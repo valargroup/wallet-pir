@@ -22,9 +22,10 @@ These are limits, not evidence that the current full datasets fit.
 The replacement node `wallet-pir-query-02` has 16 dedicated vCPUs, 128 GiB RAM and a
 512 GiB volume; Amsterdam offers no 16 vCPU size with 96 GiB. Its inventory
 sets `limits` of `MemoryHigh=104G` and `MemoryMax=112G`, and cache budgets of
-48 GiB for history, 20 GiB for detail and 8 GiB each for Enhance and
-Receiver, so the caches together stay below the memory limit. On 2026-10-25 the complete active sets were 39.1 GiB of history and
-15.0 GiB of detail tables, growing by about 3.9 and 2.3 GiB a year. The
+56 GiB for history, 24 GiB for detail and 8 GiB each for Enhance and
+Receiver, so the caches together stay below the memory limit. On 2026-10-25
+the first node held 39.3 GiB of history and filled its 24 GiB detail budget;
+history grows by about 3.9 GiB and detail by about 2.3 GiB a year. The
 first node measured 57.7 GiB resident at steady state, about half of it
 memory-mapped preprocessing that the kernel can reclaim under pressure.
 The unit leaves Rayon's thread count to the host's CPU count.
@@ -39,6 +40,10 @@ activation the live publications were one Enhance shard (0) of about 0.9 M
 records, about 63.5 GiB of history and 18.0 GiB of detail artifacts; the previous
 64 GiB and 16 GiB budgets could not hold them. A cold start reached readiness in
 about 21 minutes with a 92 GiB service memory peak and 106 GiB used on the volume.
+A first history download takes longer than the publisher keeps superseded
+artifacts, so it is usually refused partway and retried. Each retry keeps the
+verified objects already downloaded and fetches only the rest, so allow most of
+an hour for a cold start on a 16 vCPU node; the deployment waits up to an hour.
 Status, queries, download buffers, retained revisions and publication replacement
 overlap also consume memory. Measure their simultaneous peak before increasing
 concurrency. An allocation failure must refuse work; never count swap as serving

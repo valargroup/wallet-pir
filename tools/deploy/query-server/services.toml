@@ -15,4 +15,4 @@ optional = true
 health = "http://{management_listen}/health"
 ready_url = "http://{management_listen}/ready"
 ready = { field = "ready", equals = true }
-ready_timeout = 1800
+ready_timeout = 3600
