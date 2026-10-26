@@ -864,29 +864,36 @@ pub fn conditions(d: &DashboardData, now: u64, p: &Policy) -> Vec<Condition> {
     let receiver = &d.monitoring.receiver;
     if receiver.sampled_at > 0 {
         let sampled = fresh(receiver.sampled_at, now) && !receiver.error;
+        // Before any read the grace is unknown, not healthy, so an APM
+        // restart cannot recover an incident that is still failing.
+        let stale = sampled
+            .then(|| match receiver.last_read {
+                Some(read) => Some(now.saturating_sub(read) >= p.receiver_audit_stale_seconds),
+                None => (now.saturating_sub(receiver.since) >= p.receiver_audit_stale_seconds)
+                    .then_some(true),
+            })
+            .flatten();
         add(
             "receiver_payout_crosscheck_paused".into(),
             "receiver".into(),
             "warning",
-            // Before any read the grace is unknown, not healthy, so an APM
-            // restart cannot recover an incident that is still failing.
-            sampled
-                .then(|| match receiver.last_read {
-                    Some(read) => Some(now.saturating_sub(read) >= p.receiver_audit_stale_seconds),
-                    None => (now.saturating_sub(receiver.since) >= p.receiver_audit_stale_seconds)
-                        .then_some(true),
-                })
-                .flatten(),
+            stale,
             // A NEAR outage or bad key stops only the cross-check, so say so.
+            // Recovery reuses this text, so the pause note follows the verdict.
             format!(
-                "{}. Receiver lookups are unaffected, but new payouts are not \
-                 cross-checked against NEAR until reads resume.",
+                "{}{}",
                 receiver.last_read.map_or("No NEAR payout read yet".into(), |read| {
                     format!(
                         "Last NEAR payout read {} min ago",
                         now.saturating_sub(read) / 60
                     )
-                })
+                }),
+                if stale == Some(true) {
+                    ". Receiver lookups are unaffected, but new payouts are not \
+                     cross-checked against NEAR until reads resume."
+                } else {
+                    ""
+                }
             ),
             format!(
                 "no NEAR payout read for {} min (key or NEAR API; see `near feed deferred` in the publisher journal)",
@@ -1424,11 +1431,15 @@ mod tests {
             Some(false)
         );
         assert_eq!(check(&d, now, "receiver_health").firing, Some(false));
+        // Recovery reuses the observed text, so only a stale read mentions the pause.
+        let fresh_text = check(&d, now, "receiver_payout_crosscheck_paused").observed;
+        assert_eq!(fresh_text, "Last NEAR payout read 1 min ago");
         d.monitoring.receiver.last_read = Some(now - 1800);
-        assert_eq!(
-            check(&d, now, "receiver_payout_crosscheck_paused").firing,
-            Some(true)
-        );
+        let paused = check(&d, now, "receiver_payout_crosscheck_paused");
+        assert_eq!(paused.firing, Some(true));
+        assert!(paused
+            .observed
+            .starts_with("Last NEAR payout read 30 min ago. Receiver lookups are unaffected"));
         // Without any reported read, staleness counts from the first sample, so
         // a publisher that has not read yet gets the full threshold, and the
         // grace leaves an incident from before an APM restart open.
