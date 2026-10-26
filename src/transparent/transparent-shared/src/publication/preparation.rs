@@ -23,6 +23,23 @@ pub struct PreparationReuse {
 }
 
 impl Finalized {
+    /// At activation, require every file to match its prepared identity without
+    /// rereading bodies or requiring immutable-store adoption. Fails for absent
+    /// preparation evidence, unsafe paths, or changed files. A metadata-only
+    /// restoration supplies no such evidence; its separate serving path owes
+    /// background validation instead.
+    pub fn check_prepared_files(&self, root: &Path) -> Result<(), Error> {
+        let files = self
+            .prepared_files
+            .as_ref()
+            .ok_or("publication has no prepared file identities")?;
+        for (path, identity) in files {
+            let (physical, file) = open_artifact(root, path, None)?;
+            identity.check(&physical, &file)?;
+        }
+        Ok(())
+    }
+
     /// Capture installed, sealed object identities only after preparation completes.
     /// The exact completion record binds inventory, network, parameters and profile.
     pub fn preparation_record(

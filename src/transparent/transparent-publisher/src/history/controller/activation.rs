@@ -29,6 +29,9 @@ pub(super) async fn activate_history(
         return Ok(());
     }
     let directory = &candidate.publication.directory;
+    // External initial publications are verified in full but are not adopted
+    // into this publisher's immutable store and cannot supply restart reuse.
+    let stored = directory.parent() == Some(config.publication_root.as_path());
     let background = candidate
         .distribution
         .as_ref()
@@ -52,11 +55,13 @@ pub(super) async fn activate_history(
         // Completion evidence for a cheap restart, written only now that the
         // required preparation passed and before the active pointer moves.
         let record = distribution.restore_record(true, config.recent_from, height, &hash)?;
-        let preparation = distribution.preparation_record(directory, &record)?;
-        pir_publication::records::persist(
-            &directory.join(transparent_shared::publication::PREPARATION_FILE),
-            &preparation,
-        )?;
+        if stored {
+            let preparation = distribution.preparation_record(directory, &record)?;
+            pir_publication::records::persist(
+                &directory.join(transparent_shared::publication::PREPARATION_FILE),
+                &preparation,
+            )?;
+        }
         pir_publication::records::persist(
             &directory.join(transparent_shared::publication::RESTORE_FILE),
             &record,
@@ -99,17 +104,20 @@ pub(super) async fn activate_history(
             return Err("reorg raced the public pointer commit".into());
         }
         if let Some(distribution) = &candidate.distribution {
+            // A failed failure-record write still withdraws this process.
+            // Only ordinary preparation can recover; inherited evidence cannot.
             if distribution.requires_validation()
-                && lists_failed(
-                    &integrity_failures(&config.publication_root)?,
-                    distribution.inventory(),
-                )
+                && (authority.0.integrity_failed.load(Ordering::Acquire)
+                    || lists_failed(
+                        &integrity_failures(&config.publication_root)?,
+                        distribution.inventory(),
+                    ))
             {
                 return Err("inherited preparation cannot clear an integrity failure".into());
             }
-            // Recheck prepared identities under the final activation gate.
-            let record = distribution.restore_record(true, config.recent_from, height, &hash)?;
-            distribution.preparation_record(&publication.directory, &record)?;
+            // Every candidate must still name the files preparation checked,
+            // including external initial publications that cannot supply receipts.
+            distribution.check_prepared_files(&publication.directory)?;
         }
         crate::storage::layout::complete(&config.publication_root, "transparent_history")?;
         publication::write_durable(
