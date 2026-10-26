@@ -56,7 +56,11 @@ nothing. On every selected host it unpacks the build, has the new binary accept 
 host's config, and runs that build's `pir-probe` against the service running now. Then
 it prints the waves that would restart. Components that share a host deploy one after
 another. `pir-deploy rollback <group|host>` swaps components back to
-their previous release, and `pir-deploy status` prints what each host runs.
+their previous release, and `pir-deploy status` prints what each host runs. A
+component's previous release must still read what the publisher now sends: query
+servers built before `e9848f1e4157` refuse the Receiver distribution of later
+publishers, so a unified node cannot roll back past it while the publisher runs a
+later build. Deploying the release a component already runs changes nothing.
 `pirctl adopt <component>` moves a unit that names a release path onto the `current`
 link without restarting it. It sets aside drop-ins that only repeat `ExecStart`.
 
