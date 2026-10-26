@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# pir-probe: one encrypted query per product against a query server, all at once.
+#
+#   pir-probe --server http://127.0.0.1:8090 --products enhance,status,transparent_history,transaction_details,receiver
+#
+# pirctl runs it after a restart. Each product's client and pinned answer ship beside this
+# script in the release's pir-probe archive; no chain node is needed:
+#   enhance              a published record compared byte for byte (fixtures/enhance.json)
+#   status               a random txid must decode as not found from the service's own
+#                        fresh manifest (Status covers only recent blocks, so no fixed
+#                        positive answer exists)
+#   transparent_history  a pinned row's per-segment hashes (fixtures/transparent-history.json)
+#   transaction_details  a pinned transaction's entry hash (fixtures/transaction-details.json)
+#   receiver             a pinned payment built into receiver-probe
+# Exits non-zero naming every product that failed or took longer than 12 s.
+set -euo pipefail
+
+dir=$(cd "$(dirname "$0")" && pwd)
+server='' products=''
+while [ $# -gt 0 ]; do
+  case $1 in
+    --server) server=$2; shift 2 ;;
+    --products) products=$2; shift 2 ;;
+    *) echo "usage: pir-probe --server URL --products a,b,..." >&2; exit 2 ;;
+  esac
+done
+[ -n "$server" ] && [ -n "$products" ] || { echo "usage: pir-probe --server URL --products a,b,..." >&2; exit 2; }
+
+enhance() {
+  local pick
+  # A random pinned record each run, so every record is exercised over time.
+  pick=$(python3 -c 'import json, random, sys; r = random.choice(json.load(open(sys.argv[1]))["records"]); print(r["position"], r["record_hex"].lower())' "$dir/fixtures/enhance.json")
+  [ "$("$dir/enhance-pir-cli" --server "$server" query "${pick%% *}")" = "${pick#* }" ] || { echo "record ${pick%% *} differs from the pinned bytes"; return 1; }
+}
+status() { "$dir/pir-publisher" status probe-local --origin "$server"; }
+transparent_history() {
+  local fixture=$dir/fixtures/transparent-history.json
+  "$dir/quality-canary" --url "$server" --fixture "$fixture" --fixture-sha256 "$(sha256sum "$fixture" | cut -d' ' -f1)" --skip-chain-check
+}
+transaction_details() { "$dir/txid-quality-canary" --url "$server" --fixture "$dir/fixtures/transaction-details.json" --timeout-seconds 10; }
+receiver() { "$dir/receiver-probe" --origin "$server" --fixture-only; }
+
+export dir server
+export -f enhance status transparent_history transaction_details receiver
+ms() { local t=${EPOCHREALTIME/./}; echo $((t / 1000)); }
+out=$(mktemp -d)
+trap 'rm -rf "$out"' EXIT
+pids=()
+IFS=, read -ra wanted <<<"$products"
+for product in "${wanted[@]}"; do
+  declare -F "$product" >/dev/null || { echo "pir-probe: unknown product $product" >&2; exit 2; }
+  (
+    start=$(ms)
+    if timeout 12 bash -c "$product" >"$out/$product" 2>&1; then
+      echo "ok $(($(ms) - start))ms" >"$out/$product.result"
+    else
+      echo "FAILED after $(($(ms) - start))ms: $(tail -1 "$out/$product")" >"$out/$product.result"
+    fi
+  ) &
+  pids+=($!)
+done
+wait "${pids[@]}"
+failed=0
+for product in "${wanted[@]}"; do
+  result=$(cat "$out/$product.result")
+  echo "pir-probe: $product $result"
+  [[ $result == ok* ]] || failed=1
+done
+exit "$failed"

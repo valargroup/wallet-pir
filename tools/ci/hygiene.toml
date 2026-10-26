@@ -191,3 +191,7 @@ reason = "Real failed observation consumed by the mandatory audit negative contr
 [[allow_data]]
 pattern = "tools/receiver/deploy/receiver-*.example.json"
 reason = "Receiver root host configuration examples consumed by offline deployment checks."
+
+[[allow_data]]
+pattern = "tools/deploy/probe/*.json"
+reason = "Pinned mainnet answers pir-probe checks after every deploy; shipped in the release's pir-probe archive."

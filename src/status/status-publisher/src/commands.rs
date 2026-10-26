@@ -55,6 +55,12 @@ enum Command {
         #[arg(long, default_value_t = 4)]
         queries: usize,
     },
+    /// One encrypted lookup checked only against the service's own manifest, for query
+    /// hosts that run no node.
+    ProbeLocal {
+        #[arg(long, default_value = "http://127.0.0.1:8492")]
+        origin: String,
+    },
 }
 
 pub async fn run(args: Vec<std::ffi::OsString>) -> Result<(), cli::AnyError> {
@@ -92,6 +98,7 @@ pub async fn run(args: Vec<std::ffi::OsString>) -> Result<(), cli::AnyError> {
             cookie,
             queries,
         } => cli::probe_live(origin, rpc_url, cookie, queries).await?,
+        Command::ProbeLocal { origin } => cli::probe_local(origin).await?,
     }
     Ok(())
 }
@@ -103,7 +110,12 @@ mod tests {
     #[test]
     fn standalone_controller_is_rejected_and_probes_remain() {
         assert!(Args::try_parse_from(["pir-publisher status", "serve-distributed"]).is_err());
-        for command in ["probe-live", "probe-live-load", "observe-live"] {
+        for command in [
+            "probe-live",
+            "probe-local",
+            "probe-live-load",
+            "observe-live",
+        ] {
             let error = Args::try_parse_from(["pir-publisher status", command, "--help"])
                 .err()
                 .unwrap();

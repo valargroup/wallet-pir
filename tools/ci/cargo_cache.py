@@ -67,6 +67,7 @@ SCOPES = {
     ('release', 'q48'): ('release', 'enhance-pir-client'),
     ('release', 'publisher'): ('release,release-fast', 'pir-publisher/transparent-history,transparent-detail; transparent regression, history rate and txid rate acceptance tools'),
     ('release', 'query-server'): ('release', 'pir-query-server/enhance,status,transparent-history,transparent-detail,receiver,native-reinspiring'),
+    ('release', 'probe'): ('release-fast', 'pir-probe clients: enhance-pir-cli and pir-publisher/status native, transparent quality and txid canaries, receiver-probe'),
     ('release-native', 'native'): ('release', 'enhance-pir-client,native-reinspiring,pir-query-server/enhance,native-reinspiring'),
     ('cuda-test', 'cuda'): ('dev,release-fast', 'explicit CUDA checks, lint and driver-free tests'),
     ('native-cuda', 'cuda'): ('release', 'enhance-pir-client,native-reinspiring,pir-query-server/enhance,native-reinspiring,cuda'),

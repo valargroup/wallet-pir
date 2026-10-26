@@ -20,14 +20,18 @@ struct Args {
     fixture: PathBuf,
     #[arg(long)]
     fixture_sha256: String,
+    #[arg(long, required_unless_present = "skip_chain_check")]
+    rpc_url: Option<String>,
+    #[arg(long, required_unless_present = "skip_chain_check")]
+    cookie: Option<PathBuf>,
+    #[arg(long, required_unless_present = "skip_chain_check")]
+    anchor_height: Option<u64>,
+    #[arg(long, required_unless_present = "skip_chain_check")]
+    anchor_hash: Option<String>,
+    /// Trust the pinned fixture's anchor without asking a chain node. Deploy probes
+    /// run on query hosts, which have none; the row hashes are still checked.
     #[arg(long)]
-    rpc_url: String,
-    #[arg(long)]
-    cookie: PathBuf,
-    #[arg(long)]
-    anchor_height: u64,
-    #[arg(long)]
-    anchor_hash: String,
+    skip_chain_check: bool,
     /// Smoke every table in the pinned fixture, covering every segment.
     /// Run after the service is ready; this process never controls the service.
     #[arg(long)]
@@ -61,16 +65,21 @@ struct Setup {
     public_params_sha256: String,
 }
 fn canonical(args: &Args) -> Result<bool, BoxError> {
-    let cookie = std::fs::read_to_string(&args.cookie)?;
+    let (Some(rpc_url), Some(cookie), Some(anchor_height), Some(anchor_hash)) = (
+        &args.rpc_url,
+        &args.cookie,
+        args.anchor_height,
+        &args.anchor_hash,
+    ) else {
+        return Ok(args.skip_chain_check);
+    };
+    let cookie = std::fs::read_to_string(cookie)?;
     let (user, password) = cookie
         .trim()
         .split_once(':')
         .ok_or("invalid RPC credential format")?;
-    let response:serde_json::Value=reqwest::blocking::Client::builder().timeout(Duration::from_secs(4)).build()?.post(&args.rpc_url).basic_auth(user,Some(password)).json(&serde_json::json!({"jsonrpc":"1.0","id":"pir-canary","method":"getblockhash","params":[args.anchor_height]})).send()?.error_for_status()?.json()?;
-    Ok(
-        response["result"].as_str() == Some(args.anchor_hash.as_str())
-            && response["error"].is_null(),
-    )
+    let response:serde_json::Value=reqwest::blocking::Client::builder().timeout(Duration::from_secs(4)).build()?.post(rpc_url).basic_auth(user,Some(password)).json(&serde_json::json!({"jsonrpc":"1.0","id":"pir-canary","method":"getblockhash","params":[anchor_height]})).send()?.error_for_status()?.json()?;
+    Ok(response["result"].as_str() == Some(anchor_hash.as_str()) && response["error"].is_null())
 }
 fn probe(args: &Args) -> Result<&'static str, BoxError> {
     let raw = std::fs::read(&args.fixture)?;
