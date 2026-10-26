@@ -2,6 +2,9 @@
 
 ## 0.0.1 — Unreleased
 
+- A publisher stop ends Enhance publication building and verification at the
+  next shard, unit or object, so a stop mid-preparation no longer waits up to 26 s.
+
 - Wallet `init` and Status `init` requests wait up to 15 s for a restarting
   publisher's authority instead of answering 503 (or, for Status, 410) at once,
   re-checking authority on every attempt. Enhance, Status and Receiver query roles

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- A restarted publisher serves its previous Receiver publication again as soon as
+  it has read the chain, under its new recovery epoch, while it rebuilds the tables.
+  Only a publication of the same history revision whose files are all still kept
+  and whose anchors are still on the chain is restored, so Receiver no longer goes
+  unready for the ~27 s rebuild after every publisher deploy.
+
 - A publisher stop no longer waits for Receiver to build every shard of a pass: the
   build ends at the next shard and replaces nothing a later pass reuses, so a deploy's
   publisher restart takes about a second instead of up to 20.
