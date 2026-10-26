@@ -1174,6 +1174,8 @@ class CacheWorkflowTests(unittest.TestCase):
         routine = self.workflows['ci.yml']
         self.assertNotIn('timeout-minutes:', routine)
         self.assertIn('--check-fast-seconds 180', routine)
+        timing = routine.split('- name: Check main feedback timing after validation', 1)[1].split('- name:', 1)[0]
+        self.assertIn('continue-on-error: true', timing)
         self.assertIn("if: github.event_name == 'push' && steps.affected.outputs.rust == 'true'", routine)
         self.assertEqual(self.workflows['ci-cache.yml'].count("if: github.ref == 'refs/heads/main'"), 2)
 

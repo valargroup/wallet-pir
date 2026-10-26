@@ -109,8 +109,11 @@ jobs:
         run: umask 022 && TMPDIR="$RUNNER_TEMP" python3 tools/ci/fast.py --committed-only --base "$BASE" --unit-jobs 3
       - name: Check main feedback timing after validation
         # The clock is job start through validation. Cache and stage reports
-        # below are not part of that measurement.
+        # below are not part of that measurement. An overrun is reported on
+        # the step and in the summary but does not fail main: a slow runner
+        # is not a broken commit, and a red main sends agents to debug it.
         if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
         run: umask 022 && python3 tools/ci/timings.py --run "$GITHUB_RUN_ID" --check-fast-seconds 180
