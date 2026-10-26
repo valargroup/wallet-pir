@@ -2,12 +2,13 @@
 # Install or upgrade the unified Wallet PIR query node on this Linux host:
 #
 #   curl -fsSL https://wallet-pir.valargroup.dev/install | sudo bash
-#   curl -fsSL https://wallet-pir.valargroup.dev/install | sudo bash -s -- --domain pir.example.org
 #
 # One configuration: Enhance, Status, Transparent history, transaction details
 # and Receiver in one pir-query-server process, synchronizing publisher-prepared
-# material over HTTPS. Nothing is prompted. Every run ends with one
-# `wallet-pir-install:` line on stdout; see docs/query-server.md.
+# material over HTTPS. Run from a terminal, it asks once for the public domain
+# wallets reach it at; --domain or --local answer that without a terminal.
+# Every run ends with one `wallet-pir-install:` line on stdout; see
+# docs/query-node.md.
 set -euo pipefail
 
 # Bumped after each `query-server-v*` release (.github/workflows/release-query-server.yml).
@@ -37,25 +38,34 @@ MANAGEMENT=127.0.0.1:18081
 PUBLIC=127.0.0.1:8090
 CADDY_MARKER="# Managed by the Wallet PIR query node installer."
 
-# Tests point the hardware probes at a fake host.
+# Tests point the hardware probes at a fake host, and the domain question at a
+# file of answers.
 PROC_ROOT="${WALLET_PIR_INSTALL_PROC:-/proc}"
 SYS_ROOT="${WALLET_PIR_INSTALL_SYS:-/sys}"
+CADDYFILE="${WALLET_PIR_INSTALL_CADDYFILE:-/etc/caddy/Caddyfile}"
+# `curl ... | bash` feeds the script on stdin, so answers come from the terminal.
+TTY="${WALLET_PIR_INSTALL_TTY:-/dev/tty}"
+DOMAIN_ATTEMPTS=3
 
 CHECK_ONLY=0
 DRY_RUN=0
 WAIT_READY=0
+LOCAL_ONLY=0
 DOMAIN=""
 VERSION=""
 FAILURES=()
 
 usage() {
   cat <<'EOF'
-Usage: install.sh [--check-only] [--dry-run] [--domain NAME] [--version TAG] [--wait-ready]
+Usage: install.sh [--check-only] [--dry-run] [--domain NAME | --local] [--version TAG] [--wait-ready]
+
+Run from a terminal, it asks for the public domain to serve wallets at.
 
   --check-only   check platform and hardware, change nothing (no root needed)
   --dry-run      run every check and print the changes instead of making them
-  --domain NAME  also install Caddy and serve wallets over HTTPS at NAME
-                 (its DNS must already point here, ports 80 and 443 open)
+  --domain NAME  do not ask; also install Caddy and serve wallets over HTTPS at
+                 NAME (its DNS must already point here, ports 80 and 443 open)
+  --local        do not ask; serve this machine only, on 127.0.0.1:8090
   --version TAG  install another query-server-v* release than the pinned one
   --wait-ready   wait (up to 3 hours) until the node serves every product
 
@@ -98,12 +108,15 @@ write_file() {
   mv -f "$path.new" "$path"
 }
 
+host_name() { [[ "$1" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]]; }
+
 parse_args() {
   while (($#)); do
     case "$1" in
       --check-only) CHECK_ONLY=1 ;;
       --dry-run) DRY_RUN=1 ;;
       --wait-ready) WAIT_READY=1 ;;
+      --local) LOCAL_ONLY=1 ;;
       --domain)
         (($# > 1)) || die usage 2 "--domain needs a host name"
         DOMAIN="$2"
@@ -122,7 +135,8 @@ parse_args() {
     esac
     shift
   done
-  if [[ -n "$DOMAIN" && ! "$DOMAIN" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]]; then
+  [[ -z "$DOMAIN" ]] || ((!LOCAL_ONLY)) || die usage 2 "--domain and --local exclude each other"
+  if [[ -n "$DOMAIN" ]] && ! host_name "$DOMAIN"; then
     die usage 2 "--domain must be a plain host name, got $DOMAIN"
   fi
   if [[ -n "$VERSION" && ! "$VERSION" =~ ^query-server-v[0-9A-Za-z.+-]+$ ]]; then
@@ -220,6 +234,54 @@ check_hardware() {
   fi
   MEMORY_BYTES="$memory"
   say "hardware ok: $cpus vCPUs, $(gib "$memory") RAM, $((disk / 1000000000)) GB for $STATE_ROOT"
+}
+
+# The domain a Caddyfile this installer wrote already serves, if any.
+current_domain() {
+  [[ -f "$CADDYFILE" ]] || return 0
+  awk -v marker="$CADDY_MARKER" 'managed && / \{$/ { print $1; exit } $0 == marker { managed = 1 }' "$CADDYFILE"
+}
+
+# Settles DOMAIN: the flags win, then the answer typed at the terminal; with no
+# terminal a re-run keeps the domain it served before.
+choose_domain() {
+  local current answer attempt
+  current="$(current_domain)"
+  if [[ -z "$DOMAIN" ]] && ((!LOCAL_ONLY)); then
+    if { exec 3<"$TTY"; } 2>/dev/null; then
+      for ((attempt = 1; ; attempt++)); do
+        printf '\nPublic domain for wallets (its DNS must point here, ports 80 and 443 open).\n' >&2
+        if [[ -n "$current" ]]; then
+          printf 'Press Enter to keep %s: ' "$current" >&2
+        else
+          printf 'Leave empty to serve this machine only: ' >&2
+        fi
+        answer=""
+        read -r answer <&3 || true
+        answer="${answer#"${answer%%[![:space:]]*}"}"
+        answer="${answer%"${answer##*[![:space:]]}"}"
+        [[ -n "$answer" ]] || answer="$current"
+        if [[ -z "$answer" ]] || host_name "$answer"; then
+          break
+        fi
+        say "$answer is not a plain host name"
+        ((attempt < DOMAIN_ATTEMPTS)) || die usage 2 "no valid domain after $DOMAIN_ATTEMPTS attempts"
+      done
+      exec 3<&-
+      DOMAIN="$answer"
+    else
+      DOMAIN="$current"
+      [[ -n "$DOMAIN" ]] || say "no terminal to ask for a domain; pass --domain NAME to serve wallets over HTTPS"
+    fi
+  fi
+  if [[ -z "$DOMAIN" ]]; then
+    say "serving this machine only, at http://$PUBLIC"
+    return
+  fi
+  say "serving wallets over HTTPS at $DOMAIN"
+  if command -v getent >/dev/null && ! getent ahosts "$DOMAIN" >/dev/null; then
+    say "warning: $DOMAIN does not resolve yet; Caddy gets its certificate once its DNS points here"
+  fi
 }
 
 ensure_tools() {
@@ -341,14 +403,13 @@ install_unit() {
 
 install_caddy() {
   [[ -n "$DOMAIN" ]] || return 0
-  local caddyfile=/etc/caddy/Caddyfile
-  if [[ -s "$caddyfile" ]] && ! grep -qF "$CADDY_MARKER" "$caddyfile" &&
-    ! grep -q '^# The Caddyfile is an easy way' "$caddyfile"; then
-    die prerequisite 4 "$caddyfile was not written by this installer; add the wallet routes yourself"
+  if [[ -s "$CADDYFILE" ]] && ! grep -qF "$CADDY_MARKER" "$CADDYFILE" &&
+    ! grep -q '^# The Caddyfile is an easy way' "$CADDYFILE"; then
+    die prerequisite 4 "$CADDYFILE was not written by this installer; add the wallet routes yourself"
   fi
   # Wallet routes as on fleet query nodes (tools/infra/digitalocean/query-serving/cloud-init.yaml.tftpl),
   # plus Receiver, which fleet nodes serve through a separate edge.
-  write_file "$caddyfile" 0644 <<EOF
+  write_file "$CADDYFILE" 0644 <<EOF
 $CADDY_MARKER
 $DOMAIN {
 	@wallet path /enhance/v1/* /status/v1/* /transparent/v1/* /receiver/v1/* /v1/enhance/* /v1/status/* /v1/receiver/* /v2/*
@@ -360,7 +421,7 @@ $DOMAIN {
 	}
 }
 EOF
-  ((DRY_RUN)) || caddy validate --config "$caddyfile" --adapter caddyfile >&2 || die check 6 "caddy refused $caddyfile"
+  ((DRY_RUN)) || caddy validate --config "$CADDYFILE" --adapter caddyfile >&2 || die check 6 "caddy refused $CADDYFILE"
   run systemctl enable --quiet --now caddy
   run systemctl reload caddy
 }
@@ -402,6 +463,7 @@ main() {
   fi
   [[ ! -e "$FLEET_VOLUME_UNIT" ]] ||
     die platform 4 "this is a fleet-provisioned query node; deploy it with wallet-pir-deploy.py instead"
+  choose_domain
   ensure_tools
   check_sources
   resolve_release

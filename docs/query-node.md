@@ -73,7 +73,6 @@ above plus Receiver) on their own Linux host with one command:
 
 ```sh
 curl -fsSL https://wallet-pir.valargroup.dev/install | sudo bash
-curl -fsSL https://wallet-pir.valargroup.dev/install | sudo bash -s -- --domain pir.example.org
 ```
 
 `/install` on the unified site redirects to
@@ -82,7 +81,8 @@ on `main`. There is one configuration: the settings in
 [`install-node.json`](../tools/deploy/query-server/install-node.json), which are
 this page's example with `wallet-pir-query-02`'s cache budgets. Receiver
 synchronizes from its own publisher, `https://receiver-pir.valargroup.dev`.
-The installer never prompts. It:
+The installer asks one question, for the public domain, and only when it has a
+terminal to ask on. It:
 
 1. Refuses anything but Linux on an x86-64-v3 CPU with `pclmulqdq`, systemd and
    root, and a host already provisioned as a fleet query node (one with
@@ -93,15 +93,21 @@ The installer never prompts. It:
    no override.
 3. Checks both publishers' discovery documents and reads the current Enhance
    shard list from `/enhance/v1/init`, since a combined role must hold them all.
+   Before that, it settles the domain wallets reach the node at. From a
+   terminal it asks for one; an empty answer serves this machine only, on
+   `127.0.0.1:8090`, and a re-run offers the domain it already serves. Without
+   a terminal (cloud-init, CI, non-interactive `ssh`) it never waits: a re-run
+   keeps its domain and a new host serves this machine only. `--domain NAME`
+   and `--local` answer without asking. A domain that does not resolve yet
+   draws a warning, since Caddy cannot get its certificate until it does.
 4. Downloads the pinned `query-server-v*` release archive and checks its
    SHA-256, which `install.sh` embeds. `--version TAG` installs another release
    and trusts that release's published `SHA256SUMS` over HTTPS only.
 5. Writes `/etc/wallet-pir-query/query-server.json` with those shards, runs the
    binary's `--check`, installs `wallet-pir-query.service` with `MemoryMax` 12 GiB
    below the host's memory and `MemoryHigh` 8 GiB below that, and starts it.
-6. With `--domain`, installs Caddy and serves the wallet paths, Receiver's
-   included, over HTTPS. It
-   refuses to overwrite a Caddyfile it did not write.
+6. With a domain, installs Caddy and serves the wallet paths, Receiver's
+   included, over HTTPS. It refuses to overwrite a Caddyfile it did not write.
 
 It waits for `/health`, not for readiness: a cold start downloads tens of GiB
 (about 21 minutes on the first node). `--wait-ready` waits up to three hours.
