@@ -457,6 +457,18 @@ PIRCTL_ROOT=%(hosts)s/$host PIRCTL_PROC=%(hosts)s/$host/proc exec %(pirctl)s "$@
         self.assertIn('== dry run FAILED', result.stdout)
         self.assertEqual(self.restart_counts(), before)
 
+    def test_a_dry_run_fails_on_a_service_that_stays_not_ready(self):
+        self.fleet.release(SHA_A)
+        self.assertEqual(self.run_driver('all', SHA_A).returncode, 0)
+        (self.router / 'health/enhance-router.service.json').write_text(json.dumps({'ready': False}))
+        before = self.restart_counts()
+        self.fleet.release(SHA_B)
+        result = self.run_driver('--dry-run', 'product', 'enhance', SHA_B)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('enhance-router has not been ready for 2s', result.stderr)
+        self.assertIn('check failed on: router enhance-router', result.stderr)
+        self.assertEqual(self.restart_counts(), before)
+
     def test_components_sharing_a_host_deploy_in_turn_and_each_keeps_its_probe(self):
         # The worker unpacks the release first and has no probe of its own.
         self.fleet.host('status', [('status-worker', 'pir-query-server', ''),
