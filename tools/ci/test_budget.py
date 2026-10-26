@@ -20,15 +20,25 @@ _lock = threading.RLock()
 _cancelled = False
 
 
+def kill_group(process):
+    """SIGKILL the session a test executable leads. A group that is already gone is not an error: Linux reports
+    ESRCH, and macOS reports EPERM once only exited (zombie or reaped) members remain. EPERM while the executable
+    itself still runs is a real failure to stop it and is raised."""
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    except PermissionError:
+        if process.poll() is None:
+            raise
+
+
 def stop():
     global _cancelled
     with _lock:
         _cancelled = True
         for process in _processes:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+            kill_group(process)
 
 
 def install_cancellation():
@@ -81,10 +91,7 @@ def execute(command, *, cwd, env, seconds=None, report=None, enforce=True):
     timed_out = False
 
     def terminate(_signal=None, _frame=None):
-        try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+        kill_group(process)
         if _signal is not None:
             raise SystemExit(128 + _signal)
 

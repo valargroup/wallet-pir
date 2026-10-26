@@ -12,7 +12,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools/ci'))
-from test_budget import execute, case_seconds
+from test_budget import execute, case_seconds, kill_group
 
 
 class CaseBudgetTests(unittest.TestCase):
@@ -99,6 +99,50 @@ class CaseBudgetTests(unittest.TestCase):
             seconds=.01, enforce=False)
         self.assertEqual(count, 1)
         self.assertGreater(cases[0]['seconds'], .01)
+
+    def test_cleanup_refusal_after_exit_keeps_the_passing_result(self):
+        # macOS refuses killpg with EPERM once only exited members remain in the group.
+        from unittest.mock import patch
+        with patch('test_budget.os.killpg', side_effect=PermissionError(1, 'Operation not permitted')):
+            count, cases = self.run_fixture(
+                'if "--list" in sys.argv: print("first: test")\nelse: print("test first ... ok",flush=True)\n')
+        self.assertEqual(count, 1)
+        self.assertEqual(cases[0]['status'], 'ok')
+
+    def test_cleanup_refusal_while_the_program_runs_is_raised(self):
+        from unittest.mock import patch
+        process = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], start_new_session=True)
+        try:
+            with patch('test_budget.os.killpg', side_effect=PermissionError(1, 'Operation not permitted')):
+                with self.assertRaises(PermissionError):
+                    kill_group(process)
+        finally:
+            process.kill()
+            process.wait()
+
+    def test_a_deadline_also_stops_the_programs_descendants(self):
+        with tempfile.TemporaryDirectory() as directory:
+            pid_file = Path(directory) / 'descendant.pid'
+            with self.assertRaisesRegex(RuntimeError, 'timeout=True'):
+                self.run_fixture(
+                    'import subprocess\n'
+                    'if "--list" in sys.argv: print("stalled: test")\n'
+                    'else:\n'
+                    f' child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])\n'
+                    f' open({str(pid_file)!r}, "w").write(str(child.pid))\n'
+                    ' print("test stalled ... ",end="",flush=True)\n time.sleep(10)\n',
+                    seconds=.5)
+            pid = int(pid_file.read_text())
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                try:
+                    os.kill(pid, 0)
+                except ProcessLookupError:
+                    break
+                time.sleep(.05)
+            else:
+                os.kill(pid, 9)
+                self.fail('the stalled program left its descendant running')
 
 
 class CorrectnessSelectionTests(unittest.TestCase):
