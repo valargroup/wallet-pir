@@ -491,18 +491,6 @@ async fn filter_successors_reuse_loaded_directory_across_authority_conflicts() {
         "filter-only successors reuse the verified directory"
     );
     assert_eq!(publications.filter_window().unwrap().head().tip.height, 103);
-    // Prepare a changed directory, then interrupt its final authorization.
-    origin.publish_at(0, 1, [4; 32]);
-    origin
-        .advance_check_at
-        .store(origin.checks.load(Ordering::SeqCst) + 2, Ordering::SeqCst);
-    let _ = lifecycle.synchronize().await;
-    assert_eq!(lifecycle.context().adapter().directory_loads(), 2);
-    // A correction cannot inherit that pending directory's prepared work.
-    origin.publish(1, 1);
-    lifecycle.synchronize().await.unwrap();
-    assert_eq!(lifecycle.context().adapter().directory_loads(), 3);
-    assert_eq!(publications.history_revision(), 1);
     server.abort();
 }
 

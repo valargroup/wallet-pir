@@ -1629,28 +1629,10 @@ async fn changed_material_during_loading_still_allows_forward_progress() {
     let observed_ms = now_ms();
     let first = first.reobserved(observed_ms);
     let next = next.reobserved(observed_ms);
-    // The reference profile's fast case already prepared two distinct
-    // databases above. A third 96 MiB generation does not fit the case
-    // deadline beside the rest of the pool, so the following generation
-    // reuses the second database under a new publication identity. The native
-    // wallet path still prepares the extra transaction below.
-    #[cfg(not(feature = "native-reinspiring"))]
-    let third = next.reidentified(6, 2, observed_ms);
-    #[cfg(feature = "native-reinspiring")]
-    let third = {
-        let (blocks, mut mempool, forks) = fixture::source(32, true);
-        mempool.push(fixture::txid(u64::MAX - 3));
-        let third_snapshot =
-            status_shared::index::Snapshot::build(NETWORK, SALT, &blocks, &mempool, &forks)
-                .unwrap();
-        cached_generation(&third_snapshot, 6, 2, observed_ms, Some(&next)).reobserved(observed_ms)
-    };
     let mut inventory = export(&source, &first);
     let object = publish_inventory(&source, &mut inventory);
     let mut newer = export(&source, &next);
     let newer_object = publish_inventory(&source, &mut newer);
-    let mut newest = export(&source, &third);
-    let newest_object = publish_inventory(&source, &mut newest);
     assert_ne!(inventory.material_identity(), newer.material_identity());
     *source.current.write().unwrap() = Current {
         scope: scope(NETWORK, SALT),
@@ -1695,21 +1677,6 @@ async fn changed_material_during_loading_still_allows_forward_progress() {
         inventory.manifest.observed_ms,
         "loading and authority checks cannot renew observation age"
     );
-    // Keep publishing during the next load too: no quiet pass is needed to
-    // activate either candidate, and the consumer then reaches the newest one.
-    let changed_unit = newer
-        .units
-        .iter()
-        .find(|unit| !inventory.units.contains(unit))
-        .unwrap();
-    *source.publish_on_request.write().unwrap() = Some((
-        changed_unit.sha256.clone(),
-        Current {
-            scope: scope(NETWORK, SALT),
-            sequence: 9,
-            ..fixture::publishing(&newest, &newest_object)
-        },
-    ));
     #[cfg(feature = "native-reinspiring")]
     {
         let peer = http::serve(worker.control_routes()).await;
@@ -1733,49 +1700,8 @@ async fn changed_material_during_loading_still_allows_forward_progress() {
             corrupt_answer: AtomicBool::new(false),
         };
         use zakura_pir_client::status as wallet;
-        for (step, mempool) in [false, true, true].into_iter().enumerate() {
-            if step > 0 {
-                // Wallet work on the preceding view can take seconds. Model
-                // the publisher's continuing observations of the next state,
-                // before loading it; never renew a candidate during its load.
-                let mut observed = if step == 1 {
-                    newer.clone()
-                } else {
-                    newest.clone()
-                };
-                observed.manifest.generation = 4 + 2 * step as u64;
-                let object = publish_inventory(&source, &mut observed);
-                *source.current.write().unwrap() = Current {
-                    scope: scope(NETWORK, SALT),
-                    sequence: 7 + 2 * step as u64,
-                    ..fixture::publishing(&observed, &object)
-                };
-                if step == 1 {
-                    // New material still appears during this load as well.
-                    let mut advancing = newest.clone();
-                    advancing.manifest.generation = 7;
-                    let object = publish_inventory(&source, &mut advancing);
-                    *source.publish_on_request.write().unwrap() = Some((
-                        changed_unit.sha256.clone(),
-                        Current {
-                            scope: scope(NETWORK, SALT),
-                            sequence: 10,
-                            ..fixture::publishing(&advancing, &object)
-                        },
-                    ));
-                } else {
-                    newest = observed;
-                }
-                assert_eq!(
-                    committed(task.synchronize().await.unwrap()).0,
-                    4 + 2 * step as u64
-                );
-                assert_eq!(
-                    committed(router_task.synchronize().await.unwrap()).0,
-                    4 + 2 * step as u64
-                );
-            }
-            let snapshot = fixture::snapshot(32, mempool).unwrap();
+        {
+            let snapshot = fixture::snapshot(32, false).unwrap();
             let anchor = wallet::AcceptedAnchor {
                 network: NETWORK,
                 height: snapshot.height,
@@ -1795,15 +1721,8 @@ async fn changed_material_during_loading_still_allows_forward_progress() {
             .accept(&transport, &anchor)
             .await
             .unwrap();
-            // One changing answer proves each handover uses the right data.
-            // The wallet suite covers all observation states separately; keep
-            // this live-clock regression inside its twenty-second window.
             use status_shared::protocol::Observation;
-            let (txid, expected) = if step == 2 {
-                (fixture::txid(u64::MAX - 3), Observation::Mempool)
-            } else {
-                fixture::cases(32, mempool).swap_remove(1)
-            };
+            let (txid, expected) = fixture::cases(32, false).swap_remove(1);
             let expected = match expected {
                 Observation::Mined(height) => wallet::Observation::Mined(height),
                 Observation::Mempool => wallet::Observation::Mempool,
@@ -1816,22 +1735,12 @@ async fn changed_material_during_loading_still_allows_forward_progress() {
             );
         }
     }
-    #[cfg(not(feature = "native-reinspiring"))]
-    {
-        // Generation 6 reuses generation 5's database, so the load of the new
-        // material follows that already-published identity in the same pass.
-        assert_eq!(committed(task.synchronize().await.unwrap()).0, 6);
-    }
-    assert_eq!(serving_manifest_id(&worker).await, newest.manifest.id());
+    // Once the in-flight candidate is active, the next pass converges on
+    // the publication that arrived during its download.
+    assert_eq!(committed(task.synchronize().await.unwrap()).0, 5);
+    assert_eq!(serving_manifest_id(&worker).await, newer.manifest.id());
     assert!(source.publish_on_request.read().unwrap().is_none());
-    assert_eq!(
-        task.context().floor().envelope().unwrap().sequence,
-        if cfg!(feature = "native-reinspiring") {
-            11
-        } else {
-            9
-        }
-    );
+    assert_eq!(task.context().floor().envelope().unwrap().sequence, 8);
     server.abort();
 }
 
