@@ -429,12 +429,16 @@ listener in memory reclaim for hours without reaching the hard limit. The hard
 caps remain enforced. `OOMPolicy=kill`, `KillMode=control-group`, and
 `Restart=always` clean up the entire service group and reconnect the runner after
 an out-of-memory failure. Service stops allow 30 seconds before forced cleanup.
-Both services set `CARGO_BUILD_JOBS=4`. That variable is hashed into the
-persistent target identity, so on main's runner the fast compile step overrides
-it to one after setup, using the same main-runner condition as the job's
-`runs-on`. Hosted PR runners (4 CPUs, 16 GB) keep four. Two concurrent release-fast rustc processes still exceed the
-fast 6 GiB cap and the OOM kill drops the runner; one stays inside the cap
-and reuses the existing target. A cancelled fast job can leave that compiler running until the runner observes the cancellation; the next compile waits for it to exit before starting another. Before that compile, main deletes incremental
+Both services set `CARGO_BUILD_JOBS=4`. Cache setup keeps that value because
+it is hashed into the persistent target identity, even though job count does
+not change compiler output. The fast compile step uses six jobs on main's
+eight-core runner. The query host's low-memory compiler profile keeps builds
+inside the existing fast 6 GiB cap while using more of the available cores.
+Hosted PR runners (4 CPUs, 16 GB) keep four jobs, selected with the same condition
+as the job's `runs-on`.
+A cancelled fast job can leave its compiler running until the runner observes
+the cancellation; the next compile waits for it to exit before starting another.
+Before that compile, main deletes incremental
 sessions in the warm target. A killed rustc can leave a session that the next
 compile of the same crate grows past 6 GiB. Fingerprints and finished artifacts
 stay, so an unchanged crate is not rebuilt. The fast query host uses non-incremental `release-fast` opt-level 1 and 256

@@ -300,6 +300,8 @@ async fn connect<'a>(origin: &str, http: &'a Http) -> history::Session<&'a Http>
     .unwrap()
 }
 
+// Keep the real wallet query and restart together here. Authority-only cases
+// use service state so they do not prepare another wallet database.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn https_authority_controls_real_wallet_queries_and_restart() {
     let root = tempfile::tempdir().unwrap();

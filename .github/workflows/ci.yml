@@ -97,15 +97,12 @@ jobs:
       - name: Run affected fast checks
         env:
           BASE: ${{ env.FAST_BASE }}
-          # Job count is not part of compiler output, but cargo_cache hashes
-          # every CARGO_BUILD_* variable into the persistent target identity.
-          # Keep four on the setup step so this relink reuses the warm cache.
-          # Two rustc processes still cross main's 6 GiB fast-runner cgroup, so
-          # the compile on that runner uses one. The same condition selects the
-          # runner: a push, PR, or hosted dispatch must not guess from
-          # runner.environment, which left four rustc processes on the cgroup.
-          # Hosted runners (16 GB) keep all four.
-          CARGO_BUILD_JOBS: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && !inputs.hosted && '1' || '4' }}
+          # Job count does not change compiler output, but cache setup hashes
+          # CARGO_BUILD_* variables. Keep setup at the service's four jobs to
+          # retain the existing target. The query host's low-memory profile
+          # permits six compile jobs on main's eight-core, 6 GiB runner.
+          # Hosted runners keep four, using the same condition as runs-on.
+          CARGO_BUILD_JOBS: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && !inputs.hosted && '6' || '4' }}
         run: umask 022 && TMPDIR="$RUNNER_TEMP" python3 tools/ci/fast.py --committed-only --base "$BASE" --unit-jobs 3
       - name: Check main feedback timing after validation
         # The clock is job start through validation. Cache and stage reports
