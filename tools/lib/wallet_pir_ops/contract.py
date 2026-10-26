@@ -27,7 +27,7 @@ EXECUTABLES = ('pir-publisher', 'pir-query-server')
 MAX_DOCUMENT_BYTES = 16 << 10
 
 # SemVer 2.0 core with optional prerelease and build metadata.
-_SEMVER = re.compile(r'(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)'
+_SEMVER = re.compile(r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)'
                      r'(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?'
                      r'(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?')
 
@@ -120,7 +120,14 @@ def publisher_document_major(status, body):
     """
     if status != 200:
         raise ContractError('discovery answered HTTP %s' % status)
-    if body is None or len(body) > MAX_DOCUMENT_BYTES:
+    if not isinstance(body, (str, bytes)):
+        raise ContractError('discovery document must be UTF-8 JSON')
+    try:
+        encoded = body.encode('utf-8') if isinstance(body, str) else body
+        body = encoded.decode('utf-8')
+    except UnicodeError as error:
+        raise ContractError('discovery document must be UTF-8 JSON') from error
+    if len(encoded) > MAX_DOCUMENT_BYTES:
         raise ContractError('discovery document is missing or larger than %d bytes' % MAX_DOCUMENT_BYTES)
     try:
         document = json.loads(body)

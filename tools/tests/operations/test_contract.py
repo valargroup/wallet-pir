@@ -26,7 +26,7 @@ class CompatibilityTests(unittest.TestCase):
 
     def test_unstable_or_malformed_versions_are_refused(self):
         for text in ('0.9.0', '1.0.0-rc.1', '1.0', 'v1.0.0', '01.0.0', '1.0.0+build..7',
-                     '18446744073709551616.0.0', None, 1):
+                     '18446744073709551616.0.0', '1.٠.0', '1٢.0.0', None, 1):
             with self.subTest(text=text), self.assertRaises(contract.ContractError):
                 contract.contract_major(text)
 
@@ -38,6 +38,9 @@ class CompatibilityTests(unittest.TestCase):
         self.assertEqual(contract.publisher_document_major(200, body), 1)
         refused = [(404, body), (200, 'x'), (200, json.dumps({'service': 'other', 'version': '1.0.0'})),
                    (200, json.dumps({'service': 'pir-publisher', 'version': '0.1.0'})),
+                   (200, json.dumps({'service': 'pir-publisher', 'version': '1.0.0',
+                                      'padding': 'é' * (contract.MAX_DOCUMENT_BYTES // 2)}, ensure_ascii=False)),
+                   (200, b'\xff'),
                    (200, ' ' * (contract.MAX_DOCUMENT_BYTES + 1)), (200, None)]
         for status, answer in refused:
             with self.subTest(status=status, answer=str(answer)[:40]), self.assertRaises(contract.ContractError):
