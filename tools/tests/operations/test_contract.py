@@ -25,7 +25,8 @@ class CompatibilityTests(unittest.TestCase):
         self.assertFalse(contract.compatible('2.0.0', '1.9.4'))
 
     def test_unstable_or_malformed_versions_are_refused(self):
-        for text in ('0.9.0', '1.0.0-rc.1', '1.0', 'v1.0.0', '01.0.0', None, 1):
+        for text in ('0.9.0', '1.0.0-rc.1', '1.0', 'v1.0.0', '01.0.0', '1.0.0+build..7',
+                     '18446744073709551616.0.0', None, 1):
             with self.subTest(text=text), self.assertRaises(contract.ContractError):
                 contract.contract_major(text)
 
@@ -54,7 +55,7 @@ class ContractInfoTests(unittest.TestCase):
 
     def test_invalid_or_disagreeing_reports_are_refused(self):
         invalid = [report(schema='wallet-pir-contract-info/2'), report(executable='pir-publisher'),
-                   report(contract_major=2), report(contract_version='1.0.0-rc.1'),
+                   report(contract_major=2), report(contract_major=True), report(contract_version='1.0.0-rc.1'),
                    report(products=['status', 'status']), report(backends='cuda'), '[]', '']
         for text in invalid:
             with self.subTest(text=text), self.assertRaises(contract.ContractError):

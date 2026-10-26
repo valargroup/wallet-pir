@@ -373,6 +373,16 @@ that relocation, modify DNS or change any production host.
 
 ## Updating the unified coordinator
 
+New shared discovery-contract releases use the topology-independent
+[`fleet-release-*` transaction](operations.md#coordinated-contract-releases).
+Same-major updates select only changed processes. A publisher major change
+requires compatible candidates for every registered consumer across Enhance,
+Status and Transparent products, including each enabled product in a unified
+query process. Shared discovery compatibility and private query-to-query
+protocol qualification are separate requirements. The following
+`publisher-cutover-*` interface remains for retained transactions and its existing
+product-specific rollout; it refuses shared contract-major changes.
+
 Production publishing runs through `pir-publisher --config FILE`; wallet routes
 belong to query ingress. Use `publisher-cutover-*` in
 `tools/scripts/wallet-pir-deploy.py` from a clean pinned checkout or a matching

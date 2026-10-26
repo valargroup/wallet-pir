@@ -2,12 +2,123 @@
 //! Transparent verification, evaluator check, row repair flags.
 use std::process::Command;
 
+#[cfg(all(feature = "enhance", feature = "status"))]
+#[path = "support/status_tls.rs"]
+mod contract_tls;
+
 fn binary() -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_pir-query-server"));
     command
         .env_remove("ENHANCE_MATVEC_BACKEND")
         .env_remove("ENHANCE_CUDA_DEVICE");
     command
+}
+
+/// Exercise the real binary through a real TLS discovery endpoint while the
+/// publisher moves to an incompatible major and returns to its predecessor.
+#[cfg(all(feature = "enhance", feature = "status"))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn contract_cutover_and_rollback_gate_distributed_and_unified_startup() {
+    use axum::{extract::State, http::StatusCode, routing::get, Json, Router};
+    use std::sync::{
+        atomic::{AtomicU64, AtomicUsize, Ordering},
+        Arc,
+    };
+    use std::time::Duration;
+    type Counters = Arc<(AtomicU64, AtomicUsize)>;
+    let current = pir_sync_manager::service_discovery::version().major;
+    let counters: Counters = Arc::new((AtomicU64::new(current), AtomicUsize::new(0)));
+    let app = Router::new()
+        .route(
+            pir_sync_manager::service_discovery::PATH,
+            get(|State(counters): State<Counters>| async move {
+                Json(serde_json::json!({"service": "pir-publisher",
+                    "version": format!("{}.0.0", counters.0.load(Ordering::SeqCst))}))
+            }),
+        )
+        .fallback(|State(counters): State<Counters>| async move {
+            counters.1.fetch_add(1, Ordering::SeqCst);
+            StatusCode::SERVICE_UNAVAILABLE
+        })
+        .with_state(counters.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let upstream = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let tls = contract_tls::Tls::start(&upstream).await;
+    for unified in [false, true] {
+        // The same executable must refuse the new publisher, then be allowed
+        // through discovery after publisher rollback. No old process is reused.
+        for advertised in [current + 1, current] {
+            counters.0.store(advertised, Ordering::SeqCst);
+            counters.1.store(0, Ordering::SeqCst);
+            let temp = tempfile::tempdir().unwrap();
+            let socket = || {
+                let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+                listener.local_addr().unwrap().to_string()
+            };
+            let mut config = serde_json::json!({
+                "management_listen": socket(),
+                "status": {"enabled": true, "settings": {
+                    "role": if unified {"combined"} else {"worker"},
+                    "network_hex": "01".repeat(32), "state_dir": temp.path().join("status"),
+                    "listen": socket(), "publisher": tls.origin, "publisher_ca": tls.certificate,
+                }},
+            });
+            if unified {
+                config["public_listen"] = socket().into();
+                config["enhance"] = serde_json::json!({"enabled": true, "settings": {
+                    "role": "combined", "control_listen": socket(),
+                    "data_dir": temp.path().join("enhance"),
+                    "synchronization": {"publisher_origin": tls.origin, "trusted_ca": tls.certificate,
+                        "download_budget_bytes": 8u64 << 30, "cache_limit_bytes": 8u64 << 30,
+                        "shards": [0]},
+                }});
+            }
+            let path = write(temp.path(), config);
+            let mut command = tokio::process::Command::from(binary());
+            command
+                .arg("--config")
+                .arg(path)
+                .env("RUST_LOG", "off")
+                .kill_on_drop(true);
+            if advertised != current {
+                let output = tokio::time::timeout(Duration::from_secs(5), command.output())
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert!(!output.status.success());
+                assert!(String::from_utf8_lossy(&output.stderr).contains("incompatible"));
+                assert_eq!(
+                    counters.1.load(Ordering::SeqCst),
+                    0,
+                    "product metadata requested before compatibility was established"
+                );
+                assert!(!temp.path().join("status").exists());
+                assert!(!temp.path().join("enhance").exists());
+            } else {
+                let mut child = command
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()
+                    .unwrap();
+                let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+                while counters.1.load(Ordering::SeqCst) == 0 {
+                    assert!(
+                        tokio::time::Instant::now() < deadline,
+                        "compatible publisher did not allow product startup"
+                    );
+                    assert!(
+                        child.try_wait().unwrap().is_none(),
+                        "query process exited before product startup"
+                    );
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                child.kill().await.unwrap();
+                child.wait().await.unwrap();
+            }
+        }
+    }
+    server.abort();
 }
 
 #[test]

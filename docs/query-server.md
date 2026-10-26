@@ -238,6 +238,15 @@ Configuration files never set `verify_only`; ordinary startup rejects
 
 ### Publisher compatibility
 
+Inspect the compiled contract and product feature set with `pir-query-server
+--contract-info`; it requires no configuration and opens no state or CUDA driver.
+This identifies capabilities, while the combined configuration identifies enabled
+products. The [fleet transaction](operations.md#coordinated-contract-releases)
+validates both before shutdown. A selected unified node replaces its executable
+once, checks every enabled product and restores the entire process if any one
+fails acceptance. A shared discovery-contract major cutover includes all
+registered consumers, regardless of product or process topology.
+
 A section with `publisher` set synchronizes over HTTPS. Before the host binds
 any listener, opens state or starts a product, it fetches the publisher's
 `/.well-known/pir-service-discovery` document from that origin, trusting the

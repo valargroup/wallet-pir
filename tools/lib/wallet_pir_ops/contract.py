@@ -28,7 +28,8 @@ MAX_DOCUMENT_BYTES = 16 << 10
 
 # SemVer 2.0 core with optional prerelease and build metadata.
 _SEMVER = re.compile(r'(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)'
-                     r'(?:-([0-9A-Za-z.-]+))?(?:\+([0-9A-Za-z.-]+))?')
+                     r'(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?'
+                     r'(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?')
 
 
 class ContractError(ValueError):
@@ -42,6 +43,8 @@ def contract_major(text):
         raise ContractError('invalid contract version %r' % (text,))
     if match.group(4) is not None:
         raise ContractError('prerelease version %r is not a contract version' % text)
+    if any(int(match.group(index)) > (1 << 64) - 1 for index in (1, 2, 3)):
+        raise ContractError('contract version component exceeds an unsigned 64-bit integer')
     major = int(match.group(1))
     if major == 0:
         raise ContractError('0.x version %r is not a stable contract version' % text)
@@ -96,7 +99,7 @@ def parse_contract_info(output, *, executable, sha256):
                             % (executable, sha256[:12], document.get('executable')))
     version = document.get('contract_version')
     major = contract_major(version)
-    if document.get('contract_major') != major:
+    if type(document.get('contract_major')) is not int or document['contract_major'] != major:
         raise ContractError('%s %s: contract major %r disagrees with version %s'
                             % (executable, sha256[:12], document.get('contract_major'), version))
     lists = {}

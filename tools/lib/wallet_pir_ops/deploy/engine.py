@@ -16,6 +16,7 @@ import ipaddress
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import time
 
@@ -23,7 +24,7 @@ from .. import contract, durable
 from . import descriptors, timing, units
 from .remote import production_lock
 from .. import schema_fence
-from .transaction import FINAL, Journal
+from .transaction import FINAL, FLEET_ROOT, Journal
 
 SYSTEM = '/etc/systemd/system'
 SELF_CHECK_SECONDS = 60
@@ -37,7 +38,7 @@ class DeployError(RuntimeError):
     pass
 
 
-def mutation_fence(inventory, executor, lock=None):
+def mutation_fence(inventory, executor, lock=None, *, fleet_id=None):
     """Refuse while a Transparent schema transaction is unfinished; read-only.
 
     Under the held production lock (`lock`) before every mutation; without one
@@ -50,6 +51,21 @@ def mutation_fence(inventory, executor, lock=None):
         schema_fence.local_schema_fence()
     elif host:
         schema_fence.schema_mutation_fence(lambda path: executor.read(host, path))
+    def read(path):
+        if host:
+            return executor.read(host, path)
+        local = Path(path)
+        return local.read_text() if local.exists() else None
+    pointer = read(FLEET_ROOT + '/latest.json')
+    if pointer is not None:
+        identifier = json.loads(pointer).get('id')
+        if not isinstance(identifier, str) or not re.fullmatch('fleet-[A-Za-z0-9-]+', identifier):
+            raise DeployError('invalid fleet transaction pointer')
+        latest = json.loads(read(FLEET_ROOT + '/transactions/' + identifier + '.json') or '{}')
+        if latest.get('id') != identifier or latest.get('schema') != 'fleet-release-journal/1':
+            raise DeployError('fleet transaction journal is missing or invalid')
+        if latest.get('phase') not in FINAL and identifier != fleet_id:
+            raise DeployError('unfinished fleet release %s; verify or reconcile it before another mutation' % identifier)
 
 
 def file_sha256(path):
@@ -556,10 +572,37 @@ class Deployer:
         refusals = []
         for plan in plans:
             target = plan.target
-            if (target.role.binary or self.service.binary) != 'pir-query-server':
+            executable = target.role.binary or self.service.binary
+            if executable == 'pir-publisher' and self.service.name == 'publisher':
+                info = identities.get(target.host)
+                if info is None:
+                    refusals.append(target.key + ': publisher candidate contract is unknown')
+                    continue
+                management = target.url(target.role.health).rsplit('/', 1)[0]
+                status, body = self.ex.http_get(target.host, management + contract.DISCOVERY_PATH)
+                try:
+                    major = contract.publisher_document_major(status, body)
+                except contract.ContractError:
+                    major = None
+                if major != info.contract_major:
+                    refusals.append(target.key + ': publisher contract changes or is unknown; use fleet-release')
+            if executable != 'pir-query-server':
                 continue
             origins = sorted(publisher_origins(target.settings))
             if not origins:
+                from .fleet_transaction import configuration
+                try:
+                    document = configuration(self.ex, {'host': target.host, 'key': target.key}, plan.state)[2]
+                    origins = sorted(publisher_origins(document))
+                    if not origins and target.role.product_guard() is not None:
+                        # Retained local-publication workers do not consume
+                        # discovery. Their product guard validates their pinned
+                        # local authority and predecessor-readable state.
+                        continue
+                except (DeployError, ValueError):
+                    pass
+            if not origins:
+                refusals.append(target.key + ': query publisher dependency is unknown; use fleet-release')
                 continue
             info = identities.get(target.host)
             if info is None:
@@ -593,7 +636,8 @@ class Deployer:
         except contract.ContractError as error:
             raise DeployError('%s: %s' % (host, error))
 
-    def activate(self, journal, index, sha, *, verify=True):
+    def activate(self, journal, index, sha, *, verify=True, start=True, reload=True):
+        """Install a reviewed role, optionally leaving it stopped for a fleet barrier."""
         record = journal.hosts[index]
         host, unit = record['host'], record['unit']
         directory = '%s/%s' % (self.service.transaction_dir(journal.id), unit)
@@ -627,9 +671,19 @@ class Deployer:
             else:
                 self.ex.mkdir(host, directory + '/retired', 0o700)
                 self.ex.rename(host, change['path'], '%s/retired/%s' % (directory, os.path.basename(change['path'])))
-        self.ex.systemctl(host, 'daemon-reload')
+        if reload:
+            self.ex.systemctl(host, 'daemon-reload')
         if record['action'] == 'install':
             self.ex.systemctl(host, 'enable', unit)
+        if not start:
+            return
+        self.start(journal, index, sha, verify=verify)
+
+    def start(self, journal, index, sha, *, verify=True):
+        """Start already installed files after the publisher dependency is ready."""
+        record = journal.hosts[index]
+        host, unit = record['host'], record['unit']
+        self.lock.verify()
         record['restart_issued'] = True
         journal.set_phase(index, 'restarting')
         self.ex.systemctl(host, 'restart', unit)
@@ -829,7 +883,7 @@ class Deployer:
                                               'health_equals': {}, 'ready': None, 'ready_url': None}}
         self.wait_verified(record, expected)
 
-    def restore(self, journal, index, *, verify=True):
+    def restore(self, journal, index, *, verify=True, start=True, reload=True):
         record = journal.hosts[index]
         host, unit = record['host'], record['unit']
         self.lock.verify()
@@ -850,22 +904,30 @@ class Deployer:
                     self.lock.verify()
                     self.ex.write(host, change['path'], change['previous'].encode(), 0o644)
             self.lock.verify()
-            self.ex.systemctl(host, 'daemon-reload')
-            state = self.ex.probe_unit(host, unit)
-            if record.get('restart_issued') or state['active_state'] != 'active' or state['exe_sha256'] != expected:
-                self.lock.verify()
-                self.ex.systemctl(host, 'restart', unit)
-                state = self.ex.probe_unit(host, unit)
-                if (state['active_state'] == 'active' and state['exe_sha256'] == expected
-                        and state.get('invocation_id')):
-                    journal.event('restore process started', target=record['key'],
-                                  exe_sha256=expected, invocation_id=state['invocation_id'])
-        if not verify:
+            if reload:
+                self.ex.systemctl(host, 'daemon-reload')
+            if start:
+                self.start_restored(journal, index)
+        if not verify or not start:
             return
         self.wait_restored(record, expected)
         self.lock.verify()
         journal.set_phase(index, 'restored')
         self.out('%s: restored %s' % (record['key'], expected))
+
+    def start_restored(self, journal, index):
+        """Restart previously restored files after a fleet dependency barrier."""
+        record = journal.hosts[index]
+        host, unit = record['host'], record['unit']
+        expected = record['previous']['exe_sha256']
+        state = self.ex.probe_unit(host, unit)
+        if record.get('restart_issued') or state['active_state'] != 'active' or state['exe_sha256'] != expected:
+            self.lock.verify()
+            self.ex.systemctl(host, 'restart', unit)
+            state = self.ex.probe_unit(host, unit)
+            if (state['active_state'] == 'active' and state['exe_sha256'] == expected and state.get('invocation_id')):
+                journal.event('restore process started', target=record['key'],
+                              exe_sha256=expected, invocation_id=state['invocation_id'])
 
     def uninstall(self, journal, index):
         """Roll a fresh install back to absence: stop, disable and remove what it wrote.

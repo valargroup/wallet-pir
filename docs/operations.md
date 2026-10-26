@@ -33,6 +33,114 @@ Each inventory role names its actual host, unit, private addresses and artifact
 variant. The [example inventory](../tools/enhance/deploy/deploy-inventory.example.json)
 uses documentation addresses and is not the live fleet.
 
+## Coordinated contract releases
+
+`fleet-release-*` operates on the reviewed inventory across distributed roles,
+unified query nodes and mixed fleets. A process is identified by verified machine
+identity and service unit. A unified node is replaced once and accepted only when
+every enabled product passes its independent encrypted-answer check. The publisher
+is a separate process, including when it shares that machine.
+
+Both executables support configuration-free `--contract-info`. It reports the
+compiled discovery version, products and optional CUDA backend without opening
+state or initializing CUDA. `contracts.json` in new release archives binds this
+report to executable checksums and the source revision. These are distinct from
+the products enabled in the installed configuration and from qualification.
+
+An update within the same discovery-contract major can select only the changed
+processes. A publisher major change requires compatible candidates for **every**
+registered consumer of that origin, including standby, CUDA and unified roles.
+Every other publisher used by a shared process must remain compatible too. Unknown
+dependencies, duplicate ownership, missing predecessor binaries, a candidate
+missing an enabled product, and plan drift refuse before shutdown. Private
+query-to-query protocol qualification remains a separate release requirement.
+
+Prepare a private, checksum-pinned `fleet-release/1` request. It contains:
+
+- `source`: full `revision` and `submitted_unix`, captured when the source commit
+  was selected, before queueing, builds or qualification.
+- `inventory_sha256`, `select` (distinct `host/unit` keys), and `publishers`
+  (normalized `https://host:port` origins mapped to their publisher process).
+- `executables`: one entry per inventory artifact variant, with `sha256` and the
+  executable's complete `--contract-info` JSON as `contract`. A unified node uses
+  one executable with the required feature union. CPU and CUDA remain separate
+  variants; this discovery identity does not replace their private protocol pins.
+  A CUDA-capable unified query process uses the `pir-query-server-cuda` artifact
+  kind, allowing CPU and CUDA feature unions in the same inventory.
+- `probes`: one independent `{host, argv, timeout}` encrypted-answer command per
+  affected product. `process_probes[host/unit]` must cover each enabled product of
+  every selected multi-product node, directed at that node. Breaking requests
+  require `restore_argv` on each check, using a predecessor-compatible client.
+  Probe commands retain the existing source, artifact, oracle and answer pins;
+  a successful readiness HTTP request cannot substitute for them.
+- Existing pinned `product_requests` for legacy Transparent worker upgrades,
+  when selected. Their authority, resource, warmup, state preservation and load
+  checks remain in force. Root HTTPS provider roles preserve installed state.
+- Optional `loads`: managed checker `{host, unit}` pairs. The installed publisher
+  checker is discovered automatically. Its activity and critical disk latch are
+  preserved; `publisher_policies[host/unit].expected_disk_latch_sha256` may pin an
+  acknowledged existing latch. Legacy Transparent checker pins are captured,
+  updated after successful acceptance, and restored with the predecessor.
+- Optional `preparation`: reported build/qualification timing evidence bound to
+  the same `source_revision` and `executables` variant-to-digest map, with a
+  `seconds` map. This reports elapsed work; it does not qualify artifacts.
+
+Use the exact qualified binaries from the existing release preparation and
+archive-verification path. A `--binary` path supplies already-built bytes; it
+does not build or qualify them. Required service and hardware qualification,
+production `--release` settings and independent oracles are unchanged.
+Alternatively, pin `executables[variant].archive` with `kind` and `sha256` and
+pass `--archive variant=FILE` to preparation. Extraction verifies the complete
+archive inventory, source revision, clean-source metadata and executable hashes;
+the host then verifies the actual executable's report. Artifact integrity alone
+does not establish qualification.
+
+```sh
+python3 <release>/tools/scripts/wallet-pir-deploy.py --inventory fleet.json fleet-release-prepare \
+  --request release.json --request-sha256 <request-digest> \
+  --binary pir-publisher=<verified-publisher> --binary pir-query-server=<verified-query>
+python3 <release>/tools/scripts/wallet-pir-deploy.py --inventory fleet.json fleet-release-plan \
+  --request release.json --request-sha256 <request-digest>
+python3 <release>/tools/scripts/wallet-pir-deploy.py --inventory fleet.json fleet-release-preflight \
+  --request release.json --request-sha256 <request-digest> --expect-plan-sha256 <reviewed-plan-digest>
+python3 <release>/tools/scripts/wallet-pir-deploy.py --inventory fleet.json fleet-release-deploy \
+  --request release.json --request-sha256 <request-digest> --expect-plan-sha256 <reviewed-plan-digest>
+```
+
+Preparation stages verified executables while current services run. Copies shared
+by several services on one machine transfer once and copy locally into their
+immutable release roots. Configuration and product checks finish before shutdown.
+Activation revalidates the reviewed plan under one production lock, pauses managed
+load, stops consumers concurrently, and then joins the publisher and its writers.
+It installs the candidate files while stopped and reloads systemd once per machine.
+Publisher readiness and discovery from the required origins precede consumer
+startup. Independent hosts run concurrently, at most four; dependent routers and
+ingress wait for their peers. A machine preparing a query process cannot run a
+native acceptance workload concurrently. Transparent's query-prioritized
+background artifact validation policy is unchanged.
+
+Every enabled product must pass before commit. A failure drains outstanding host
+operations, stops candidate consumers, restores and verifies the publisher, then
+restores complete consumer units/configurations/executables in dependency order.
+Failure to deploy and failure to restore are recorded separately. An interruption
+of the runner leaves durable intent on the lock coordinator under
+`/opt/wallet-pir-fleet/transactions/<id>.json`; unfinished fleet transactions fence
+other forward deployment entry points. Recovery refuses foreign file/process
+changes. No immutable data rebuild, large download or full artifact rescan is
+introduced into the interruption.
+
+Using the **recorded operations package**, inventory and request pins, run
+`fleet-release-status` for recorded state, `fleet-release-verify` to finish
+acceptance or recheck a committed fleet without restarts, and
+`fleet-release-reconcile` (or `fleet-release-rollback`) to restore the predecessor.
+Recovery retries reuse an acknowledged restored process that is still warming.
+Retain that operations release and all predecessor artifacts until recovery is
+no longer needed. Old transactions continue through their original product
+operations package and recovery commands.
+
+The clocks and unproven performance targets are defined in
+[deployment latency](ci-performance.md#fleet-release-clocks-and-evidence).
+
 ## Operations releases
 
 Full CI on main produces `wallet-pir-ops-<sha>` containing

@@ -1320,6 +1320,23 @@ class MultiplexTests(unittest.TestCase):
 
 
 class HelperTests(unittest.TestCase):
+    def test_staged_executable_copy_streams_and_refuses_changed_source(self):
+        executor = LocalExecutor(None)
+        with tempfile.TemporaryDirectory() as directory:
+            source, destination = Path(directory) / 'source', Path(directory) / 'copy'
+            source.write_bytes(os.urandom(3 << 20))
+            digest = hashlib.sha256(source.read_bytes()).hexdigest()
+            executor.release_copy('local', str(source), str(destination), digest)
+            executor.release_copy('local', str(source), str(destination), digest)
+            self.assertEqual(executor.sha256('local', str(destination)), digest)
+            self.assertEqual(destination.stat().st_mode & 0o777, 0o755)
+            destination.unlink()
+            source.write_bytes(b'changed source')
+            with self.assertRaisesRegex(Exception, 'source digest changed'):
+                executor.release_copy('local', str(source), str(destination), digest)
+            self.assertFalse(destination.exists())
+            self.assertEqual(sorted(path.name for path in Path(directory).iterdir()), ['source'])
+
     def test_configuration_check_fits_in_a_multiplexed_command(self):
         request = json.dumps({'op': 'run', 'argv': ['binary', '--config', 'x' * 8192], 'timeout': 60})
         command = shlex.join(['python3', '-c', HELPER, request])
@@ -1352,6 +1369,11 @@ class HelperTests(unittest.TestCase):
     def test_helper_http_get(self):
         class Handler(http.server.BaseHTTPRequestHandler):
             def do_GET(self):
+                if self.path == '/redirect':
+                    self.send_response(302)
+                    self.send_header('Location', '/ok')
+                    self.end_headers()
+                    return
                 body = b'{"ready": true}' if self.path == '/ok' else b'no'
                 self.send_response(200 if self.path == '/ok' else 503)
                 self.send_header('Content-Length', str(len(body)))
@@ -1366,6 +1388,7 @@ class HelperTests(unittest.TestCase):
         base = 'http://127.0.0.1:%d' % server.server_port
         executor = LocalExecutor(None)
         self.assertEqual(executor.http_get('local', base + '/ok'), (200, '{"ready": true}'))
+        self.assertEqual(executor.http_get('local', base + '/redirect')[0], 302)
         self.assertEqual(executor.http_get('local', base + '/no')[0], 503)
         server.shutdown()
         server.server_close()

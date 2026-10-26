@@ -1,11 +1,58 @@
 # CI and deployment latency
 
-The target is **under three minutes for the complete warm fast job**
-for routine changes on warm runners, and **two minutes from deployment dispatch
-to healthy service** when an exact-SHA qualified artifact is already available.
-Cold builds, dependency/toolchain changes, initial data preparation, schema
-migrations and first fleet activation are measured separately. These are targets,
-not measured guarantees; hosted fallback and cold fleet warming can exceed them.
+The CI target is **under three minutes for the complete warm fast job** on warm
+runners. The fleet deployment target is **under 180 seconds from source selection
+through builds, required qualification, staging, activation and encrypted
+acceptance**, with **under 60 seconds of interruption**. These targets remain
+unproven until representative measurements establish them. Cold builds count
+against the deployment clock and an overrun is a miss.
+
+## Fleet release clocks and evidence
+
+Capture `source.submitted_unix` when selecting the source commit, before any queue
+or build wait. The total clock includes compilation with production `--release`,
+required qualification, transfers, retries, lock waits, shutdown, startup,
+discovery, readiness, encrypted probes and load-policy restoration. The interruption
+clock runs from the first affected stop through verified encrypted answers for
+every affected product. A node with several products reports each product's gap
+from its first affected stop; process readiness alone does not end a gap.
+
+Fleet journals record timed operations and preparation receipts and expose total,
+interruption, per-product gaps, recovery duration and the three largest recorded
+contributors directly in status. Work durations may overlap; their sum is not the
+total clock. Missing build/qualification phase measurements are explicitly unknown.
+Caller-reported preparation timings are distinguished from measured transaction
+operations. A target miss is reported without restarting healthy services or
+aborting safe recovery. Correctness fixtures always report
+`performance_qualified: false`; timing numbers from small fixtures are not fleet
+performance evidence.
+
+Start preparation with a 120-second allocation, overlapping independent lanes,
+qualification and distribution as soon as each candidate is ready. Reuse persistent
+publisher, CPU-query and CUDA target lanes with one Cargo writer per directory.
+`python3 tools/ci/qualification.py build --family fleet` builds the two CPU hosts
+with one required feature union; `--products` selects comma-separated existing
+host features. It retains locked dependencies, native CPU features where needed
+and fat-LTO `--release`. Unified nodes use one query executable, independently of
+how many products they enable. Existing CUDA build/qualification remains separate.
+No consumer compiles its own copy. Artifact eligibility, hardware gates, admission
+limits and Transparent background validation remain unchanged.
+For a CUDA unified node, `tools/ci/build-cuda.sh --unified` builds one query
+feature union in the existing CUDA lane, retaining the Ubuntu, Rust, ABI and
+compiler-feature checks. Package it as `pir-query-server-cuda` with the recorded
+CUDA build metadata. This candidate still requires the full affected-product and
+live GPU qualification; packaging adds no qualification claim.
+
+Before claiming improvement, profile the recorded critical path and compare at
+least three baseline and candidate runs on the same isolated existing host. Then
+require three consecutive representative successes for compatible publisher-only,
+compatible query-only and breaking releases in distributed, unified and mixed
+topologies, including CUDA when selected. Use deployed-size startup state and
+include failure/recovery measurements. Publish total duration, fleet interruption,
+per-product gaps and restoration time. There are currently **no representative
+measurements for this coordinator**, so neither target is established. Mandatory
+qualification or startup floors longer than the budget are explicit constraints;
+do not shorten them, exempt cold builds, or start a later clock to claim success.
 
 ## Complete CPU correctness budget
 

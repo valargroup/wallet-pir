@@ -80,6 +80,10 @@ class Executor:
         """Mutating: atomically replace `path` with a local file's bytes."""
         raise NotImplementedError
 
+    def release_copy(self, host, source, destination, expected):
+        """Mutating: copy verified immutable executable bytes within a host."""
+        raise NotImplementedError
+
     def mkdir(self, host, path, mode):
         """Mutating: create `path` and its parents if missing."""
         raise NotImplementedError
@@ -271,6 +275,9 @@ class SSHExecutor(Executor):
     def run(self, host, argv, timeout):
         reply = self.call(host, 'run', deadline=timeout + 30, argv=list(argv), timeout=timeout)
         return reply['returncode'], reply['output']
+
+    def release_copy(self, host, source, destination, expected):
+        return self.call(host, 'release_copy', deadline=300, source=source, destination=destination, expected=expected)
 
     def package_observe(self, host, root, files, revision, machine_id_path):
         return self.call(host, 'package_observe', root=root, files=list(files), revision=revision,

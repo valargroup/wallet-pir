@@ -162,12 +162,12 @@ class Guard:
             self.fleet(deployer, settings, 'active.json')['map_sha256']
         except (ValueError, OSError, KeyError) as error:
             refusals.append('no fleet active publication to verify against: %s' % error)
-        if plan.action == 'restart':
+        if plan.action == 'restart' and not getattr(deployer, 'coordinated', False):
             refusals += self.others_serving(deployer, settings)
         return refusals
 
     def before_restart(self, deployer, record):
-        if record['action'] != 'restart':
+        if record['action'] != 'restart' or getattr(deployer, 'coordinated', False):
             return []
         return self.others_serving(deployer, self.target(deployer, record['key']).settings)
 
@@ -247,7 +247,7 @@ class Guard:
     def before_restore(self, deployer, journal, record):
         """Gates a restore must pass before it changes anything."""
         settings = self.target(deployer, record['key']).settings
-        gates = self.others_serving(deployer, settings)
+        gates = [] if getattr(deployer, 'coordinated', False) else self.others_serving(deployer, settings)
         if record['action'] == 'install':
             # Removal stops and removes the unit; its state stays where it is.
             return gates

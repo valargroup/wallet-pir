@@ -43,6 +43,12 @@ class FakeLock:
 
 
 class FakeFleet(Executor):
+    def release_copy(self, host, source, destination, expected):
+        self._mutate(host, 'release-copy', destination)
+        if self.sha256(host, source) != expected:
+            raise ValueError('staged release source digest changed')
+        self.put(host, destination, self.host(host).files[source])
+
     def __init__(self):
         self.hosts = {}
         self.invocations = 0

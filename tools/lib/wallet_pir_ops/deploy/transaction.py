@@ -24,6 +24,7 @@ from .. import durable
 
 TOUCHED = ('installing', 'restarting', 'verifying', 'verified', 'restoring', 'restored', 'restore-failed')
 FINAL = ('committed', 'failed', 'rolled-back')
+FLEET_ROOT = '/opt/wallet-pir-fleet'
 
 
 def default_state_dir():

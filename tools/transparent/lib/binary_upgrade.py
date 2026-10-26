@@ -260,6 +260,7 @@ class Upgrade:
     """The product refusals for one pinned request; every method only reads."""
 
     def __init__(self, request, service, inventory, publisher=None):
+        self.discovery_major = contract.source_major()
         self.request = request
         self.product = PRODUCTS[request['service']]
         self.service = service
@@ -597,7 +598,7 @@ class Upgrade:
                 problems.append('%s provider configuration: %s' % (target.key, error))
                 continue
             status, body = ex.http_get(target.host, publisher + contract.DISCOVERY_PATH)
-            expected = contract.source_major()
+            expected = self.discovery_major
             try:
                 major = contract.publisher_document_major(status, body)
             except contract.ContractError:
@@ -693,6 +694,14 @@ class UpgradeDeployer(Deployer):
         self.upgrade = upgrade
         self.operation = operation
         self.load_was_active = None
+
+    def contract_guard(self, plans, identities, journal):
+        if not self.upgrade.providers:
+            # These retained workers read local publications validated by the
+            # pinned upgrade request. They do not use HTTPS discovery; their
+            # authority/private-protocol gates still run through schema_fence.
+            return
+        super().contract_guard(plans, identities, journal)
 
     def can_replace_incomplete(self, journal):
         repair = self.upgrade.request.get('repair')

@@ -440,7 +440,7 @@ def main(argv=None, executor=None, out=print, package_layout=None, package_githu
     deploying = not args.command.startswith('ops-package-') and (
         args.command in ('deploy', 'rollback', 'publisher-cutover-continue',
                          'publisher-cutover-reconcile', 'publisher-cutover-repair-release',
-                         'publisher-cutover-repair-sandbox') or args.command.endswith(
+                         'publisher-cutover-repair-sandbox', 'fleet-release-reconcile') or args.command.endswith(
             ('-deploy', '-rollback', '-restart', '-verify')))
     if not deploying:
         return run(args, executor, out, package_layout, package_github, **options)
@@ -465,7 +465,7 @@ def run(args, executor, out, package_layout, package_github, **options):
         from ..bundle import check_installed
         product_command = args.command.startswith(('schema-', 'txid-display-', 'transparent-binary-', 'transparent-alerts-',
                                                    'transparent-load-repair-', 'transparent-provider-maintenance-',
-                                                   'ops-package-', 'publisher-cutover-', 'status-routing-', 'receiver-routing-',
+                                                   'ops-package-', 'publisher-cutover-', 'fleet-release-', 'status-routing-', 'receiver-routing-',
                                                    'coordinator-edge-', 'cache-storage-', 'cache-volume-', 'cache-data-', 'query-node-'))
         mutation = (args.command in ('deploy', 'rollback') or getattr(args, 'stage', False)
                     or product_command and not args.command.endswith(('-plan', '-preflight', '-status', '-summary', '-recipe')))
@@ -509,6 +509,11 @@ def run(args, executor, out, package_layout, package_github, **options):
             raise DeployError('pass --inventory or set WALLET_PIR_DEPLOY_INVENTORY')
         if args.command.startswith('fleet-release-'):
             from . import fleet_release
+            request = fleet_release.load_request(args.request, args.request_sha256)
+            problems = fleet_release.validate_request(request)
+            if problems:
+                raise DeployError('; '.join(problems))
+            check_installed(mutation=mutation, revision=request['source']['revision'])
             out(json.dumps(fleet_release.dispatch(args, executor), sort_keys=True))
             return 0
         if args.command.startswith(('status-routing-', 'receiver-routing-')):

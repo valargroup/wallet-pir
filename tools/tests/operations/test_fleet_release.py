@@ -42,7 +42,7 @@ def inventory_document(unified=True, distributed=True):
         services['enhance'] = {'roles': {
             'worker': [{'host': 'gpu-01', 'artifact_kind': 'enhance-pir-native-cuda', 'vars': {'listen': '127.0.0.1:1'},
                         'settings': sync()}],
-            'packing-router': [{'host': 'router-01', 'vars': {'control_listen': '127.0.0.1:2'}, 'settings': {}}]}}
+            'packing-router': [{'host': 'router-01', 'vars': {'control_listen': '127.0.0.1:2'}, 'settings': sync()}]}}
     return {'hosts': hosts, 'ssh': {'mode': 'config'}, 'lock': {'type': 'remote', 'host': 'pub-01'},
             'services': services}
 
@@ -109,8 +109,8 @@ class FleetReleasePlanTests(unittest.TestCase):
         self.assertEqual(planned['waves'], {'stop': [[PUBLISHER]], 'start': [[PUBLISHER]]})
 
     def test_breaking_release_refuses_each_omitted_consumer(self):
-        for topology, consumers in (('unified', [UNIFIED]), ('distributed', [STATUS, GPU]),
-                                    ('mixed', [UNIFIED, STATUS, GPU])):
+        for topology, consumers in (('unified', [UNIFIED]), ('distributed', [STATUS, GPU, ROUTER]),
+                                    ('mixed', [UNIFIED, STATUS, GPU, ROUTER])):
             with self.subTest(topology=topology):
                 document = inventory_document(unified=topology != 'distributed',
                                               distributed=topology != 'unified')
@@ -261,33 +261,30 @@ class CommandTests(unittest.TestCase):
     def test_plan_then_preflight_refuses_a_stale_review(self):
         import hashlib
         from wallet_pir_ops.deploy import cli
-        old = '1' * 64
-        units = {('query-01', 'wallet-pir-query.service'): old, ('pub-01', 'pir-publisher.service'): old}
-        reports = {('query-01', old): json.dumps(report('pir-query-server', 1, QUERY_PRODUCTS)),
-                   ('pub-01', old): json.dumps(report('pir-publisher', 1, QUERY_PRODUCTS))}
-        discovery = {ORIGIN + '/.well-known/pir-service-discovery':
-                     (200, json.dumps({'service': 'pir-publisher', 'version': '1.0.0'}))}
-        with tempfile.TemporaryDirectory() as directory:
-            inventory = Path(directory) / 'inventory.json'
-            inventory.write_bytes(json.dumps(inventory_document(distributed=False)).encode())
-            body = request([UNIFIED], inventory_sha256=hashlib.sha256(inventory.read_bytes()).hexdigest())
-            path = Path(directory) / 'request.json'
-            path.write_text(json.dumps(body))
-            pin = ['--request', str(path), '--request-sha256', hashlib.sha256(path.read_bytes()).hexdigest()]
-            lines = []
-            hosts = Hosts(units, reports, discovery)
-            base = ['--inventory', str(inventory), '--state-dir', directory]
-            self.assertEqual(cli.main([*base, 'fleet-release-plan', *pin], executor=hosts, out=lines.append), 0)
-            planned = json.loads(lines[-1])
-            self.assertEqual(planned['problems'], [])
-            self.assertEqual(cli.main([*base, 'fleet-release-preflight', *pin, '--expect-plan-sha256',
-                                       planned['plan_sha256']], executor=hosts, out=lines.append), 0)
-            units[('query-01', 'wallet-pir-query.service')] = '3' * 64
-            code = cli.main([*base, 'fleet-release-preflight', *pin, '--expect-plan-sha256',
-                             planned['plan_sha256']], executor=hosts, out=lines.append)
-            self.assertNotEqual(code, 0)
-            self.assertIn('stale', lines[-1])
-            self.assertFalse([call for call in hosts.calls if call[0] not in ('probe', 'run')])
+        sys.path.insert(0, str(Path(__file__).parent / 'deploy'))
+        from test_fleet_transaction import FleetTransactions
+        case = FleetTransactions()
+        case.setUp()
+        self.addCleanup(case.tmp.cleanup)
+        case.fixture(major=1, selected=[case.query_key])
+        case.prepare()
+        path = case.root / 'request.json'
+        path.write_text(json.dumps(case.request))
+        pin = ['--request', str(path), '--request-sha256', hashlib.sha256(path.read_bytes()).hexdigest()]
+        base = ['--inventory', str(case.inventory_path), '--state-dir', str(case.root / 'state')]
+        lines = []
+        self.assertEqual(cli.main([*base, 'fleet-release-plan', *pin], executor=case.ex, out=lines.append), 0)
+        planned = json.loads(lines[-1])
+        self.assertEqual(planned['problems'], [])
+        self.assertEqual(cli.main([*base, 'fleet-release-preflight', *pin, '--expect-plan-sha256',
+                                   planned['plan_sha256']], executor=case.ex, out=lines.append), 0)
+        case.ex.systemctl('query', 'restart', 'wallet-pir-query.service')
+        case.ex.log.clear()
+        code = cli.main([*base, 'fleet-release-preflight', *pin, '--expect-plan-sha256',
+                         planned['plan_sha256']], executor=case.ex, out=lines.append)
+        self.assertNotEqual(code, 0)
+        self.assertIn('stale', lines[-1])
+        self.assertFalse(case.ex.log)
 
 
 if __name__ == '__main__':

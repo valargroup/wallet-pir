@@ -196,8 +196,11 @@ def systemctl(args):
 
 def http_get(url, timeout):
     """Status and body of a GET made from this host; status 0 when nothing answered."""
-    # Loopback and private addresses only: never through an environment proxy.
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            return None
+    # Readiness and discovery prove this exact origin, with no proxy or redirect.
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
     try:
         with opener.open(url, timeout=timeout) as response:
             return {'status': response.status, 'body': response.read(1 << 16).decode(errors='replace')}
@@ -567,6 +570,41 @@ def package_copy(source, destination, sha256, mode):
     write(destination, mode, io.BytesIO(data))
 
 
+def release_copy(source, destination, expected):
+    """Copy staged executable bytes locally with constant memory and a digest check.
+
+    The destination is an unpublished partial directory owned by the caller.
+    Never publish a copy of a changed source or follow a source symlink.
+    """
+    if os.path.lexists(destination):
+        if file_digest(destination) != expected:
+            raise FileExistsError(destination)
+        return
+    descriptor = os.open(source, os.O_RDONLY | os.O_NOFOLLOW)
+    temporary = destination + '.copy-%d' % os.getpid()
+    try:
+        with os.fdopen(descriptor, 'rb') as reader:
+            if not stat.S_ISREG(os.fstat(reader.fileno()).st_mode):
+                raise ValueError('release source is not a regular file')
+            digest = hashlib.sha256()
+            with open(temporary, 'xb') as writer:
+                for chunk in iter(lambda: reader.read(CHUNK), b''):
+                    digest.update(chunk)
+                    writer.write(chunk)
+                if digest.hexdigest() != expected:
+                    raise ValueError('staged release source digest changed')
+                writer.flush()
+                os.fchmod(writer.fileno(), 0o755)
+                os.fsync(writer.fileno())
+        if os.path.lexists(destination):
+            raise FileExistsError(destination)
+        os.rename(temporary, destination)
+        fsync_directory(os.path.dirname(destination))
+    finally:
+        if os.path.lexists(temporary):
+            os.unlink(temporary)
+
+
 def replace_link(path, target):
     """Atomically point the symlink `path` at `target`; refuses to replace anything but a link."""
     if os.path.lexists(path) and not os.path.islink(path):
@@ -598,6 +636,7 @@ OPERATIONS = {
     'package_tree': package_tree,
     'package_unpack': package_unpack,
     'package_copy': package_copy,
+    'release_copy': release_copy,
     'replace_link': replace_link,
     'remove_tree': remove_tree,
     'ping': lambda: None,

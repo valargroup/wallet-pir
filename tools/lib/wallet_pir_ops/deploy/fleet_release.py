@@ -28,6 +28,8 @@ reviewed plan whose digest no longer matches a fresh plan is stale.
 """
 import hashlib
 import json
+import math
+import re
 from urllib.parse import urlsplit
 
 from .. import contract
@@ -41,9 +43,10 @@ SERVICE_PRODUCTS = {'enhance': ('enhance',), 'status': ('status',),
                     'transparent-history': ('transparent_history',),
                     'transparent-display': ('transaction_details',), 'receiver': ('receiver',)}
 # Roles that forward to other query processes and start after them.
-DEPENDENT_ROLES = ('packing-router', 'query-ingress', 'router')
+DEPENDENCY_RANK = {'packing-router': 1, 'router': 1, 'query-ingress': 2}
 PUBLISHER_KEYS = ('publisher', 'publisher_origin')
 REQUEST_KEYS = {'schema', 'source', 'inventory_sha256', 'executables', 'select', 'publishers', 'probes'}
+OPTIONAL_KEYS = {'product_requests', 'loads', 'process_probes', 'preparation', 'publisher_policies'}
 
 
 def digest(document):
@@ -54,10 +57,14 @@ def origin(url):
     """`https://host:port` for an HTTPS publisher URL, or None for anything else."""
     if not isinstance(url, str):
         return None
-    parts = urlsplit(url)
-    if parts.scheme != 'https' or not parts.hostname:
+    try:
+        parts = urlsplit(url)
+        if parts.scheme != 'https' or not parts.hostname or parts.username or parts.password:
+            return None
+        host = '[%s]' % parts.hostname.lower() if ':' in parts.hostname else parts.hostname.lower()
+        return 'https://%s:%d' % (host, parts.port or 443)
+    except ValueError:
         return None
-    return 'https://%s:%d' % (parts.hostname.lower(), parts.port or 443)
 
 
 def publisher_origins(settings):
@@ -80,23 +87,37 @@ def validate_request(request):
     problems = []
     if not isinstance(request, dict) or request.get('schema') != SCHEMA:
         return ['request schema must be %s' % SCHEMA]
-    unknown = set(request) - REQUEST_KEYS
+    unknown = set(request) - REQUEST_KEYS - OPTIONAL_KEYS
     if unknown:
         problems.append('request has unknown fields %s' % sorted(unknown))
+    for field in ('process_probes', 'product_requests', 'publisher_policies'):
+        if field in request and not isinstance(request[field], dict):
+            return [field + ' must be an object']
+    if 'loads' in request and not isinstance(request['loads'], list):
+        return ['loads must be a list']
+    for policy in request.get('publisher_policies', {}).values():
+        if not isinstance(policy, dict) or set(policy) - {'expected_disk_latch_sha256'}:
+            problems.append('publisher policies may only pin an existing disk latch')
     source = request.get('source')
-    if not (isinstance(source, dict) and isinstance(source.get('revision'), str)
-            and isinstance(source.get('submitted_unix'), (int, float))):
+    if not (isinstance(source, dict) and re.fullmatch('[a-f0-9]{40}', str(source.get('revision', '')))
+            and type(source.get('submitted_unix')) in (int, float)
+            and math.isfinite(source['submitted_unix']) and source['submitted_unix'] > 0):
         problems.append('source needs revision and submitted_unix (the start of the release clock)')
-    if not (isinstance(request.get('inventory_sha256'), str) and len(request['inventory_sha256']) == 64):
+    if not re.fullmatch('[a-f0-9]{64}', str(request.get('inventory_sha256', ''))):
         problems.append('inventory_sha256 must pin the reviewed inventory')
     executables = request.get('executables')
     if not isinstance(executables, dict):
         problems.append('executables maps build variants to {sha256, contract}')
         executables = {}
     for variant, entry in executables.items():
-        if not (isinstance(entry, dict) and isinstance(entry.get('sha256'), str) and len(entry['sha256']) == 64
+        if not (isinstance(entry, dict) and re.fullmatch('[a-f0-9]{64}', str(entry.get('sha256', '')))
                 and isinstance(entry.get('contract'), dict)):
             problems.append('executable %s needs sha256 and its contract-info report' % variant)
+        if isinstance(entry, dict) and 'archive' in entry:
+            archive = entry['archive']
+            if not isinstance(archive, dict) or not isinstance(archive.get('kind'), str) \
+                    or not re.fullmatch('[a-f0-9]{64}', str(archive.get('sha256', ''))):
+                problems.append('executable %s archive needs kind and sha256' % variant)
     select = request.get('select')
     if not (isinstance(select, list) and select and all(isinstance(item, str) for item in select)
             and len(set(select)) == len(select)):
@@ -107,9 +128,33 @@ def validate_request(request):
         problems.append('publishers maps normalized https://host:port origins to process keys')
     probes = request.get('probes')
     if not (isinstance(probes, dict) and all(isinstance(probe, dict) and isinstance(probe.get('argv'), list)
+                                             and probe['argv'] and all(isinstance(a, str) and a for a in probe['argv'])
                                              and isinstance(probe.get('host'), str)
+                                             and type(probe.get('timeout', 120)) is int
+                                             and 1 <= probe.get('timeout', 120) <= 900
                                              for probe in probes.values())):
         problems.append('probes maps each product to an independent {host, argv} encrypted-answer probe')
+    for key, products in request.get('process_probes', {}).items():
+        if not isinstance(products, dict) or any(not isinstance(probe, dict)
+                or not isinstance(probe.get('host'), str) or not isinstance(probe.get('argv'), list)
+                or not probe['argv'] or not all(isinstance(a, str) and a for a in probe['argv'])
+                or type(probe.get('timeout', 120)) is not int or not 1 <= probe.get('timeout', 120) <= 900
+                for probe in products.values()):
+            problems.append('%s has invalid process probes' % key)
+    for load in request.get('loads', []):
+        if not isinstance(load, dict) or not isinstance(load.get('host'), str) \
+                or not descriptors.UNIT.fullmatch(str(load.get('unit', ''))):
+            problems.append('loads must name existing host/unit pairs')
+    preparation = request.get('preparation')
+    if preparation is not None:
+        if not isinstance(preparation, dict) or not isinstance(source, dict) \
+                or preparation.get('source_revision') != source.get('revision') \
+                or preparation.get('executables') != {k: v.get('sha256') for k, v in executables.items() if isinstance(v, dict)} \
+                or not isinstance(preparation.get('seconds'), dict) \
+                or any(name not in ('build', 'qualification', 'transfer', 'queue', 'retry', 'lock-wait')
+                       or type(seconds) not in (int, float) or not math.isfinite(seconds) or seconds < 0
+                       for name, seconds in preparation.get('seconds', {}).items()):
+            problems.append('preparation timings must bind the same source and executable inputs')
     return problems
 
 
@@ -140,7 +185,10 @@ def processes(registry, inventory):
         service, target = declared[0]
         executable = target.role.binary or service.binary
         if (service.name, target.role.name) == UNIFIED:
-            products = sorted(set(target.settings) & set(QUERY_PRODUCTS))
+            products = sorted(p for p in QUERY_PRODUCTS if p in target.settings
+                              and target.settings[p] is not None
+                              and not (isinstance(target.settings[p], dict)
+                                       and target.settings[p].get('enabled') is False))
         elif service.name == 'publisher':
             products = sorted(inventory.services['publisher'].get('managed_products', []))
         else:
@@ -151,7 +199,7 @@ def processes(registry, inventory):
             'variant': target.artifact_kind or executable, 'products': products,
             'publisher': executable == 'pir-publisher',
             'reads': sorted(publisher_origins(target.settings)) if executable == 'pir-query-server' else [],
-            'rank': 1 if target.role.name in DEPENDENT_ROLES else 0,
+            'rank': DEPENDENCY_RANK.get(target.role.name, 0),
             'install': target.install,
         }
     return by_key, problems
@@ -195,6 +243,19 @@ def plan(registry, inventory, inventory_sha256, request, observations):
     selected = set(request['select'])
     problems += ['selected process %s is not in the inventory' % key for key in sorted(selected - set(found))]
     observed = observations.get('processes', {})
+    for key, process in found.items():
+        # Installed exec-only roles have no inventory settings. Their loaded
+        # configuration, pinned by observation, is the authoritative dependency.
+        if 'reads' in observed.get(key, {}):
+            process['reads'] = sorted(set(process['reads']) | set(observed[key]['reads']))
+        if 'products' in observed.get(key, {}):
+            process['products'] = sorted(set(process['products']) | set(observed[key]['products']))
+        process['previous_reads'] = list(observed.get(key, {}).get('reads', process['reads']))
+        process['previous_products'] = list(observed.get(key, {}).get('products', process['products']))
+        if key in selected:
+            for field in ('reads', 'products'):
+                if 'final_' + field in observed.get(key, {}):
+                    process[field] = observed[key]['final_' + field]
     candidates = {}
     for key in sorted(selected & set(found)):
         process = found[key]
@@ -204,6 +265,8 @@ def plan(registry, inventory, inventory_sha256, request, observations):
         if not refusals:
             candidates[key] = entry
         state = observed.get(key, {})
+        if state.get('contract_major') is None:
+            problems.append('%s: predecessor contract compatibility is unknown' % key)
         if state.get('exe_sha256') is None and not process['install']:
             problems.append('%s: no running executable observed to restore' % key)
         elif state.get('exe_sha256') is not None and not state.get('previous_staged'):
@@ -211,18 +274,32 @@ def plan(registry, inventory, inventory_sha256, request, observations):
                             % (key, str(state.get('exe_sha256'))[:12]))
 
     publishers = {}
+    for process in (found[key] for key in selected & set(found)):
+        if process['publisher'] and process['key'] not in request['publishers'].values():
+            problems.append('%s: no publisher origin registered for the selected process' % process['key'])
     for name, key in sorted(request['publishers'].items()):
         process = found.get(key)
         if process is None or not process['publisher']:
             problems.append('publisher origin %s names %s, which is not a publisher process' % (name, key))
             continue
         current = observations.get('publishers', {}).get(name, {}).get('major')
+        compiled = observed.get(key, {}).get('contract_major')
+        if current is None or compiled is not None and compiled != current:
+            problems.append('%s: discovery and running publisher contract identity are unknown or disagree' % name)
         final = candidates[key]['contract']['contract_major'] if key in candidates else current
         if key in selected and current is None:
             problems.append('%s: current contract major is unknown; refusing to change its publisher' % name)
         publishers[name] = {'process': key, 'current_major': current, 'final_major': final,
                             'breaking': None not in (current, final) and current != final}
     for process in found.values():
+        if process['key'] in candidates:
+            predecessor_major = observed.get(process['key'], {}).get('contract_major')
+            for name in process['previous_reads']:
+                if name not in publishers or predecessor_major != publishers[name]['current_major']:
+                    problems.append('%s: predecessor publisher compatibility is unknown for %s'
+                                    % (process['key'], name))
+        if process['executable'] == 'pir-query-server' and not process['reads']:
+            problems.append('%s: no publisher dependency in inventory or installed configuration' % process['key'])
         for name in process['reads']:
             if name not in publishers:
                 problems.append('%s reads publisher %s, which no reviewed publisher process serves'
@@ -230,11 +307,12 @@ def plan(registry, inventory, inventory_sha256, request, observations):
                 continue
             relation = publishers[name]
             changed = process['key'] in candidates
-            major = candidates[process['key']]['contract']['contract_major'] if changed else None
+            major = (candidates[process['key']]['contract']['contract_major'] if changed
+                     else observed.get(process['key'], {}).get('contract_major'))
             if relation['breaking'] and not changed:
                 problems.append('%s reads %s, whose contract major changes %s -> %s, but is not part of the release'
                                 % (process['key'], name, relation['current_major'], relation['final_major']))
-            elif changed and major != relation['final_major']:
+            elif major != relation['final_major']:
                 problems.append('%s candidate major %s would not match publisher %s major %s'
                                 % (process['key'], major, name, relation['final_major']))
     for product in sorted({p for key in candidates for p in found[key]['products']}):
@@ -247,7 +325,8 @@ def plan(registry, inventory, inventory_sha256, request, observations):
         'stop': [[p['key'] for p in consumers], [p['key'] for p in changing if p['publisher']]],
         'start': [[p['key'] for p in changing if p['publisher']],
                   [p['key'] for p in consumers if p['rank'] == 0],
-                  [p['key'] for p in consumers if p['rank'] == 1]],
+                  [p['key'] for p in consumers if p['rank'] == 1],
+                  [p['key'] for p in consumers if p['rank'] == 2]],
     }
     waves = {phase: [wave for wave in steps if wave] for phase, steps in waves.items()}
     entries = [{**process, 'action': 'change' if process['key'] in candidates else 'keep',
@@ -343,13 +422,18 @@ def observe(registry, inventory, executor, request):
 # ------------------------------------------------------------ command line
 
 def register(commands):
-    """Read-only planning commands. Activation is not offered by this module yet."""
-    for operation in ('plan', 'preflight'):
+    """Prepare immutable inputs, inspect, activate and recover one fleet release."""
+    for operation in ('prepare', 'plan', 'preflight', 'deploy', 'status', 'verify', 'rollback', 'reconcile'):
         command = commands.add_parser('fleet-release-' + operation, allow_abbrev=False)
         command.add_argument('--request', required=True)
         command.add_argument('--request-sha256', required=True)
-        if operation == 'preflight':
+        if operation in ('preflight', 'deploy'):
             command.add_argument('--expect-plan-sha256', required=True)
+        if operation == 'prepare':
+            command.add_argument('--binary', action='append', default=[], metavar='VARIANT=PATH',
+                                 help='immutable release executable; omit when already staged')
+            command.add_argument('--archive', action='append', default=[], metavar='VARIANT=PATH',
+                                 help='source- and checksum-bound release archive pinned by the request')
 
 
 def load_request(path, expected_sha256):
@@ -361,21 +445,78 @@ def load_request(path, expected_sha256):
 
 
 def dispatch(args, executor=None, registry=None):
-    """`plan` prints the reviewed plan; `preflight` refuses a stale or refused plan.
-
-    Both only read: no unit, file or process changes.
-    """
+    """Run the common transaction; read-only commands never change services."""
     from pathlib import Path
-    from .engine import DeployError
+    from .engine import DeployError, file_sha256
     request = load_request(args.request, args.request_sha256)
+    problems = validate_request(request)
+    if problems:
+        raise DeployError('; '.join(problems))
     inventory_bytes = Path(args.inventory).read_bytes()
     inventory = descriptors.load_inventory(args.inventory)
     registry = registry or descriptors.load_descriptors(args.descriptors)
     if executor is None:
         from .remote import SSHExecutor
         executor = SSHExecutor(inventory)
-    fresh = plan(registry, inventory, hashlib.sha256(inventory_bytes).hexdigest(), request,
-                 observe(registry, inventory, executor, request))
+    from .fleet_transaction import FleetTransaction
+    target = FleetTransaction(registry, inventory, hashlib.sha256(inventory_bytes).hexdigest(), request,
+                              executor, args.state_dir)
+    operation = args.command.removeprefix('fleet-release-')
+    if operation in ('verify', 'rollback', 'reconcile'):
+        return target.recover(operation)
+    if operation == 'status':
+        target.data = target.latest()
+        if target.data is None:
+            return {'phase': 'absent', 'transaction': None}
+        target.request = target.data['request']
+        return target.report()
+    if operation == 'prepare':
+        import time
+        import tempfile
+        from .remote import production_lock
+        from .engine import mutation_fence
+        from ..bundle import check_installed
+        check_installed(mutation=True, revision=request['source']['revision'])
+        binaries = {}
+        for value in args.binary:
+            variant, separator, path = value.partition('=')
+            if not separator or variant not in request['executables'] or variant in binaries:
+                raise DeployError('--binary must name a distinct requested VARIANT=PATH')
+            binaries[variant] = path
+        started = time.monotonic()
+        with tempfile.TemporaryDirectory(prefix='fleet-artifacts-') as directory:
+            from .. import release
+            for value in args.archive:
+                variant, separator, path = value.partition('=')
+                if not separator or variant not in request['executables'] or variant in binaries:
+                    raise DeployError('--archive must name a distinct requested VARIANT=PATH')
+                pin = request['executables'][variant].get('archive')
+                if pin is None or file_sha256(path) != pin['sha256']:
+                    raise DeployError('archive digest differs from the request')
+                if pin['kind'] not in release.BINARIES:
+                    raise DeployError('unknown archive kind')
+                destination = Path(directory) / str(len(binaries))
+                release.extract(Path(path), destination, request['source']['revision'], pin['kind'])
+                metadata = json.loads((destination / 'contracts.json').read_text())
+                if metadata['source_dirty'] is not False:
+                    raise DeployError('dirty source archive cannot deploy')
+                executable = request['executables'][variant]['contract']['executable']
+                if executable not in release.BINARIES[pin['kind']]:
+                    raise DeployError('archive omits the requested executable')
+                if 'cuda' in variant and pin['kind'] not in release.CUDA_KINDS:
+                    raise DeployError('CUDA variant needs a verified CUDA archive')
+                binaries[variant] = destination / executable
+            verified = time.monotonic()
+            with production_lock(inventory, executor) as target.lock:
+                acquired = time.monotonic()
+                mutation_fence(inventory, executor, target.lock)
+                target.stage(binaries)
+                target.save_preparation({'artifact-verification': verified - started,
+                    'staging': time.monotonic() - acquired, 'lock-wait': acquired - verified})
+                return target.inspect()
+    if operation == 'deploy':
+        return target.deploy(args.expect_plan_sha256)
+    fresh = target.inspect()
     if args.command == 'fleet-release-preflight':
         refusal = stale(args.expect_plan_sha256, fresh)
         if refusal or fresh['problems']:
