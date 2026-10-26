@@ -242,9 +242,13 @@ public() {
     probe=$(ls -t "$OPT"/*/current/probe/pir-probe 2>/dev/null | head -1)
   fi
   [ -x "$probe" ] || die "no probe on this host${sha:+ for build-$sha}"
+  # A query role catches up within a second or two of a publisher restart, so a
+  # failed probe is retried until the probe budget is spent.
   start=$(now)
-  timeout "$PROBE_SECONDS" "$probe" --server "$origin" --products "$products" ||
-    die "public probe failed at $origin for $products"
+  until timeout "$((PROBE_SECONDS - ($(now) - start)))" "$probe" --server "$origin" --products "$products"; do
+    [ $((PROBE_SECONDS - ($(now) - start))) -gt 1 ] || die "public probe failed at $origin for $products"
+    sleep 1
+  done
   say "public probe passed at $origin for $products after $(($(now) - start))s"
 }
 

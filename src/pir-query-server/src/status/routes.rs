@@ -203,10 +203,11 @@ async fn router_init(State(service): State<Service>) -> Result<Json<Manifest>, S
     if !service.role.answers_wallets() {
         return Err(StatusCode::NOT_FOUND);
     }
-    // A publisher restart withdraws authority for seconds; wait it out.
+    // A publisher restart revokes the serving view (410) and withdraws authority
+    // (503) for seconds. Init names no view, so it waits both out.
     let manifest = crate::hold::until(
         crate::hold::WINDOW,
-        |status: &StatusCode| *status == StatusCode::SERVICE_UNAVAILABLE,
+        |status: &StatusCode| matches!(*status, StatusCode::SERVICE_UNAVAILABLE | StatusCode::GONE),
         || async {
             let controller = service.serving().await?;
             let generation = controller.current();

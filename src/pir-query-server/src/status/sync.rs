@@ -47,10 +47,6 @@ const NORMAL_POLL: Duration = Duration::from_secs(1);
 pub(super) struct StatusPolling {
     inner: StatusSynchronization,
     last_pass_succeeded: bool,
-    /// The last pass found the publisher down or restarting. A deploy makes
-    /// that a gap of seconds, so the next pass comes after [`NORMAL_POLL`]
-    /// instead of the failure backoff.
-    publisher_unavailable: bool,
 }
 
 pub(super) fn manager(
@@ -59,17 +55,13 @@ pub(super) fn manager(
     pir_pipeline::consumer::polling::SyncManager::new(StatusPolling {
         inner: task,
         last_pass_succeeded: false,
-        publisher_unavailable: false,
     })
     .with_success_interval(FAST_POLL)
 }
 
 impl StatusPolling {
     async fn poll_deadline(&self, minimum: tokio::time::Instant) -> tokio::time::Instant {
-        if self.publisher_unavailable {
-            return minimum.min(tokio::time::Instant::now() + NORMAL_POLL);
-        }
-        // The manager selects exponential backoff for other failures. Preserve it.
+        // The manager selects the wait after a failure. Preserve it.
         if !self.last_pass_succeeded || self.inner.context().adapter().poll_soon {
             return minimum;
         }
@@ -95,15 +87,13 @@ impl SyncTask for StatusPolling {
     async fn synchronize(&mut self) -> Result<Self::Report, Error> {
         let result = self.inner.synchronize().await;
         self.last_pass_succeeded = result.is_ok();
-        self.publisher_unavailable = result.as_ref().is_err_and(|error| {
-            error
-                .downcast_ref::<pir_sync_manager::DiscoveryError>()
-                .is_some_and(|error| error.unavailable())
-        });
         result
     }
     fn terminal(&self, error: &Error) -> bool {
         self.inner.terminal(error)
+    }
+    fn transient(&self, error: &Error) -> bool {
+        self.inner.transient(error)
     }
     async fn wait_until(&mut self, deadline: tokio::time::Instant) {
         tokio::time::sleep_until(self.poll_deadline(deadline).await).await;
