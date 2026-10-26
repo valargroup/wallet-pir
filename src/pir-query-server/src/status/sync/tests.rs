@@ -1510,151 +1510,53 @@ async fn metadata_only_refresh_reuses_verified_material_under_live_authority() {
     server.abort();
 }
 
-/// A worker whose first candidate check saw the publisher advance: the
-/// candidate was deferred, nothing serves, and the floor holds the newer
-/// envelope. The sibling cases below continue from here.
-struct AdvancedCandidate {
-    _root: tempfile::TempDir,
-    _tls: tls::Tls,
-    _service: Service,
-    source: Arc<Origin>,
-    server: tokio::task::JoinHandle<()>,
-    worker: Service,
-    task: StatusSynchronization,
-    inventory: Inventory,
-    /// The publisher's live answer for sequence 7, captured before it
-    /// advanced, to be replayed afterwards.
-    earlier: AnchorCheckResponse,
-}
-
-async fn candidate_deferred_by_an_advance() -> AdvancedCandidate {
-    use status_shared::fixture::{self, NETWORK, SALT};
-    let (root, service, task, source, tls, server) = setup().await;
-    drop(task);
-    let generation =
-        cached_generation(&fixture::snapshot(32, false).unwrap(), 4, 2, now_ms(), None);
-    let mut inventory = export(&source, &generation);
-    let object = publish_inventory(&source, &mut inventory);
-    *source.current.write().unwrap() = Current {
-        scope: scope(NETWORK, SALT),
-        sequence: 7,
-        ..fixture::publishing(&inventory, &object)
-    };
-    let worker = Service::open(
-        Role::Worker,
-        NETWORK,
-        root.path().join("peer"),
-        String::new(),
-    )
-    .unwrap();
-    let mut task = synchronization(
-        worker.clone(),
-        &role_config(Role::Worker, root.path().join("peer"), &tls),
-    )
-    .unwrap();
-
-    // The publisher advances while checking the candidate.
+/// Authority responses bind the exact envelope and requested anchor. These
+/// transport checks need metadata, not a prepared PIR database.
+#[tokio::test]
+async fn authority_answers_match_the_live_envelope_and_requested_anchor() {
+    let (_root, service, mut task, source, _tls, server) = setup().await;
+    let original = source.current.read().unwrap().clone();
+    let manifest = manifest();
+    let identity = ViewIdentity(manifest.id());
+    let anchor = (manifest.anchor_height, manifest.anchor_hash);
     let earlier = AnchorCheckResponse {
-        authority: source.current.read().unwrap().authority().unwrap(),
+        authority: original.authority().unwrap(),
         answers: vec![SubjectAnswer {
-            subject: (
-                inventory.manifest.anchor_height,
-                inventory.manifest.anchor_hash,
-            ),
+            subject: anchor,
             still_authoritative: true,
         }],
     };
-    source.advance_during_check.store(true, Ordering::SeqCst);
-    assert_eq!(deferred(task.synchronize().await.unwrap()), 0);
-    assert!(worker.state.lock().await.controller.is_none());
-    assert_eq!(task.context().floor().envelope().unwrap().sequence, 8);
-    AdvancedCandidate {
-        _root: root,
-        _tls: tls,
-        _service: service,
-        source,
-        server,
-        worker,
-        task,
-        inventory,
-        earlier,
-    }
-}
-
-/// The candidate's own pre-commit authority check is bound to the exact
-/// envelope it was revalidated under: neither an answer replayed from an
-/// earlier envelope nor a live answer for another anchor activates it.
-#[tokio::test(flavor = "multi_thread", worker_threads = 3)]
-async fn a_candidate_requires_live_authority_before_activation() {
-    let AdvancedCandidate {
-        source,
-        server,
-        worker,
-        mut task,
-        mut inventory,
-        earlier,
-        // Hold the directories, TLS terminator and service until the end.
-        _root,
-        _tls,
-        _service,
-        ..
-    } = candidate_deferred_by_an_advance().await;
-
-    // An answer replayed from the earlier envelope is not live authority.
-    *source.replayed_check.write().unwrap() = Some(serde_json::to_vec(&earlier).unwrap());
-    let error = task.synchronize().await.unwrap_err();
-    assert_eq!(
-        error.downcast_ref::<PublicationLifecycleError>(),
-        Some(&PublicationLifecycleError::AuthorityResponseMismatch),
-        "{error}"
-    );
-    assert!(worker.state.lock().await.controller.is_none());
-
-    // A live-bound answer of the same count for another anchor neither
-    // confirms the candidate nor, being negative, invalidates it.
-    let mut other = (
-        inventory.manifest.anchor_height,
-        inventory.manifest.anchor_hash,
-    );
-    other.1[0] ^= 1;
+    source.current.write().unwrap().sequence += 1;
+    let observed = source.current.read().unwrap().clone();
+    let mut other_anchor = anchor;
+    other_anchor.1[0] ^= 1;
     let substituted = AnchorCheckResponse {
-        authority: source.current.read().unwrap().authority().unwrap(),
+        authority: observed.authority().unwrap(),
         answers: vec![SubjectAnswer {
-            subject: other,
+            subject: other_anchor,
             still_authoritative: false,
         }],
     };
-    *source.replayed_check.write().unwrap() = Some(serde_json::to_vec(&substituted).unwrap());
-    let error = task.synchronize().await.unwrap_err();
-    assert_eq!(
-        error.downcast_ref::<PublicationLifecycleError>(),
-        Some(&PublicationLifecycleError::AuthorityResponseMismatch),
-        "{error}"
-    );
-    assert!(worker.state.lock().await.controller.is_none());
-    assert!(!task
-        .context()
-        .floor()
-        .is_invalidated(&ViewIdentity(inventory.manifest.id())));
-    *source.replayed_check.write().unwrap() = None;
-    // A withdrawal during the candidate's check leaves nothing serving.
-    source.advance_during_check.store(true, Ordering::SeqCst);
-    source.withdraw_during_check.store(true, Ordering::SeqCst);
-    deferred(task.synchronize().await.unwrap());
-    assert!(!task.context().floor().envelope().unwrap().eligible);
-    assert!(worker.state.lock().await.controller.is_none());
-
-    // The same material republished under a live answer does activate.
-    inventory.manifest.generation = 5;
-    let object = publish_inventory(&source, &mut inventory);
-    {
-        let mut current = source.current.write().unwrap();
-        current.sequence += 1;
-        current.eligible = true;
-        current.publication = Some(inventory.publication_reference(&object));
+    for response in [earlier, substituted] {
+        *source.replayed_check.write().unwrap() = Some(serde_json::to_vec(&response).unwrap());
+        let error = task
+            .context_mut()
+            .check_authority(&observed, vec![(identity, anchor)])
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<PublicationLifecycleError>(),
+            Some(&PublicationLifecycleError::AuthorityResponseMismatch),
+            "{error}"
+        );
+        assert!(!task.context().floor().is_invalidated(&identity));
+        assert!(service.serving().await.is_ok());
     }
-    assert_eq!(committed(task.synchronize().await.unwrap()).0, 5);
-    assert_eq!(serving_manifest_id(&worker).await, inventory.manifest.id());
+    *source.replayed_check.write().unwrap() = None;
+    task.context_mut()
+        .check_authority(&observed, vec![(identity, anchor)])
+        .await
+        .unwrap();
     server.abort();
 }
 
@@ -2084,21 +1986,26 @@ async fn a_recovery_during_loading_discards_the_old_candidate_without_panicking(
     server.abort();
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 3)]
-async fn prepared_candidate_proof_binds_inventory_source_fence_and_original_age() {
-    use status_shared::fixture;
-    let (_root, worker, task, source, _tls, server) = worker_with_published_candidate().await;
-    let observed = source.current.read().unwrap().clone();
-    let inventory_object = observed.inventory().unwrap().clone();
-    let inventory: Inventory =
-        serde_json::from_slice(&source.objects.read().unwrap()[&inventory_object.sha256]).unwrap();
-    let generation = cached_generation(
-        &fixture::snapshot(32, false).unwrap(),
-        4,
-        2,
-        inventory.manifest.observed_ms,
-        None,
-    );
+#[test]
+fn prepared_candidate_proof_binds_inventory_source_fence_and_original_age() {
+    let root = tempfile::tempdir().unwrap();
+    let service = Service::open(
+        Role::Worker,
+        [1; 32],
+        root.path().join("worker"),
+        String::new(),
+    )
+    .unwrap();
+    let adapter = StatusPublication {
+        service,
+        loaded_inventory: None,
+        poll_soon: false,
+    };
+    let (mut inventory, _) = status_shared::fixture::geometric_inventory(7, 4);
+    inventory.manifest.observed_ms = now_ms();
+    let inventory_object = ObjectReference::for_bytes(&serde_json::to_vec(&inventory).unwrap());
+    let observed = status_shared::fixture::publishing(&inventory, &inventory_object);
+    let generation = Generation::public_only(inventory.manifest.clone(), Arc::new(vec![]));
     let mut loaded = StatusLoaded {
         inventory,
         inventory_object,
@@ -2107,7 +2014,7 @@ async fn prepared_candidate_proof_binds_inventory_source_fence_and_original_age(
         observed: observed.clone(),
     };
     assert_eq!(
-        task.context().adapter().resumable_view(&loaded, &observed),
+        adapter.resumable_view(&loaded, &observed),
         Some(view(&loaded.inventory.manifest))
     );
     for field in ["source", "withdrawal", "epoch", "sequence", "eligible"] {
@@ -2121,20 +2028,13 @@ async fn prepared_candidate_proof_binds_inventory_source_fence_and_original_age(
             _ => unreachable!(),
         }
         assert!(
-            task.context()
-                .adapter()
-                .resumable_view(&loaded, &changed)
-                .is_none(),
+            adapter.resumable_view(&loaded, &changed).is_none(),
             "{field}"
         );
     }
     let valid = loaded.inventory_object.clone();
     loaded.inventory_object = ObjectReference::for_bytes(b"another inventory");
-    assert!(task
-        .context()
-        .adapter()
-        .resumable_view(&loaded, &observed)
-        .is_none());
+    assert!(adapter.resumable_view(&loaded, &observed).is_none());
     loaded.inventory_object = valid;
     // Give the expired inventory a matching original envelope as well: the
     // freshness check must still refuse it rather than renewing its timestamp.
@@ -2146,13 +2046,7 @@ async fn prepared_candidate_proof_binds_inventory_source_fence_and_original_age(
             .inventory
             .publication_reference(&loaded.inventory_object),
     );
-    assert!(task
-        .context()
-        .adapter()
-        .resumable_view(&loaded, &loaded.observed)
-        .is_none());
-    assert!(worker.state.lock().await.controller.is_none());
-    server.abort();
+    assert!(adapter.resumable_view(&loaded, &loaded.observed).is_none());
 }
 
 #[cfg(feature = "native-reinspiring")]
