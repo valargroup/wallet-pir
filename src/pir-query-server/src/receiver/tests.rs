@@ -345,7 +345,9 @@ async fn https_authority_controls_real_wallet_queries_and_restart() {
         );
     }
     let predecessor_objects: Vec<_> = origin.objects.lock().unwrap().keys().cloned().collect();
-    origin.publish(0, 2);
+    // A filter publication advances authority while keeping the one-record
+    // wallet fixture; this test does not need another payment database.
+    origin.publish_filters(102);
     lifecycle.synchronize().await.unwrap();
     for object in predecessor_objects {
         assert!(
