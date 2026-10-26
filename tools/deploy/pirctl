@@ -16,6 +16,8 @@
 #
 # Usage:
 #   pirctl prepare  <component> <sha>     download, verify the checksum, run --check
+#   pirctl check    <component> <sha>     prepare, then run that release's probe against the
+#                                         service running now (a dry run; nothing restarts)
 #   pirctl deploy   <component> <sha> [--cold]
 #                                         prepare, switch, restart, verify; roll back on failure
 #   pirctl verify   <component> [--cold]  wait for the new process to be ready, then probe it
@@ -87,13 +89,20 @@ prepare() {
     mkdir "$tmp/unpacked"
     tar -C "$tmp/unpacked" -xzf "$tmp/$C_ASSET.tar.gz"
     [ -x "$tmp/unpacked/$C_ASSET" ] || die "build-$sha has no $C_ASSET executable"
-    # Components that serve wallets also get the probe their verification runs.
-    if [ -n "$C_PRODUCTS" ] && grep -q ' pir-probe.tar.gz$' "$tmp/SHA256SUMS"; then
-      fetch "$sha" pir-probe.tar.gz "$tmp"
-      mkdir "$tmp/unpacked/probe"
-      tar -C "$tmp/unpacked/probe" -xzf "$tmp/pir-probe.tar.gz"
-    fi
     mv "$tmp/unpacked" "$dir"
+    rm -rf "$tmp"
+  fi
+  # Components that serve wallets also get the probe their verification runs, even
+  # when another component on this host unpacked the release first.
+  if [ -n "$C_PRODUCTS" ] && [ ! -x "$dir/probe/pir-probe" ]; then
+    tmp=$(mktemp -d "$OPT/.download.XXXXXX")
+    curl -fsSL --retry 3 --max-time 30 -o "$tmp/SHA256SUMS" "$RELEASES/build-$sha/SHA256SUMS"
+    if grep -q ' pir-probe.tar.gz$' "$tmp/SHA256SUMS"; then
+      fetch "$sha" pir-probe.tar.gz "$tmp"
+      mkdir "$tmp/probe"
+      tar -C "$tmp/probe" -xzf "$tmp/pir-probe.tar.gz"
+      mv "$tmp/probe" "$dir/probe"
+    fi
     rm -rf "$tmp"
   fi
   "$dir/$C_ASSET" --config "$C_CONFIG" --check >/dev/null || die "$C_ASSET from build-$sha refuses $C_CONFIG"
@@ -125,15 +134,32 @@ verify() {
     sleep 0.25
   done
   say "$C_NAME: ready after $(($(now) - start))s"
+  probe "$C_DIR/current"
+}
+
+# Runs a release's probe against whatever answers at the component's probe address.
+probe() {
+  local start
   [ -n "$C_PRODUCTS" ] || return 0
-  if [ ! -x "$C_DIR/current/probe/pir-probe" ]; then
+  if [ ! -x "$1/probe/pir-probe" ]; then
     say "$C_NAME: this release has no pir-probe; readiness only"
     return 0
   fi
   start=$(now)
-  timeout "$PROBE_SECONDS" "$C_DIR/current/probe/pir-probe" --server "$C_PROBE" --products "$C_PRODUCTS" ||
+  timeout "$PROBE_SECONDS" "$1/probe/pir-probe" --server "$C_PROBE" --products "$C_PRODUCTS" ||
     die "$C_NAME: probe failed for $C_PRODUCTS"
   say "$C_NAME: probe passed after $(($(now) - start))s"
+}
+
+# A dry run: the release is unpacked and accepts this host's config, and its probe
+# passes against the service running now. Nothing is switched or restarted.
+check() {
+  local sha
+  sha=$(short "$1")
+  prepare "$sha"
+  ready || die "$C_NAME is not ready now"
+  probe "$(release_dir "$sha")"
+  say "$C_NAME: build-$sha would replace $(basename "$(link_target "$C_DIR/current")")"
 }
 
 deploy() {
@@ -282,6 +308,7 @@ case $command in
 esac
 case $command in
   prepare) load "$1"; prepare "$2" ;;
+  check) load "$1"; check "$2" ;;
   deploy) load "$1"; deploy "$2" "${3:-}" ;;
   verify) load "$1"; verify "${2:-}" ;;
   rollback) load "$1"; rollback ;;
