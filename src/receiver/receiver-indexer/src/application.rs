@@ -69,6 +69,18 @@ pub struct State {
     sealer: Option<Sealer>,
     kept: Vec<Kept>,
     durable: Option<crate::durable::Durable>,
+    /// A requested stop ends shard building between shards; nothing a later
+    /// pass reuses is replaced until every shard is built.
+    stop: Option<pir_pipeline::service::Shutdown>,
+}
+
+impl State {
+    pub(crate) fn stopping_with(stop: pir_pipeline::service::Shutdown) -> Self {
+        Self {
+            stop: Some(stop),
+            ..Self::default()
+        }
+    }
 }
 
 /// Brings the index to the requested end on the canonical chain of the freshest of
@@ -467,6 +479,7 @@ impl<'a> Collected<'a> {
             sealer,
             kept,
             durable,
+            stop,
         } = state;
         let started = std::time::Instant::now();
         let policy = Policy::new(args.shard_rows, args.shard_target)?;
@@ -518,6 +531,9 @@ impl<'a> Collected<'a> {
         let (mut records, mut segments) = (0u64, 0usize);
         let mut next_kept = Vec::new();
         for shard in sealed_shards.iter().map(Some).chain([None]) {
+            if stop.as_ref().is_some_and(|stop| stop.requested()) {
+                return Err("Receiver stopped while building shards".into());
+            }
             let plan = match shard {
                 Some(shard) => {
                     let end = store.checkpoint(shard.end_height)?;
@@ -1762,6 +1778,40 @@ mod tests {
         );
         assert!(reqwest::get(chunk).await.unwrap().status().is_success());
         assert_eq!(lookup(&client, two).await.len(), 1);
+    }
+
+    #[cfg(feature = "qualification-tests")]
+    /// A publisher stop ends shard building at the next shard instead of waiting for
+    /// every shard, and writes no publication.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_requested_stop_ends_the_pass_before_the_next_shard() {
+        let mut paused = Paused::new(|_| {}).await;
+        paused.args.shard_target = Some(1);
+        paused.extend(&[super::common::receiver()], 2, 0);
+        let stop = pir_pipeline::service::Shutdown::default();
+        stop.request();
+        let mut state = State::stopping_with(stop);
+        let rpc = std::slice::from_ref(&paused.rpc);
+        let error = refresh(
+            &paused.args,
+            rpc,
+            Network::Mainnet.genesis_hash(),
+            None,
+            &mut state,
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("stopped"), "{error}");
+        let root = paused.dir.path().join("publications");
+        let written = std::fs::read_dir(&root).map_or(0, |entries| {
+            entries
+                .filter(|e| {
+                    let path = e.as_ref().unwrap().path();
+                    path.to_str().unwrap().ends_with(".inventory.json")
+                })
+                .count()
+        });
+        assert_eq!(written, 0);
     }
 
     #[cfg(feature = "qualification-tests")]

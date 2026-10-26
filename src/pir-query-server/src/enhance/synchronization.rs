@@ -32,6 +32,8 @@ pub enum Deferral {
     SourceExpired,
     /// A fresh observation shows authority moved while this pass prepared.
     AuthorityAdvanced,
+    /// The publisher is down or restarting; a deploy makes this a gap of seconds.
+    PublisherUnavailable,
 }
 impl std::fmt::Display for Deferral {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -39,13 +41,19 @@ impl std::fmt::Display for Deferral {
             Self::Withdrawn => "publisher authority withdrawn",
             Self::SourceExpired => "Enhance source authority is absent or expired",
             Self::AuthorityAdvanced => "publisher authority advanced during the pass",
+            Self::PublisherUnavailable => "publisher unavailable",
         })
     }
 }
 impl std::error::Error for Deferral {}
 impl Deferral {
     pub fn of(error: &Error) -> Option<Self> {
-        error.downcast_ref::<Self>().copied()
+        error.downcast_ref::<Self>().copied().or_else(|| {
+            error
+                .downcast_ref::<pir_sync_manager::DiscoveryError>()
+                .filter(|error| error.unavailable())
+                .map(|_| Self::PublisherUnavailable)
+        })
     }
 }
 

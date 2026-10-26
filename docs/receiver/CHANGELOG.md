@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- A publisher stop no longer waits for Receiver to build every shard of a pass: the
+  build ends at the next shard and replaces nothing a later pass reuses, so a deploy's
+  publisher restart takes about a second instead of up to 20.
+
 - A restarted publisher republishes the same Receiver tables under a new
   publication. Inventories and descriptors carry the publisher's recovery epoch,
   so query servers no longer refuse the restarted publication as the one they saw
