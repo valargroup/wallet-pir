@@ -59,16 +59,44 @@ same size in the live publication; otherwise it restarts the predecessor and
 refuses so the deploy can be retried. Rollback
 restores a replaced record's exact bytes, or its absence. Deploy readiness does
 not wait for background validation.
+A completed publisher also saves `history-preparation.json` locally before
+activation. This versioned record binds the completion record (including the
+exact inventory, chain, runtime and profile identities) to every installed
+file's device, inode, length, modification time and change time. Restart reuse
+requires the same sealed objects, controlled store links and opened-file
+identities. Unchanged source preparation and runtime checks can then be reused
+by the first fresh publication. Modified or replaced objects take the ordinary
+verification path; malformed or incompatible preparation records disable reuse.
+
+For first adoption, only an active, publisher-owned publication with valid
+completion evidence and no unresolved intent, withdrawal or recorded failure
+may supply preparation. The publisher checks metadata, lengths, runtime headers
+and immutable-store links without scanning large bodies. This trusts the
+publisher's earlier preparation; it does not establish a fresh content hash.
+Latent same-size corruption is therefore detected by background validation.
+Preparation evidence never becomes a query server's verified-file proof and
+never authorizes serving. Fresh canonicality and final activation checks still
+apply.
+
 After serving starts, one low-priority background thread, yielding to
 distribution and candidate preparation, hashes every listed artifact
 (`integrity_validation` in `/v1/status`) and then loads and self-checks each
 runtime under memory admission (`correctness_validation`), using only the files
-it hashed unchanged; a newer publication or a withdrawal stops it. A correctness
+it hashed unchanged. A newer publication or a withdrawal stops the running
+job, but completed per-artifact hashes and runtime checks survive supersession
+for the same unchanged files and chain/profile context. Retained progress is
+pruned to incoming inventories and through ordinary object collection; it
+holds no files against collection.
+Inherited preparation leaves validation pending, including after a successor
+activates, until these independent checks finish. A correctness
 failure is reported and the publication keeps serving. A confirmed integrity
 mismatch is recorded in `integrity-failures.json` and withdraws every
 publication listing those bytes, in this and later processes, until freshly
 verified replacement bytes are published; `recorded` is false in its status
 when the record could not be made durable, so only this process withdraws it.
+After a confirmed integrity failure, the next candidate uses ordinary
+preparation so inherited evidence cannot clear the failure or block recovery
+with verified replacement bytes.
 Completion and failure records are synced with their directory before they are
 acted on. Withdrawing the publisher's own
 routes would leave the router proxying setup and query requests to workers

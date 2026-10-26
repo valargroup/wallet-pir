@@ -58,6 +58,7 @@ use zakura_pir_protocol::transparent::filter as transparent_filter;
 use zakura_pir_protocol::transparent::shard as transparent_shard;
 
 use crate::history::assignment::{Assignment, WorkerRole, WorkerScope};
+use pir_publication::FileIdentity;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -435,7 +436,7 @@ impl LoadedShard {
             }
             source.check_object_link()?;
             source.verify_or_reuse(
-                evidence.get(identity, kind, index as u32).iter().copied(),
+                evidence.get(identity, kind, index as u32),
                 report,
                 kind == Table::Pages,
                 stop,
@@ -515,14 +516,15 @@ impl LoadedShard {
 ///
 /// Borrowed from the publication the candidate replaces, so it lives exactly
 /// as long as the held publication that proved it and is bounded by what
-/// that publication retains. Nothing of it is persisted: a restarted process
-/// has none and verifies every table.
+/// that publication retains. Publisher-local preparation is tracked separately
+/// from hashes performed by this process and can survive its restart.
 #[derive(Default)]
 pub(crate) struct Evidence<'a> {
     /// Every held source of each committed segment: a sealed page shard is
     /// held once per revision that publishes it, possibly as different files.
     segments: std::collections::HashMap<(String, Table, u32), Vec<&'a SegmentSource>>,
     revisions: std::collections::HashSet<&'a str>,
+    prepared: Vec<&'a SegmentSource>,
 }
 
 impl<'a> Evidence<'a> {
@@ -534,6 +536,9 @@ impl<'a> Evidence<'a> {
                 let identity = shard.runtime_identity(table);
                 let sources = shard.sources(table);
                 for (index, source) in sources.iter().enumerate() {
+                    if source.preparation.is_some() {
+                        evidence.prepared.push(source);
+                    }
                     evidence
                         .segments
                         .entry((identity.to_string(), table.kind(), index as u32))
@@ -545,10 +550,18 @@ impl<'a> Evidence<'a> {
         evidence
     }
 
-    fn get(&self, identity: &str, kind: Table, index: u32) -> &[&'a SegmentSource] {
+    fn get(
+        &self,
+        identity: &str,
+        kind: Table,
+        index: u32,
+    ) -> impl Iterator<Item = &'a SegmentSource> + '_ {
         self.segments
             .get(&(identity.to_string(), kind, index))
-            .map_or(&[], Vec::as_slice)
+            .into_iter()
+            .flatten()
+            .copied()
+            .chain(self.prepared.iter().copied())
     }
 
     fn holds(&self, digest: &str) -> bool {
@@ -691,6 +704,64 @@ impl ShardSet {
         stop: Stop<'_>,
     ) -> Result<Self, LoadError> {
         Self::open_material(dir, options, previous, false, stop)
+    }
+
+    /// Attach local publisher preparation only to exact, unchanged stored files.
+    /// This does not create content verification evidence for a query server.
+    pub(crate) fn inherit_preparation(
+        &mut self,
+        identities: &std::collections::BTreeMap<PathBuf, FileIdentity>,
+    ) {
+        let prepared: Vec<_> = self
+            .revisions
+            .iter()
+            .flat_map(|shard| {
+                shard.directory.iter().chain(
+                    shard
+                        .children
+                        .iter()
+                        .flat_map(|child| child.segments.iter()),
+                )
+            })
+            .filter_map(|source| {
+                identities.get(source.path()).map(|stamp| {
+                    (
+                        source.sha256.clone(),
+                        source.rows,
+                        source.row_bytes,
+                        source.zero_from_row,
+                        *stamp,
+                    )
+                })
+            })
+            .collect();
+        for shard in &mut self.revisions {
+            for source in shard.directory.iter_mut().chain(
+                shard
+                    .children
+                    .iter_mut()
+                    .flat_map(|child| child.segments.iter_mut()),
+            ) {
+                let identity = prepared
+                    .iter()
+                    .find(|(digest, rows, row_bytes, zero_from, _)| {
+                        digest == &source.sha256
+                            && *rows == source.rows
+                            && *row_bytes == source.row_bytes
+                            && *zero_from == source.zero_from_row
+                    })
+                    .map(|(_, _, _, _, stamp)| *stamp);
+                source.preparation = identity.filter(|stamp| {
+                    source.check_object_link().is_ok()
+                        && std::fs::canonicalize(source.path())
+                            .ok()
+                            .is_some_and(|physical| {
+                                std::fs::File::open(&physical)
+                                    .is_ok_and(|file| stamp.check(&physical, &file).is_ok())
+                            })
+                });
+            }
+        }
     }
 
     /// Load publisher-prepared material without scanning table contents.

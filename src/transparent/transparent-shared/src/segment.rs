@@ -55,8 +55,10 @@ pub struct SegmentSource {
     pub(crate) zero_from_row: u64,
     /// What this process observed of the file the last time it hashed it,
     /// when that observation is certain enough to vouch for the file later;
-    /// see [`FileIdentity`]. In memory only, so a restart verifies everything.
+    /// see [`FileIdentity`]. This content evidence is process-local.
     pub(crate) evidence: Option<FileIdentity>,
+    /// Local publisher preparation, never proof of a hash by this process.
+    pub(crate) preparation: Option<FileIdentity>,
     pub(crate) size_only: bool,
 }
 
@@ -147,6 +149,7 @@ impl SegmentSource {
             sha256,
             zero_from_row,
             evidence: None,
+            preparation: None,
             size_only: false,
         }
     }
@@ -393,7 +396,7 @@ impl SegmentSource {
     /// holds evidence for the file and `candidate` resolves to that very
     /// file, unmodified since; otherwise `None` and the caller verifies.
     fn rebind(&self, candidate: &SegmentSource) -> Option<Self> {
-        let evidence = self.evidence?;
+        let evidence = self.evidence.or(self.preparation)?;
         if self.sha256 != candidate.sha256
             || self.rows != candidate.rows
             || self.row_bytes != candidate.row_bytes
@@ -401,10 +404,12 @@ impl SegmentSource {
         {
             return None;
         }
-        let meta = std::fs::metadata(&candidate.path).ok()?;
-        (FileIdentity::from_metadata(&meta)? == evidence).then(|| Self {
+        candidate.check_object_link().ok()?;
+        let physical = std::fs::canonicalize(&candidate.path).ok()?;
+        let file = std::fs::File::open(&physical).ok()?;
+        evidence.check(&physical, &file).ok()?;
+        Some(Self {
             path: candidate.path.clone(),
-            evidence: Some(evidence),
             ..self.clone()
         })
     }
@@ -519,6 +524,10 @@ impl SegmentSource {
     /// is settled enough to vouch for the same unchanged file later.
     pub(crate) fn evidence(&self) -> Option<FileIdentity> {
         self.evidence
+    }
+
+    pub(crate) fn preparation_identity(&self) -> Option<FileIdentity> {
+        self.evidence.or(self.preparation)
     }
 
     /// Whether this process's evidence vouches for `file`, opened at this

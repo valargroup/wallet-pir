@@ -214,6 +214,7 @@ impl Finalized {
             stamp,
             settled,
             read,
+            ..
         } in hash_listed(root, pending, stop)?
         {
             if read {

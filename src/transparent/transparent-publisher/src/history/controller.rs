@@ -1129,6 +1129,9 @@ mod tests {
         node: Arc<MockNode>,
     }
     async fn follow_fixture() -> Follow {
+        follow_fixture_with_rows(false).await
+    }
+    async fn follow_fixture_with_rows(populated: bool) -> Follow {
         let root = tempfile::tempdir().unwrap();
         let chain: Chain = Arc::new(RwLock::new(Vec::new()));
         extend(&mut chain.write().unwrap(), 5, 1);
@@ -1156,8 +1159,31 @@ mod tests {
         )
         .unwrap();
         for h in 0..3 {
+            use zakura_pir_protocol::transparent::events::{
+                FeeState, ReceiveEvent, TransactionMetadata, TransparentEvent, Txid,
+            };
+            let events = if populated {
+                vec![(
+                    transparent_filter::ScriptBytes::new(vec![0x51, h as u8]),
+                    TransparentEvent::Receive(ReceiveEvent {
+                        metadata: Some(TransactionMetadata {
+                            fee: FeeState::Exact(0),
+                            transparent_input_count: 0,
+                            has_shielded_components: false,
+                        }),
+                        height: h as u32,
+                        txid: Txid([h as u8 + 1; 32]),
+                        transaction_index: 0,
+                        output_index: 0,
+                        value: 5_000,
+                        coinbase: false,
+                    }),
+                )]
+            } else {
+                Vec::new()
+            };
             journal
-                .append_block(h, hash(&chain.read().unwrap()[h as usize]), &[])
+                .append_block(h, hash(&chain.read().unwrap()[h as usize]), &events)
                 .unwrap();
         }
         journal.commit().unwrap();

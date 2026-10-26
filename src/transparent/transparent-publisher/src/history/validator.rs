@@ -62,6 +62,7 @@ struct State {
     /// generation is older is obsolete.
     generation: u64,
     stop: bool,
+    collected: Option<PathBuf>,
 }
 
 /// Submits jobs; dropping the owning [`Validator`] stops and joins the thread.
@@ -106,6 +107,14 @@ impl Queue {
             .chain(state.pending.iter().map(|j| j.identity.directory.clone()))
             .collect()
     }
+    /// Ordinary collection bounds retained validation progress too. This holds
+    /// no directory or file against collection and never interrupts foreground.
+    pub fn collected(&self, root: &std::path::Path) {
+        let (state, wake) = &*self.0;
+        state.lock().unwrap().collected = Some(root.to_path_buf());
+        wake.notify_all();
+    }
+
     /// Whether the job of `generation` must end now.
     fn obsolete(&self, generation: u64) -> bool {
         let state = self.0 .0.lock().unwrap();
@@ -154,6 +163,12 @@ impl Drop for Validator {
     }
 }
 
+#[derive(Default)]
+struct Progress {
+    integrity: Verified,
+    correctness: CheckedRuntimes,
+}
+
 fn run(
     queue: Queue,
     memory: Arc<transparent_shared::runtime::memory::WorkMemory>,
@@ -161,7 +176,7 @@ fn run(
     report: Box<Report>,
 ) {
     // Artifacts verified unchanged by an earlier job of this process.
-    let mut known: Option<Verified> = None;
+    let mut progress = Progress::default();
     loop {
         let (job, generation) = {
             let (state, wake) = &*queue.0;
@@ -170,6 +185,13 @@ fn run(
             loop {
                 if state.stop {
                     return;
+                }
+                if let Some(root) = state.collected.take() {
+                    drop(state);
+                    progress.integrity.retain_stored(&root);
+                    progress.correctness.retain_stored(&root);
+                    state = queue.0 .0.lock().unwrap();
+                    continue;
                 }
                 if let Some(job) = state.pending.take() {
                     state.running = Some((job.identity.directory.clone(), job.identity.epoch));
@@ -184,7 +206,13 @@ fn run(
         let outcome = transparent_shared::runtime::validation_pool().install(|| {
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 validate(
-                    &queue, generation, &memory, &*busy, &*report, &job, &mut known,
+                    &queue,
+                    generation,
+                    &memory,
+                    &*busy,
+                    &*report,
+                    &job,
+                    &mut progress,
                 )
             }))
         });
@@ -206,7 +234,7 @@ fn validate(
     busy: &Busy,
     report: &Report,
     job: &Job,
-    known: &mut Option<Verified>,
+    progress: &mut Progress,
 ) {
     let send = |event| report(&queue.identity(job), event);
     let chunks = std::sync::atomic::AtomicU64::new(0);
@@ -227,10 +255,11 @@ fn validate(
     };
     loop {
         send(Event::Started("integrity"));
-        let verified = match job
-            .validation
-            .integrity(&job.inventory, known.as_ref(), &pause)
-        {
+        let verified = match job.validation.integrity_continuing(
+            &job.inventory,
+            &mut progress.integrity,
+            &pause,
+        ) {
             Ok(verified) => verified,
             Err(IntegrityError::Unavailable(reason)) if !queue.obsolete(generation) => {
                 send(Event::Integrity(Err(IntegrityError::Unavailable(reason))));
@@ -246,23 +275,24 @@ fn validate(
         };
         send(Event::Integrity(Ok(verified.hashed)));
         send(Event::Started("correctness"));
-        match job
-            .validation
-            .correctness(&job.inventory, &verified, memory, &wait)
-        {
+        match job.validation.correctness_continuing(
+            &job.inventory,
+            &verified,
+            memory,
+            &wait,
+            &mut progress.correctness,
+        ) {
             // A file replaced since it was hashed is hashed again first.
             Err(error @ (CorrectnessError::NoCapacity | CorrectnessError::Unavailable(_)))
                 if !queue.obsolete(generation) =>
             {
                 send(Event::Correctness(Err(error)));
-                *known = Some(verified);
                 if !retry_later(queue, generation) {
                     return;
                 }
             }
             result => {
                 send(Event::Correctness(result));
-                *known = Some(verified);
                 return;
             }
         }

@@ -11,7 +11,8 @@ use std::{
 /// Reuse assumes immutable files and cooperative writers; metadata cannot
 /// establish integrity against an unrelated writer holding a writable mapping.
 /// Hard-link changes alter change time and conservatively invalidate evidence.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FileIdentity {
     device: u64,
     inode: u64,

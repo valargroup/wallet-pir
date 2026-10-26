@@ -68,6 +68,7 @@ pub struct Validation {
 /// while the file still has the same stamp.
 #[derive(Clone, Debug, Default)]
 pub struct Verified {
+    context: Option<[String; 4]>,
     /// Bytes hashed by this pass; reused entries are not counted.
     pub hashed: u64,
     pub(super) files: BTreeMap<String, (String, FileIdentity)>,
@@ -76,6 +77,13 @@ pub struct Verified {
     pub(super) started: Option<std::time::SystemTime>,
 }
 impl Verified {
+    /// Drop progress for objects the publisher's ordinary collector removed.
+    /// Metadata is cheap and is checked again under each publication's path.
+    pub fn retain_stored(&mut self, root: &Path) {
+        self.files
+            .retain(|_, (digest, stamp)| unchanged_stored(root, digest, *stamp));
+    }
+
     pub(super) fn stamp(&self, artifact: &Artifact) -> Option<FileIdentity> {
         self.files
             .get(&artifact.path)
@@ -98,17 +106,45 @@ impl Validation {
         known: Option<&Verified>,
         pause: &dyn Fn() -> bool,
     ) -> Result<Verified, IntegrityError> {
+        let mut progress = known.cloned().unwrap_or_default();
+        self.integrity_continuing(inventory, &mut progress, pause)
+    }
+
+    /// Preserve completed settled artifact hashes even if a newer job cancels
+    /// this scan. Pruned to the incoming inventory on every job; preparation
+    /// receipts are never accepted here.
+    pub fn integrity_continuing(
+        &self,
+        inventory: &Inventory,
+        progress: &mut Verified,
+        pause: &dyn Fn() -> bool,
+    ) -> Result<Verified, IntegrityError> {
+        let context = validation_context(inventory);
+        if progress.context.as_ref() != Some(&context) {
+            *progress = Verified::default();
+        }
+        progress.context = Some(context.clone());
+        let mut retained = BTreeMap::new();
+        for artifact in &inventory.artifacts {
+            if let Some((_, value)) = progress.files.iter().find(|(_, (digest, stamp))| {
+                digest == &artifact.sha256
+                    && progress
+                        .started
+                        .is_none_or(|started| stamp.settled_before(started))
+            }) {
+                retained.insert(artifact.path.clone(), value.clone());
+            }
+        }
+        progress.files = retained;
+        progress.started = None;
+        let known = progress.clone();
         let mut verified = Verified {
+            context: Some(context),
             started: Some(std::time::SystemTime::now()),
             ..Verified::default()
         };
         for artifact in &inventory.artifacts {
-            if let Some(stamp) = known.and_then(|k| {
-                k.stamp(artifact).filter(|stamp| {
-                    k.started
-                        .is_some_and(|started| stamp.settled_before(started))
-                })
-            }) {
+            if let Some(stamp) = known.stamp(artifact) {
                 let still = resolve(&self.root, &artifact.path)
                     .ok()
                     .and_then(|(path, file)| {
@@ -124,6 +160,11 @@ impl Validation {
             }
             let stamp = self.hash_one(artifact, pause)?;
             verified.hashed += artifact.bytes;
+            if stamp.settled_before(verified.started.unwrap()) {
+                progress
+                    .files
+                    .insert(artifact.path.clone(), (artifact.sha256.clone(), stamp));
+            }
             verified
                 .files
                 .insert(artifact.path.clone(), (artifact.sha256.clone(), stamp));
@@ -187,6 +228,40 @@ impl Validation {
         memory: &std::sync::Arc<crate::runtime::memory::WorkMemory>,
         pause: &dyn Fn() -> bool,
     ) -> Result<CheckedRuntimes, CorrectnessError> {
+        self.correctness_continuing(
+            inventory,
+            verified,
+            memory,
+            pause,
+            &mut CheckedRuntimes::default(),
+        )
+    }
+
+    /// Continue independently completed runtime checks across superseding jobs.
+    /// Only the same derived runtime, digest and unchanged hashed inode qualify.
+    pub fn correctness_continuing(
+        &self,
+        inventory: &Inventory,
+        verified: &Verified,
+        memory: &std::sync::Arc<crate::runtime::memory::WorkMemory>,
+        pause: &dyn Fn() -> bool,
+        progress: &mut CheckedRuntimes,
+    ) -> Result<CheckedRuntimes, CorrectnessError> {
+        let context = validation_context(inventory);
+        if progress.context.as_ref() != Some(&context) {
+            *progress = CheckedRuntimes::default();
+        }
+        progress.context = Some(context);
+        progress.evidence.retain(|name, (digest, _, _)| {
+            inventory.artifacts.iter().any(|a| {
+                Path::new(&a.path).file_name().and_then(|n| n.to_str()) == Some(name.as_str())
+                    && &a.sha256 == digest
+            })
+        });
+        progress
+            .passed
+            .retain(|name, _| progress.evidence.contains_key(name));
+        let started = std::time::SystemTime::now();
         let plan = plan(&self.root, &self.set, self.recent_from_height, self.full)
             .map_err(|e| CorrectnessError::Unavailable(e.to_string()))?;
         let listed: BTreeMap<PathBuf, &Artifact> = inventory
@@ -234,6 +309,22 @@ impl Validation {
                 .ok_or_else(|| CorrectnessError::Failed("runtime is not listed".into()))?;
             let source_artifact = relative(source.path())
                 .ok_or_else(|| CorrectnessError::Failed("source is not listed".into()))?;
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .ok_or_else(|| CorrectnessError::Failed("non-UTF8 runtime name".into()))?;
+            if let Some((digest, bytes, stamp)) = progress.evidence.get(name) {
+                if digest == &artifact.sha256
+                    && *bytes == artifact.bytes
+                    && verified.stamp(artifact) == Some(*stamp)
+                    && open(&path, artifact).is_ok()
+                    && open(source.path(), source_artifact).is_ok()
+                {
+                    checked.passed.insert(name.into(), digest.clone());
+                    checked.reused += 1;
+                    continue;
+                }
+            }
             let _admitted = memory
                 .reserve(artifact.bytes.saturating_add(source.bytes() as u64))
                 .ok_or(CorrectnessError::NoCapacity)?;
@@ -271,6 +362,15 @@ impl Validation {
             checked
                 .passed
                 .insert(name.to_owned(), artifact.sha256.clone());
+            unchanged(&path, &probe, stamp, &artifact.path)?;
+            unchanged(source.path(), &rows_file, rows_stamp, &source_artifact.path)?;
+            if stamp.settled_before(started) && rows_stamp.settled_before(started) {
+                progress.passed.insert(name.into(), artifact.sha256.clone());
+                progress.evidence.insert(
+                    name.into(),
+                    (artifact.sha256.clone(), artifact.bytes, stamp),
+                );
+            }
             checked.loaded += 1;
         }
         Ok(checked)
@@ -278,9 +378,12 @@ impl Validation {
 }
 /// Native material verified by this process, bounded to the last successful
 /// inventory. Names and whole-file digests are derived again on every prepare.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct CheckedRuntimes {
+    pub(crate) context: Option<[String; 4]>,
     pub(crate) passed: BTreeMap<String, String>,
+    /// Publisher-owned preparation; kept distinct from checks by this process.
+    pub(crate) preparation: BTreeMap<String, (String, u64, FileIdentity)>,
     /// For runtimes the last successful inventory read in full: the digest,
     /// length and settled stamp of the exact inode, so an unchanged file is
     /// not hashed again. A changed or replaced file has another stamp.
@@ -296,8 +399,33 @@ pub struct CheckedRuntimes {
 }
 
 impl CheckedRuntimes {
+    /// Drop completed checks whose immutable objects have been collected.
+    pub fn retain_stored(&mut self, root: &Path) {
+        self.evidence
+            .retain(|_, (digest, _, stamp)| unchanged_stored(root, digest, *stamp));
+        self.passed
+            .retain(|name, _| self.evidence.contains_key(name));
+    }
+
     /// Add runtimes another check of this process loaded and self-checked.
     pub fn adopt(&mut self, other: CheckedRuntimes) {
         self.passed.extend(other.passed);
     }
+}
+
+fn validation_context(inventory: &Inventory) -> [String; 4] {
+    [
+        inventory.network.clone(),
+        inventory.genesis_hash.clone(),
+        inventory.runtime.clone(),
+        inventory.profile.clone(),
+    ]
+}
+
+fn unchanged_stored(root: &Path, digest: &str, stamp: FileIdentity) -> bool {
+    if !is_digest(digest) {
+        return false;
+    }
+    let physical = root.join(OBJECT_STORE).join(digest);
+    open_object_file(&physical, None).is_ok_and(|file| stamp.check(&physical, &file).is_ok())
 }

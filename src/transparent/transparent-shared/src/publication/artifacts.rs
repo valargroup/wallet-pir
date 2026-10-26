@@ -112,11 +112,12 @@ pub(super) fn resolve_path(root: &Path, logical: &Path) -> Result<(PathBuf, std:
     resolve(root, relative)
 }
 
-/// A digest and length this process verified for a file with this stamp.
+/// The digest and length to list for an unchanged file, with explicit provenance.
 pub(crate) struct Known {
     pub(super) sha256: String,
     pub(super) bytes: u64,
     pub(super) stamp: FileIdentity,
+    pub(super) prepared: bool,
 }
 impl Known {
     pub(crate) fn from_evidence(sha256: String, bytes: u64, stamp: FileIdentity) -> Self {
@@ -124,16 +125,17 @@ impl Known {
             sha256,
             bytes,
             stamp,
+            prepared: false,
         }
     }
-    /// The verification `source` holds for its exact file, if any: only a
-    /// source this process hashed with settled evidence; never a receipt-only,
-    /// received or size-only one.
+    /// A source's process-local verification or explicitly inherited publisher
+    /// preparation. Received and ordinary size-only sources carry neither.
     pub(crate) fn of(source: &crate::history::shardset::SegmentSource) -> Option<Self> {
-        source.evidence().map(|stamp| Self {
+        source.preparation_identity().map(|stamp| Self {
             sha256: source.sha256().to_owned(),
             bytes: source.bytes() as u64,
             stamp,
+            prepared: source.evidence().is_none(),
         })
     }
 }
@@ -154,6 +156,7 @@ pub(crate) struct Listed {
     pub(crate) settled: bool,
     /// Whether the bytes were read and hashed.
     pub(crate) read: bool,
+    pub(crate) prepared: bool,
 }
 
 /// [`hash_listed`] without evidence or a stop: every file is hashed.
@@ -193,10 +196,28 @@ pub(crate) fn hash_listed(
                     .ok_or("non-UTF8 artifact")?
                     .to_string();
                 let (physical, mut file) = resolve(root, &relative)?;
-                let known = known
-                    .as_ref()
-                    .map(|k| (k.sha256.as_str(), k.bytes, k.stamp));
-                let listing = listed_digest(&physical, &mut file, known, stop)?;
+                // Publisher preparation never enters the process-local verified-file API.
+                let prepared = known.as_ref().is_some_and(|k| {
+                    k.prepared
+                        && file.metadata().is_ok_and(|m| m.len() == k.bytes)
+                        && k.stamp.check(&physical, &file).is_ok()
+                });
+                let listing = if prepared {
+                    let known = known.as_ref().unwrap();
+                    Listing {
+                        sha256: known.sha256.clone(),
+                        bytes: known.bytes,
+                        stamp: known.stamp,
+                        settled: true,
+                        read: false,
+                    }
+                } else {
+                    let verified = known
+                        .as_ref()
+                        .filter(|k| !k.prepared)
+                        .map(|k| (k.sha256.as_str(), k.bytes, k.stamp));
+                    listed_digest(&physical, &mut file, verified, stop)?
+                };
                 let opened =
                     matches!(kind, Kind::RecentRuntime | Kind::ArchiveRuntime).then_some(file);
                 Ok(Listed {
@@ -212,6 +233,7 @@ pub(crate) fn hash_listed(
                     stamp: listing.stamp,
                     settled: listing.settled,
                     read: listing.read,
+                    prepared,
                 })
             })
             .collect()
