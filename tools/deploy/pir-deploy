@@ -1,0 +1,159 @@
+#!/usr/bin/env bash
+# pir-deploy: roll a build release across the fleet by running pirctl on each host.
+#
+# The inventory (outside the repo, default ~/.config/wallet-pir/inventory) has one
+# line per component:
+#
+#   <ssh destination> <component> <group> [wave]
+#
+# group is publisher, unified, or a product (enhance, status, transparent, txid,
+# receiver). Lines with the same wave restart together; waves run in ascending order
+# (default 1), so a product's workers can restart before its router. The publisher's
+# host also holds the deploy lease and the APM alert window.
+#
+# Usage:
+#   pir-deploy publisher <sha>                    the shared publisher only
+#   pir-deploy product <group> <sha> [--breaking] one product's query roles
+#                                                 (--breaking also rolls the publisher
+#                                                 and unified nodes first)
+#   pir-deploy unified <sha>                      unified query nodes only
+#   pir-deploy all <sha>                          publisher, then every query role
+#   pir-deploy rollback <group|destination>       swap back to each component's previous release
+#   pir-deploy status
+#
+# Options (before the mode): --cold allows a first start of up to an hour.
+# Environment: PIR_INVENTORY, PIR_SSH_CONFIG, PIR_SSH (default ssh), PIR_DISCOVERY,
+# PIR_RELEASES.
+set -euo pipefail
+
+INVENTORY=${PIR_INVENTORY:-$HOME/.config/wallet-pir/inventory}
+DISCOVERY=${PIR_DISCOVERY:-https://enhance-pir.valargroup.dev/.well-known/pir-service-discovery}
+RELEASES=${PIR_RELEASES:-https://github.com/valargroup/wallet-pir/releases/download}
+SSH=${PIR_SSH:-ssh}
+SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=10 -o ControlMaster=auto -o "ControlPath=/tmp/pir-%C" -o ControlPersist=120)
+[ -n "${PIR_SSH_CONFIG:-}" ] && SSH_OPTS=(-F "$PIR_SSH_CONFIG" "${SSH_OPTS[@]}")
+OWNER="$(whoami)@$(hostname -s)-$$"
+DEPLOY_ID="deploy-$(date +%s)-$$"
+COLD=
+START=$(date +%s)
+
+die() { echo "pir-deploy: $*" >&2; exit 1; }
+usage() { sed -n '/^# Usage:/,/^set /p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit 2; }
+
+[ -f "$INVENTORY" ] || die "missing inventory $INVENTORY"
+# Inventory lines as "destination component group wave".
+ENTRIES=$(awk '!/^[[:space:]]*(#|$)/ {print $1, $2, $3, ($4 == "" ? 1 : $4)}' "$INVENTORY")
+CONTROL=$(awk '$3 == "publisher" {print $1; exit}' <<<"$ENTRIES")
+
+remote() { local host=$1; shift; "$SSH" "${SSH_OPTS[@]}" "$host" pirctl "$@"; }
+
+select_groups() { awk -v groups=" $* " 'index(groups, " " $3 " ")' <<<"$ENTRIES"; }
+
+# Runs one pirctl command on every given entry at once; prints the entries that failed.
+run() {
+  local command=$1 entries=$2 extra=${3:-} pids=() names=() failed='' i host component _
+  [ -n "$entries" ] || return 0
+  while read -r host component _; do
+    # shellcheck disable=SC2086
+    (remote "$host" "$command" "$component" $extra 2>&1 | sed "s|^|[$host $component] |" >&2) &
+    pids+=($!) names+=("$host $component")
+  done <<<"$entries"
+  for i in "${!pids[@]}"; do
+    wait "${pids[$i]}" || failed+="${names[$i]}"$'\n'
+  done
+  printf '%s' "$failed"
+}
+
+# Prepares everything first, then restarts wave by wave; a failed wave rolls back
+# the components of that wave that had already moved and stops the deploy.
+roll() {
+  local sha=$1 groups=$2 entries waves wave members failed ok t
+  entries=$(select_groups $groups)
+  [ -n "$entries" ] || die "the inventory has no $groups components"
+  t=$(date +%s)
+  failed=$(run prepare "$entries" "$sha")
+  [ -z "$failed" ] || die "prepare failed on: $(tr '\n' ' ' <<<"$failed")"
+  echo "== prepared $(wc -l <<<"$entries" | tr -d ' ') components in $(($(date +%s) - t))s"
+  waves=$(awk '{print $4}' <<<"$entries" | sort -un)
+  for wave in $waves; do
+    members=$(awk -v w="$wave" '$4 == w' <<<"$entries")
+    t=$(date +%s)
+    failed=$(run deploy "$members" "$sha $COLD")
+    if [ -n "$failed" ]; then
+      ok=$(awk 'NR == FNR {bad[$1 " " $2]; next} !(($1 " " $2) in bad)' <(printf '%s' "$failed") <(printf '%s\n' "$members"))
+      [ -z "$ok" ] || run rollback "$ok" >/dev/null || true
+      die "wave $wave failed on: $(tr '\n' ' ' <<<"$failed")"
+    fi
+    echo "== wave $wave ($groups) deployed in $(($(date +%s) - t))s"
+  done
+}
+
+# Refuses a partial deploy whose contract major differs from the live publisher's.
+contract_guard() {
+  local sha=$1 release live
+  release=$(curl -fsSL --max-time 20 "$RELEASES/build-${sha:0:12}/contract.json") ||
+    die "build-${sha:0:12} has no contract.json; is the release published?"
+  live=$(curl -fsSL --max-time 10 "$DISCOVERY" | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"].split(".")[0])')
+  python3 -c 'import json, sys
+release = json.load(sys.stdin)
+sys.exit(0 if all(str(part["contract_major"]) == sys.argv[1] for part in release.values()) else 1)' "$live" <<<"$release" ||
+    die "build-${sha:0:12} changes the contract major (live $live); use 'all' or 'product --breaking'"
+}
+
+begin() {
+  [ -n "$CONTROL" ] || die "the inventory has no publisher line to hold the lease"
+  remote "$CONTROL" lease take "$OWNER" "$([ -n "$COLD" ] && echo 4200 || echo 1200)" || exit 1
+  trap 'finish $?' EXIT
+  remote "$CONTROL" alerts begin "$DEPLOY_ID" "$@" || echo "pir-deploy: alerts stay armed (APM refused the window)" >&2
+}
+
+finish() {
+  local code=$1
+  local outcome=() result='done'
+  [ "$code" = 0 ] || outcome=(--failed) result=FAILED
+  remote "$CONTROL" alerts finish "$DEPLOY_ID" "${outcome[@]}" >/dev/null 2>&1 || true
+  remote "$CONTROL" lease drop "$OWNER" >/dev/null 2>&1 || true
+  echo "== $result in $(($(date +%s) - START))s"
+}
+
+[ "${1:-}" = --cold ] && { COLD=--cold; shift; }
+mode=${1:-}
+case $mode in
+  publisher|unified|all)
+    [ $# -eq 2 ] || usage
+    sha=$2
+    [ "$mode" = all ] || contract_guard "$sha"
+    begin "$mode"
+    case $mode in
+      publisher) roll "$sha" publisher ;;
+      unified) roll "$sha" unified ;;
+      all)
+        roll "$sha" publisher
+        roll "$sha" "$(awk '$3 != "publisher" {print $3}' <<<"$ENTRIES" | sort -u | tr '\n' ' ')" ;;
+    esac ;;
+  product)
+    [ $# -ge 3 ] || usage
+    group=$2 sha=$3
+    if [ "${4:-}" = --breaking ]; then
+      begin publisher unified "$group"
+      roll "$sha" publisher
+      roll "$sha" "unified $group"
+    else
+      contract_guard "$sha"
+      begin "$group"
+      roll "$sha" "$group"
+    fi ;;
+  rollback)
+    [ $# -eq 2 ] || usage
+    entries=$(awk -v t="$2" '$1 == t || $3 == t' <<<"$ENTRIES")
+    [ -n "$entries" ] || die "no inventory line matches $2"
+    begin rollback
+    failed=$(run rollback "$entries")
+    [ -z "$failed" ] || die "rollback failed on: $(tr '\n' ' ' <<<"$failed")" ;;
+  status)
+    for host in $(awk '{print $1}' <<<"$ENTRIES" | sort -u); do
+      remote "$host" status 2>&1 | sed "s|^|[$host] |" &
+    done
+    wait ;;
+  *) usage ;;
+esac

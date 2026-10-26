@@ -9,6 +9,44 @@ products and [shared query hosts](query-server.md) for serving. Product-specific
 roles also support distributed workers and isolated qualification. Packaging an
 executable alone does not establish what is running.
 
+## Deploying a build
+
+Every main commit publishes the GitHub release `build-<sha12>` from
+`.github/workflows/release.yml`. It contains `pir-publisher`, `pir-query-server` (every
+query role runs this one executable), `contract.json`, `pirctl` and `SHA256SUMS`.
+
+Each host runs [`pirctl`](../tools/deploy/pirctl). It downloads its asset from the
+release, checks it with `--check`, points the unit's `current` link at it and restarts
+the unit. Verification is the process running the new file and `/health` ready. Once
+the query release carries `pir-probe`, it also requires one known answer per product
+within 15 s. If verification fails,
+`pirctl` restores the previous release on its own. `/etc/wallet-pir/pirctl.conf` lists
+the components on that host.
+
+[`pir-deploy`](../tools/deploy/pir-deploy) runs `pirctl` over SSH, from a workstation
+now and from CI later. It reads an inventory kept outside the repository. Before it
+starts it takes a lease on the publisher host, so two deploys never overlap, and it
+opens APM's deployment window:
+
+| Mode | Command | What restarts |
+|---|---|---|
+| Publisher only | `pir-deploy publisher <sha>` | The shared publisher; query roles keep serving |
+| One product | `pir-deploy product <group> <sha>` | That product's roles, in inventory wave order |
+| Breaking product change | `pir-deploy product <group> <sha> --breaking` | Publisher, then unified nodes and that product |
+| Unified nodes | `pir-deploy unified <sha>` | Unified query nodes |
+| Everything | `pir-deploy all <sha>` | Publisher, then every query role |
+
+Every host is prepared before anything restarts. If any component in a wave fails, the
+deploy stops: the components of that wave that had already moved are rolled back, and
+later waves never start. A partial mode refuses a release whose contract major differs
+from the live publisher's. `pir-deploy rollback <group|host>` swaps components back to
+their previous release, and `pir-deploy status` prints what each host runs.
+`pirctl adopt <component>` moves a unit that names a release path onto the `current`
+link without restarting it. It sets aside drop-ins that only repeat `ExecStart`.
+
+The older `wallet-pir-deploy.py` rollouts below stay available until each mode has run
+in production with `pir-deploy`.
+
 ## Architecture and ownership
 
 | Product | What runs | Product authority |

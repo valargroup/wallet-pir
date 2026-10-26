@@ -1,0 +1,286 @@
+#!/usr/bin/env bash
+# pirctl: install, verify and roll back wallet-pir executables on this host.
+#
+# Every production host keeps this script at /usr/local/sbin/pirctl and a list of
+# the components it runs in /etc/wallet-pir/pirctl.conf, one per line:
+#
+#   <component> unit=<systemd unit> asset=<pir-publisher|pir-query-server>
+#               config=<file> health=<management /health URL>
+#               [probe=<public URL> products=<p1,p2,...>]
+#
+# A release is the GitHub release build-<sha12> made by .github/workflows/release.yml.
+# Its files are unpacked once per host into /opt/wallet-pir/<asset>/releases/<sha12>/.
+# Each component's unit runs /opt/wallet-pir/<component>/current/<asset>, and
+# `previous` keeps the release it replaced, so a rollback is one symlink swap and a
+# restart. The pir-deploy driver (tools/deploy/pir-deploy) runs these commands over SSH.
+#
+# Usage:
+#   pirctl prepare  <component> <sha>     download, verify the checksum, run --check
+#   pirctl deploy   <component> <sha> [--cold]
+#                                         prepare, switch, restart, verify; roll back on failure
+#   pirctl verify   <component> [--cold]  wait for the new process to be ready, then probe it
+#   pirctl rollback <component>           swap current and previous, restart, verify
+#   pirctl status                         one line per component
+#   pirctl adopt    <component>           move a running unit onto this layout (no restart)
+#   pirctl lease    take <owner> <seconds> | drop <owner>     fleet-wide deploy lease
+#   pirctl alerts   begin <id> <names...> | finish <id> [--failed]
+#   pirctl self-update <sha>
+set -euo pipefail
+
+ROOT=${PIRCTL_ROOT:-}
+CONF=${PIRCTL_CONF:-$ROOT/etc/wallet-pir/pirctl.conf}
+OPT=$ROOT/opt/wallet-pir
+PROC=${PIRCTL_PROC:-/proc}
+LOG=${PIRCTL_LOG:-$ROOT/var/log/pirctl.log}
+LOCK=${PIRCTL_LOCK:-$ROOT/run/lock/pirctl.lock}
+LEASE=$ROOT/run/wallet-pir/deploy.lease
+RELEASES=${PIRCTL_RELEASES:-https://github.com/valargroup/wallet-pir/releases/download}
+READY_SECONDS=${PIRCTL_READY_SECONDS:-120}
+COLD_SECONDS=3600
+PROBE_SECONDS=15
+
+die() { echo "pirctl: $*" >&2; log "error: $*"; exit 1; }
+log() { mkdir -p "$(dirname "$LOG")"; printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" >>"$LOG"; }
+say() { echo "$*"; log "$*"; }
+now() { date +%s; }
+
+# Reads the component's settings into C_* variables.
+load() {
+  local line key value
+  [ -f "$CONF" ] || die "missing $CONF"
+  line=$(awk -v c="$1" '$1 == c' "$CONF")
+  [ -n "$line" ] || die "no component $1 in $CONF"
+  C_NAME=$1 C_UNIT='' C_ASSET='' C_CONFIG='' C_HEALTH='' C_PROBE='' C_PRODUCTS=''
+  for pair in ${line#* }; do
+    key=${pair%%=*} value=${pair#*=}
+    case $key in
+      unit) C_UNIT=$value ;; asset) C_ASSET=$value ;; config) C_CONFIG=$value ;;
+      health) C_HEALTH=$value ;; probe) C_PROBE=$value ;; products) C_PRODUCTS=$value ;;
+      *) die "unknown setting $key for $1" ;;
+    esac
+  done
+  [ -n "$C_UNIT" ] && [ -n "$C_ASSET" ] && [ -n "$C_CONFIG" ] && [ -n "$C_HEALTH" ] ||
+    die "$1 needs unit, asset, config and health"
+  C_DIR=$OPT/$C_NAME
+}
+
+short() { [[ $1 =~ ^[0-9a-f]{12,40}$ ]] || die "not a commit sha: $1"; echo "${1:0:12}"; }
+release_dir() { echo "$OPT/$C_ASSET/releases/$1"; }
+link_target() { if [ -L "$1" ]; then readlink "$1"; fi; }
+
+# Downloads one file of a build release into a directory and checks its checksum.
+fetch() {
+  local sha=$1 file=$2 into=$3
+  curl -fsSL --retry 3 --max-time 300 -o "$into/$file" "$RELEASES/build-$sha/$file"
+  curl -fsSL --retry 3 --max-time 30 -o "$into/SHA256SUMS" "$RELEASES/build-$sha/SHA256SUMS"
+  (cd "$into" && grep " $file\$" SHA256SUMS | sha256sum -c --quiet -) || die "checksum mismatch for $file in build-$sha"
+}
+
+prepare() {
+  local sha dir tmp
+  sha=$(short "$1") dir=$(release_dir "$sha")
+  if [ ! -x "$dir/$C_ASSET" ]; then
+    mkdir -p "$OPT" "$(dirname "$dir")"
+    rm -rf "$OPT"/.download.*
+    tmp=$(mktemp -d "$OPT/.download.XXXXXX")
+    fetch "$sha" "$C_ASSET.tar.gz" "$tmp"
+    mkdir "$tmp/unpacked"
+    tar -C "$tmp/unpacked" -xzf "$tmp/$C_ASSET.tar.gz"
+    [ -x "$tmp/unpacked/$C_ASSET" ] || die "build-$sha has no $C_ASSET executable"
+    mv "$tmp/unpacked" "$dir"
+    rm -rf "$tmp"
+  fi
+  "$dir/$C_ASSET" --config "$C_CONFIG" --check >/dev/null || die "$C_ASSET from build-$sha refuses $C_CONFIG"
+  say "$C_NAME: prepared build-$sha"
+}
+
+# Points current at a release directory and restarts the unit.
+switch() {
+  mkdir -p "$C_DIR"
+  ln -sfn "$1" "$C_DIR/current"
+  systemctl restart "$C_UNIT"
+}
+
+ready() {
+  curl -fsS --max-time 2 "$C_HEALTH" 2>/dev/null |
+    python3 -c 'import json, sys; sys.exit(0 if json.load(sys.stdin).get("ready") is True else 1)' 2>/dev/null
+}
+
+verify() {
+  local limit=$READY_SECONDS start want pid exe
+  [ "${1:-}" = --cold ] && limit=$COLD_SECONDS
+  start=$(now) want=$(cd "$C_DIR/current" && pwd -P)/$C_ASSET
+  while :; do
+    systemctl is-failed --quiet "$C_UNIT" && die "$C_UNIT failed to start"
+    pid=$(systemctl show -p MainPID --value "$C_UNIT")
+    exe=$(readlink "$PROC/$pid/exe" 2>/dev/null || true)
+    if [ "$exe" = "$want" ] && ready; then break; fi
+    [ $(($(now) - start)) -lt "$limit" ] || die "$C_NAME not ready within ${limit}s (running ${exe:-nothing})"
+    sleep 0.25
+  done
+  say "$C_NAME: ready after $(($(now) - start))s"
+  [ -n "$C_PRODUCTS" ] || return 0
+  if [ ! -x "$C_DIR/current/pir-probe" ]; then
+    say "$C_NAME: this release has no pir-probe; readiness only"
+    return 0
+  fi
+  start=$(now)
+  timeout "$PROBE_SECONDS" "$C_DIR/current/pir-probe" --server "$C_PROBE" --products "$C_PRODUCTS" ||
+    die "$C_NAME: probe failed for $C_PRODUCTS"
+  say "$C_NAME: probe passed after $(($(now) - start))s"
+}
+
+deploy() {
+  local sha dir old cold=${2:-}
+  sha=$(short "$1") dir=$(release_dir "$sha")
+  prepare "$sha"
+  old=$(link_target "$C_DIR/current")
+  if [ "$old" = "$dir" ] && systemctl is-active --quiet "$C_UNIT" && ready; then
+    say "$C_NAME: already running build-$sha"
+    return 0
+  fi
+  [ -z "$old" ] || [ "$old" = "$dir" ] || ln -sfn "$old" "$C_DIR/previous"
+  say "$C_NAME: restarting $C_UNIT on build-$sha"
+  switch "$dir"
+  if (verify $cold); then prune; return 0; fi
+  [ -n "$old" ] && [ "$old" != "$dir" ] || die "$C_NAME: build-$sha failed and there is no previous release"
+  say "$C_NAME: build-$sha failed; restoring $old"
+  ln -sfn "$dir" "$C_DIR/previous"
+  switch "$old"
+  (verify) || die "$C_NAME: the restored release is not ready either"
+  die "$C_NAME: build-$sha failed and was rolled back"
+}
+
+# Keeps the three newest releases of this asset and any release a link still names.
+prune() {
+  local keep dir
+  keep=$(for link in "$OPT"/*/current "$OPT"/*/previous; do link_target "$link"; done)
+  ls -1dt "$OPT/$C_ASSET/releases"/*/ | tail -n +4 |
+    while read -r dir; do dir=${dir%/}; grep -qxF "$dir" <<<"$keep" || rm -rf "$dir"; done
+}
+
+rollback() {
+  local current previous
+  current=$(link_target "$C_DIR/current") previous=$(link_target "$C_DIR/previous")
+  [ -n "$previous" ] || die "$C_NAME has no previous release"
+  ln -sfn "$current" "$C_DIR/previous"
+  say "$C_NAME: rolling back to $previous"
+  switch "$previous"
+  verify
+}
+
+status() {
+  local name state health
+  awk '!/^[[:space:]]*(#|$)/ {print $1}' "$CONF" | while read -r name; do
+    load "$name"
+    state=$(systemctl is-active "$C_UNIT" || true)
+    health=not-ready; ready && health=ready
+    printf '%s %s %s %s\n' "$name" "$(basename "$(link_target "$C_DIR/current")")" "$state" "$health"
+  done
+}
+
+# Moves a unit that runs a release by absolute path onto current/. Drop-ins that
+# only repeat ExecStart are set aside; any other ExecStart override is refused.
+adopt() {
+  local pid exe path hash dir unit_file effective main dropin saved new
+  pid=$(systemctl show -p MainPID --value "$C_UNIT")
+  exe=$(readlink "$PROC/$pid/exe" 2>/dev/null || true)
+  [ -n "$exe" ] && [ -f "$exe" ] || die "$C_UNIT is not running a binary that still exists (${exe:-none})"
+  [ -L "$C_DIR/current" ] && die "$C_NAME is already adopted"
+  unit_file=$(systemctl show -p FragmentPath --value "$C_UNIT")
+  effective=$(systemctl cat "$C_UNIT" | grep '^ExecStart=.' | tail -1)
+  main=$(grep '^ExecStart=.' "$ROOT$unit_file" | tail -1)
+  [ "$effective" = "$main" ] || die "$C_UNIT's drop-ins change its command; reconcile them by hand first"
+  path=${exe#"$ROOT"}
+  [[ "$main " == *"$path "* ]] || die "$C_UNIT's ExecStart does not name $path"
+  saved=$ROOT/etc/wallet-pir/adopted/$C_UNIT
+  mkdir -p "$saved"
+  cp -p "$ROOT$unit_file" "$saved/"
+  for dropin in $(systemctl show -p DropInPaths --value "$C_UNIT"); do
+    if grep -qv -e '^ExecStart=' -e '^\[Service\]' -e '^#' -e '^[[:space:]]*$' "$ROOT$dropin"; then
+      grep -q '^ExecStart=' "$ROOT$dropin" && die "$dropin mixes ExecStart with other settings"
+      continue
+    fi
+    mv "$ROOT$dropin" "$saved/"
+  done
+  hash=$(sha256sum "$exe" | cut -c1-12)
+  dir=$OPT/$C_ASSET/releases/adopted-$hash
+  mkdir -p "$dir" "$C_DIR"
+  [ -x "$dir/$C_ASSET" ] || cp -p "$exe" "$dir/$C_ASSET"
+  ln -sfn "$dir" "$C_DIR/current"
+  new=/opt/wallet-pir/$C_NAME/current/$C_ASSET
+  sed -i.pirctl -e "/^ExecStart=/s|$path |$new |" -e "/^ExecStart=/s|$path\$|$new|" "$ROOT$unit_file"
+  rm -f "$ROOT$unit_file.pirctl"
+  systemctl daemon-reload
+  say "$C_NAME: adopted $path as adopted-$hash; the unit switches at its next restart (old files in $saved)"
+}
+
+lease() {
+  local owner=$2 holder expires
+  case $1 in
+    take)
+      mkdir -p "$(dirname "$LEASE")"
+      if ! mkdir "$LEASE" 2>/dev/null; then
+        { read -r holder expires <"$LEASE/owner"; } 2>/dev/null || true
+        if [ "$holder" != "$owner" ] && [ "$(now)" -lt "${expires:-0}" ]; then
+          echo "pirctl: lease held by $holder for $((expires - $(now)))s more" >&2
+          exit 3
+        fi
+      fi
+      echo "$owner $(($(now) + $3))" >"$LEASE/owner"
+      say "lease taken by $owner for $3s" ;;
+    drop)
+      { read -r holder expires <"$LEASE/owner"; } 2>/dev/null || return 0
+      [ "$holder" = "$owner" ] || die "lease is held by $holder, not $owner"
+      rm -rf "$LEASE"
+      say "lease dropped by $owner" ;;
+    *) die "lease take|drop" ;;
+  esac
+}
+
+# Opens or closes APM's notification window through the running pir-apm, using its
+# own state path; APM caps the window at one hour if finish never arrives.
+alerts() {
+  local pid state mode
+  pid=$(systemctl show -p MainPID --value pir-apm.service)
+  [ "${pid:-0}" -gt 0 ] || die "pir-apm is not running"
+  state=$(tr '\0' '\n' <"$PROC/$pid/environ" | sed -n 's/^PIR_APM_STATE_PATH=//p')
+  mode=$(tr '\0' '\n' <"$PROC/$pid/environ" | sed -n 's/^PIR_APM_ALERT_MODE=//p')
+  [ -n "$state" ] && [ "$mode" = active ] || die "APM is not in active alert mode"
+  local action=$1 id=$2
+  shift 2
+  "$PROC/$pid/exe" deployment --state "$state" --id "$id" "$action" "$@" >/dev/null
+  say "alerts: $action $id"
+}
+
+self_update() {
+  local sha tmp
+  sha=$(short "$1") tmp=$(mktemp -d)
+  fetch "$sha" pirctl "$tmp"
+  bash -n "$tmp/pirctl" || die "pirctl from build-$sha does not parse"
+  install -m 0755 "$tmp/pirctl" "$(readlink -f "$0")"
+  rm -rf "$tmp"
+  say "pirctl updated to build-$sha"
+}
+
+command=${1:-}
+[ -n "$command" ] || { sed -n '/^# Usage:/,/^set /p' "$0" | sed '$d'; exit 2; }
+shift
+mkdir -p "$(dirname "$LOCK")"
+exec 9>"$LOCK"
+case $command in
+  status|lease|alerts) ;;
+  *) flock -n 9 || die "another pirctl command is running on this host" ;;
+esac
+case $command in
+  prepare) load "$1"; prepare "$2" ;;
+  deploy) load "$1"; deploy "$2" "${3:-}" ;;
+  verify) load "$1"; verify "${2:-}" ;;
+  rollback) load "$1"; rollback ;;
+  adopt) load "$1"; adopt ;;
+  status) status ;;
+  lease) lease "$@" ;;
+  alerts) alerts "$@" ;;
+  self-update) self_update "$1" ;;
+  *) die "unknown command $command" ;;
+esac
