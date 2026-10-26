@@ -123,6 +123,7 @@ impl Origin {
                 filters: vec![],
             }),
             filters: None,
+            recovery_epoch: 0,
         };
         let object = self.store(&serde_json::to_vec(&inventory).unwrap());
         self.authority

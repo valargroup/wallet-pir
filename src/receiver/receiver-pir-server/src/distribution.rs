@@ -20,6 +20,12 @@ pub struct Descriptor {
     pub history_revision: u64,
     pub directory: Option<Hash>,
     pub filters: Option<blocks::Head>,
+    /// The publisher's recovery epoch when it exported this publication. A
+    /// restarted publisher opens a new epoch, so the same tables published
+    /// again name a new publication rather than the one query servers saw
+    /// withdrawn while it restarted. Publishers before this field send none.
+    #[serde(default)]
+    pub recovery_epoch: u64,
 }
 
 /// Table bytes and setup already checked and prepared by the publisher.
@@ -59,6 +65,12 @@ pub struct Inventory {
     pub history_revision: u64,
     pub directory: Option<Directory>,
     pub filters: Option<Filters>,
+    /// The publisher's recovery epoch when it exported this inventory. A
+    /// restarted publisher opens a new epoch, so the same tables published
+    /// again name a new publication rather than the one query servers saw
+    /// withdrawn while it restarted. Publishers before this field send none.
+    #[serde(default)]
+    pub recovery_epoch: u64,
 }
 pub fn scope(genesis: Hash, activation: u32) -> PublicationScope {
     PublicationScope {
@@ -73,6 +85,7 @@ impl Inventory {
             history_revision: self.history_revision,
             directory: self.directory.as_ref().map(|d| d.head.inventory),
             filters: self.filters.as_ref().map(|f| f.head.clone()),
+            recovery_epoch: self.recovery_epoch,
         }
     }
     pub fn objects(&self) -> Vec<ObjectReference> {
