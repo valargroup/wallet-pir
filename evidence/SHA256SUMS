@@ -100,3 +100,6 @@ acf46db969741c0fb51c66ff23a57e1f0b5b32846c82d4005a34132fc5e3c20b  evidence/trans
 48fed8c209aab4171607b4509bdb13d8800837474fe951b980213e57071e2e6a  evidence/transparent/v12-native-certificates-2026-10-12/synthetic-decoupled-32k-32k-pages-random-nearest.report.json
 fde5f38a601777e86d17ba0766ad34a83986a360718984ae18de5d380342ebdb  evidence/transparent/transparent-native/testdata/batched_hint_kat.json
 99a2736eabc253d2c1cfe573eb0e1925cf745362fe5e4a178ea5af1db7315fe3  evidence/transparent/transparent-native/testdata/batched_hint_kat.py
+1c5d4dee7e3084411461ee188a04bda7a924469e65570fe633694e8761e7f774  evidence/txid/display-restart-reuse-2026-10-26/ab.sh
+ea9127f1c283bf95838529a98b4de569f5cc92110396cee1f41ed9aad2cfb6fa  evidence/txid/display-restart-reuse-2026-10-26/raw/ab-f4997e681.jsonl
+c1b2624dfbbecd9b71f6a42ae25d7b897332d0759be1e0390fd1963ab43bfd7d  evidence/txid/display-restart-reuse-2026-10-26/raw/ab-e52f43d8.jsonl

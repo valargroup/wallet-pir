@@ -42,6 +42,12 @@ impl PreparationRecord {
         &self.files
     }
 
+    /// Whether this record is of `semantics` and names the completion whose
+    /// digest is `completion_sha256`.
+    pub fn describes(&self, semantics: &str, completion_sha256: &str) -> bool {
+        self.semantics == semantics && self.completion_sha256 == completion_sha256
+    }
+
     /// Whether `saved` describes this record's publication: the same semantics
     /// and completion, and the same digest and length for exactly these paths.
     /// Identities may differ; [`Self::adopts`] decides each file.
@@ -107,6 +113,9 @@ mod tests {
         let saved: PreparationRecord = serde_json::from_value(json).unwrap();
         assert_eq!(saved, record);
         assert!(record.agrees(&saved));
+        assert!(saved.describes("test-v1", &"c".repeat(64)));
+        assert!(!saved.describes("test-v2", &"c".repeat(64)));
+        assert!(!saved.describes("test-v1", &"f".repeat(64)));
         assert!(saved.adopts("a", identity, later()));
         // Too recent to tell apart from a write in the same timestamp tick.
         assert!(!saved.adopts("a", identity, SystemTime::now()));

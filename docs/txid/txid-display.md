@@ -675,3 +675,19 @@ reloads check size without rehashing or self-testing. Readiness does not wait
 for background warming. A separate `txid-quality-canary` process validates
 serving after startup; repeat `--fixture` for multiple pinned lookups. Failure
 fails validation without stopping or restarting the service.
+
+After each activation the publisher saves `display-preparation.json` in its
+root, using the shared preparation record (`pir-publication`). It binds the
+publication directory and map digest to each checked table's and runtime's
+SHA-256, length and file identity (device, inode, length, modification and
+change times). Only sealed, read-only store objects are recorded. A restarted
+publisher adopts a recorded file only when that identity is unchanged and both
+timestamps are more than a second old. It then restores without rehashing
+tables, rechecking rows or self-checking runtimes. Anything else, including a
+missing, malformed or foreign record, takes the full check path. Unlike
+History, there is no first-restart adoption without a record. One
+low-priority background thread then checks the adopted publication in full,
+pausing while a preparation runs. If that check fails, the publisher withdraws
+the current publication, deletes the record and distrusts saved checks for the
+rest of the process, so its next preparation checks every file. Measurements
+are in the [restart reuse evidence](../../evidence/txid/display-restart-reuse-2026-10-26/README.md).

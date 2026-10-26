@@ -921,6 +921,251 @@ async fn restart_bench_prepares_the_same_publication_on_every_pass() {
     for field in ["inventory_sha256", "files", "bytes"] {
         assert_eq!(passes[0][field], passes[1][field], "{field}");
     }
+    assert_eq!(passes[0]["inherited_preparation"], false);
+    // A later bench adopts the record the first saved, then checks every
+    // adopted byte as the background check would.
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    let restarted = crate::tx_detail::offline::bench_restore(&root, 1)
+        .await
+        .unwrap();
+    assert_eq!(restarted[0]["inherited_preparation"], true);
+    assert_eq!(
+        restarted[0]["inventory_sha256"],
+        passes[0]["inventory_sha256"]
+    );
+    assert!(restarted[1]["background_check_seconds"].as_f64().is_some());
+}
+
+/// A bootstrapped display root whose active publication one process has
+/// prepared, building its runtimes, and saved preparation for.
+async fn prepared_root(
+    temp: &Path,
+) -> (
+    PathBuf,
+    ActiveRecord,
+    transparent_shared::tx_detail::distribution::Finalized,
+) {
+    let journal = temp.join("journal");
+    fixture::write_journal(&journal, 0, 8, 0);
+    let store = EventStore::open_existing(&journal).unwrap();
+    let root = temp.join("root");
+    bootstrap(&store, &root, &fixture::layout(&store, 1, 16), 7).unwrap();
+    let active = ActiveRecord::load(&root).unwrap();
+    let first = offline_distribution(&root, temp);
+    let finalized = prepare_active(&first, &active).await.unwrap();
+    first.save_preparation(&finalized, &active.directory);
+    // Adoption needs identities older than one timestamp tick.
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    (root, active, finalized)
+}
+
+/// A distribution for `root` whose node is never asked.
+fn offline_distribution(root: &Path, temp: &Path) -> crate::tx_detail::distribution::Distribution {
+    let cookie = temp.join("cookie");
+    std::fs::write(&cookie, "fixture:fixture").unwrap();
+    let rpc = crate::ingest::zakura::connect("http://127.0.0.1:9", cookie).unwrap();
+    crate::tx_detail::distribution::Distribution::new(root, rpc).unwrap()
+}
+
+async fn prepare_active(
+    distribution: &crate::tx_detail::distribution::Distribution,
+    active: &ActiveRecord,
+) -> Result<transparent_shared::tx_detail::distribution::Finalized, BoxError> {
+    distribution
+        .prepare(
+            active.directory.clone(),
+            vec![active.directory.clone()],
+            Default::default(),
+            || false,
+        )
+        .await
+}
+
+fn preparation_file(root: &Path) -> PathBuf {
+    root.join(transparent_shared::tx_detail::distribution::PREPARATION_FILE)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_restarted_display_publisher_adopts_its_saved_preparation() {
+    let temp = tempfile::tempdir().unwrap();
+    let (root, active, first) = prepared_root(temp.path()).await;
+    let runtimes = first
+        .inventory
+        .artifacts
+        .iter()
+        .filter(|a| a.path.ends_with(".runtime"))
+        .count();
+    assert!(runtimes > 0);
+    assert!(!first.inherited_preparation);
+
+    let restarted = offline_distribution(&root, temp.path());
+    restarted.adopt_saved(&active);
+    let adopted = prepare_active(&restarted, &active).await.unwrap();
+    assert!(adopted.inherited_preparation);
+    assert_eq!(adopted.sha256, first.sha256);
+    let (loaded, reused, hashed) = restarted.checks();
+    assert_eq!((loaded, reused), (0, runtimes));
+    // Only metadata is read again; every table and runtime is adopted.
+    let metadata: u64 = first
+        .inventory
+        .artifacts
+        .iter()
+        .filter(|a| a.kind == transparent_shared::publication::Kind::Metadata)
+        .map(|a| a.bytes)
+        .sum();
+    assert_eq!(hashed, metadata);
+    // The adopted bytes are what was served.
+    transparent_shared::tx_detail::distribution::validate_until(
+        &active.directory,
+        &adopted.inventory,
+        &|| false,
+    )
+    .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_restart_checks_whatever_its_saved_preparation_does_not_vouch_for() {
+    let temp = tempfile::tempdir().unwrap();
+    let (root, active, first) = prepared_root(temp.path()).await;
+    let saved = std::fs::read(preparation_file(&root)).unwrap();
+    let runtimes = first
+        .inventory
+        .artifacts
+        .iter()
+        .filter(|a| a.path.ends_with(".runtime"))
+        .count();
+
+    // A record of another publication, an unreadable one and none at all.
+    let mut other: serde_json::Value = serde_json::from_slice(&saved).unwrap();
+    other["completion_sha256"] = "00".repeat(32).into();
+    for record in [serde_json::to_vec(&other).unwrap(), b"{".to_vec()] {
+        std::fs::write(preparation_file(&root), &record).unwrap();
+        let (finalized, (loaded, _, _)) = restart(&root, temp.path()).await;
+        assert!(!finalized.inherited_preparation);
+        assert_eq!(finalized.sha256, first.sha256);
+        assert_eq!(loaded, runtimes);
+    }
+    std::fs::remove_file(preparation_file(&root)).unwrap();
+    let (finalized, (loaded, _, _)) = restart(&root, temp.path()).await;
+    assert!(!finalized.inherited_preparation);
+    assert_eq!(loaded, runtimes);
+
+    // A runtime object replaced by an identical copy is a new file: it is
+    // hashed and self-checked again while the rest stays adopted.
+    std::fs::write(preparation_file(&root), &saved).unwrap();
+    let runtime = first
+        .inventory
+        .artifacts
+        .iter()
+        .find(|a| a.path.ends_with(".runtime"))
+        .unwrap();
+    let object = std::fs::canonicalize(active.directory.join(&runtime.path)).unwrap();
+    let copy = object.with_extension("copy");
+    std::fs::copy(&object, &copy).unwrap();
+    let mut permissions = std::fs::metadata(&copy).unwrap().permissions();
+    permissions.set_readonly(true);
+    std::fs::set_permissions(&copy, permissions).unwrap();
+    std::fs::rename(&copy, &object).unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    let (finalized, (loaded, reused, _)) = restart(&root, temp.path()).await;
+    assert_eq!(finalized.sha256, first.sha256);
+    assert_eq!((loaded, reused), (1, runtimes - 1));
+}
+
+/// A fresh process restoring `root`: it adopts any saved preparation, then
+/// prepares the active publication. Returns it and that preparation's checks.
+async fn restart(
+    root: &Path,
+    temp: &Path,
+) -> (
+    transparent_shared::tx_detail::distribution::Finalized,
+    (usize, usize, u64),
+) {
+    let distribution = offline_distribution(root, temp);
+    let active = ActiveRecord::load(root).unwrap();
+    distribution.adopt_saved(&active);
+    let finalized = prepare_active(&distribution, &active).await.unwrap();
+    (finalized, distribution.checks())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_background_check_withdraws_and_stops_adopting() {
+    let temp = tempfile::tempdir().unwrap();
+    let (root, active, first) = prepared_root(temp.path()).await;
+    // Saved preparation that names the wrong digest for an unchanged runtime:
+    // as if its bytes changed on disk after they were prepared.
+    let mut saved: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(preparation_file(&root)).unwrap()).unwrap();
+    let runtime = first
+        .inventory
+        .artifacts
+        .iter()
+        .find(|a| a.path.ends_with(".runtime"))
+        .unwrap();
+    saved["files"][&runtime.path][0] = "ab".repeat(32).into();
+    std::fs::write(preparation_file(&root), serde_json::to_vec(&saved).unwrap()).unwrap();
+
+    let node = axum::Router::new().route(
+        "/",
+        axum::routing::post(
+            |axum::Json(request): axum::Json<serde_json::Value>| async move {
+                let height = request["params"][0].as_u64().unwrap();
+                let hash = if height == 0 {
+                    fixture::GENESIS.to_string()
+                } else {
+                    fixture::block_hash(0, height).to_display_hex()
+                };
+                axum::Json(serde_json::json!({"id":request["id"],"result":hash,"error":null}))
+            },
+        ),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let _node = tokio::spawn(async move { axum::serve(listener, node).await.unwrap() });
+    let cookie = temp.path().join("node-cookie");
+    std::fs::write(&cookie, "fixture:fixture").unwrap();
+    let rpc = crate::ingest::zakura::connect(format!("http://{address}"), cookie).unwrap();
+    let distribution = crate::tx_detail::distribution::Distribution::new(&root, rpc).unwrap();
+    assert!(distribution
+        .restore(
+            crate::host_engine::PublisherEngine,
+            active.directory.clone(),
+            vec![active.directory.clone()],
+        )
+        .await
+        .unwrap());
+
+    // The background check finds the served digest wrong and withdraws.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while preparation_file(&root).exists() {
+        assert!(std::time::Instant::now() < deadline, "no background check");
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    let current: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(root.join("http-current.json")).unwrap()).unwrap();
+    assert_eq!(current["eligibility"], "withdrawn");
+    assert!(current["invalidated_from"].is_null());
+
+    // Nothing is adopted again: the next preparation checks every file and
+    // lists the true digests, keeps that evidence, and saves no record from
+    // this process.
+    let next = prepare_active(&distribution, &active).await.unwrap();
+    assert!(!next.inherited_preparation);
+    assert_eq!(next.sha256, first.sha256);
+    assert_eq!(
+        distribution.checks().0,
+        first
+            .inventory
+            .artifacts
+            .iter()
+            .filter(|a| a.path.ends_with(".runtime"))
+            .count()
+    );
+    let again = prepare_active(&distribution, &active).await.unwrap();
+    assert_eq!(again.sha256, first.sha256);
+    assert_eq!(distribution.checks().0, 0);
+    distribution.save_preparation(&next, &active.directory);
+    assert!(!preparation_file(&root).exists());
 }
 
 #[tokio::test]
