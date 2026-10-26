@@ -941,6 +941,13 @@ class RelocatedBundleTests(PackageCase):
             result = subprocess.run(argv, cwd=self.dir, env=environment, capture_output=True, text=True, timeout=30)
             self.assertEqual(result.returncode, 0, (argv, result.stderr))
         self.assertEqual(json.loads(result.stdout)['complete'], True)
+        result = subprocess.run([sys.executable, '-B', '-c',
+            'import sys; sys.path.insert(0, sys.argv[1]); '
+            'from wallet_pir_ops import contract; print(contract.source_major())',
+            str(destination / 'tools/lib')], cwd=self.dir, env=environment,
+            capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertGreaterEqual(int(result.stdout), 1)
         result = subprocess.run([str(destination / 'tools/scripts/wallet-pir-bundle.py'), 'self-check', '--sha', B],
                                 cwd=self.dir, env=environment, capture_output=True, text=True, timeout=30)
         self.assertNotEqual(result.returncode, 0)

@@ -24,6 +24,7 @@ PREFIXES = ('tools/lib/', 'tools/scripts/', 'tools/deploy/', 'tools/infra/',
             'tools/txid/deploy/', 'tools/txid/lib/', 'tools/txid/scripts/')
 EXACT = {'tools/transparent/__init__.py', 'tools/enhance/__init__.py', 'tools/receiver/__init__.py',
          'tools/status/__init__.py', 'tools/txid/__init__.py',
+         'src/shared/pir-service-discovery/Cargo.toml',
          'tools/ci/release.py', 'docs/operations.md', 'docs/transparent/prepared-distribution.md'}
 EXTENSIONS = {'.py', '.sh', '.toml', '.service', '.timer', '.in', '.caddy', '.tf', '.tftpl', '.yaml'}
 MAX_BYTES = 32 * 1024 * 1024
