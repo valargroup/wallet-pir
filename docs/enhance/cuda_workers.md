@@ -96,9 +96,10 @@ gh workflow run ci-qualify.yml --ref main -f family=enhance -F include-cuda=true
 Use the exact revision of that successful run; a CPU-only qualification does not
 produce or qualify a CUDA artifact. The GPU worker runs the CUDA
 `pir-query-server`; the host does not run the publisher as the worker. The
-deploy inventory lists it with `"artifact_kind": "enhance-pir-native-cuda"`, and
-`wallet-pir-deploy.py deploy enhance` takes the full-CI CUDA bundle through
-`--extra-archive`; see [deployment](deployment.md#deploy-cli).
+deploy inventory lists it with `"artifact_kind": "enhance-pir-native-cuda"`.
+`pir-deploy` has no CUDA asset, so the GPU worker's binary goes through
+[`deploy-cuda.py`](../../tools/enhance/scripts/deploy-cuda.py) from the
+`deploy-enhance-cuda.yml` workflow with the full-CI CUDA bundle.
 
 ## Shard assignment
 

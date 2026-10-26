@@ -1,8 +1,8 @@
 # Enhance PIR deployment
 
-Production changes use `tools/scripts/wallet-pir-deploy.py` under the shared
-production lock. Run plan and preflight first, pin exact executable/configuration
-identities, and preserve a verified rollback baseline. Source examples and local
+Binary releases roll out with [`pir-deploy`](../operations.md#deploying-a-build):
+`pir-deploy --dry-run product enhance <sha>` first, then the deploy; each host keeps
+its previous release for rollback. Source examples and local
 smoke tests do not establish the live deployment. Historical receipts remain in
 [retained evidence](../../evidence/enhance/README.md).
 
@@ -145,9 +145,8 @@ local test result or successful process restart alone does not meet this gate.
 
 ## Deploy CLI
 
-Use the repository deployment CLI for plan, preflight, deploy, status and
-rollback. Preserve its transaction journal and production-lock ownership. Do not
-copy binaries, signal processes or change units by hand. The operator confirms
+Use `pir-deploy` for deploy, status and rollback; it holds the fleet deploy lease
+while it runs. Do not copy binaries, signal processes or change units by hand. The operator confirms
 the concrete production plan after exact artifacts, full qualification and a
 watchdog rehearsal are reviewable.
 
@@ -170,10 +169,9 @@ epoch, invalidates retained sessions and keeps newer floors on both sides;
 interrupted retries reuse that reservation. A new reviewed attempt after completed
 restoration can reuse those higher floors; the failed transaction cannot resume
 forward progress. Runtime
-and configuration rollback never restores an older safety-state backup. The
-transaction's `publisher-cutover-rollback` command remains available after a
-successful cutover. Retain its request, operations release, journal, old
-executables and credential references until qualification is complete.
+and configuration rollback never restores an older safety-state backup. Retain the
+cutover's request, operations release, journal, old executables and credential
+references until qualification is complete.
 
 ## Repairing historical fees
 

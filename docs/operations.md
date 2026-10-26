@@ -68,9 +68,6 @@ later build. Deploying the release a component already runs changes nothing.
 `pirctl adopt <component>` moves a unit that names a release path onto the `current`
 link without restarting it. It sets aside drop-ins that only repeat `ExecStart`.
 
-The older `wallet-pir-deploy.py` rollouts below stay available until each mode has run
-in production with `pir-deploy`.
-
 ## Architecture and ownership
 
 | Product | What runs | Product authority |
@@ -97,131 +94,19 @@ Each inventory role names its actual host, unit, private addresses and artifact
 variant. The [example inventory](../tools/enhance/deploy/deploy-inventory.example.json)
 uses documentation addresses and is not the live fleet.
 
-## Coordinated contract releases
-
-`fleet-release-*` operates on the reviewed inventory across distributed roles,
-unified query nodes and mixed fleets. A process is identified by verified machine
-identity and service unit. A unified node is replaced once and accepted only when
-every enabled product passes its independent encrypted-answer check. The publisher
-is a separate process, including when it shares that machine.
+## Contract releases
 
 Both executables support configuration-free `--contract-info`. It reports the
 compiled discovery version, products and optional CUDA backend without opening
-state or initializing CUDA. `contracts.json` in new release archives binds this
-report to executable checksums and the source revision. These are distinct from
-the products enabled in the installed configuration and from qualification.
+state or initializing CUDA. Each build release's `contract.json` records it for
+every executable. These are distinct from the products enabled in the installed
+configuration and from qualification.
 
-An update within the same discovery-contract major can select only the changed
-processes. A publisher major change requires compatible candidates for **every**
-registered consumer of that origin, including standby, CUDA and unified roles.
-Every other publisher used by a shared process must remain compatible too. Unknown
-dependencies, duplicate ownership, missing predecessor binaries, a candidate
-missing an enabled product, and plan drift refuse before shutdown. Private
-query-to-query protocol qualification remains a separate release requirement.
-
-Prepare a private, checksum-pinned `fleet-release/1` request. It contains:
-
-- `source`: full `revision` and `submitted_unix`, captured when the source commit
-  was selected, before queueing, builds or qualification.
-- `inventory_sha256`, `select` (distinct `host/unit` keys), and `publishers`
-  (normalized `https://host:port` origins mapped to their publisher process).
-- `executables`: one entry per inventory artifact variant, with `sha256` and the
-  executable's complete `--contract-info` JSON as `contract`. A unified node uses
-  one executable with the required feature union. CPU and CUDA remain separate
-  variants; this discovery identity does not replace their private protocol pins.
-  A CUDA-capable unified query process uses the `pir-query-server-cuda` artifact
-  kind, allowing CPU and CUDA feature unions in the same inventory.
-- `probes`: one independent `{host, argv, timeout}` encrypted-answer command per
-  affected product. `process_probes[host/unit]` must cover each enabled product of
-  every selected multi-product node, directed at that node. Breaking requests
-  require `restore_argv` on each check, using a predecessor-compatible client.
-  Probe commands retain the existing source, artifact, oracle and answer pins;
-  a successful readiness HTTP request cannot substitute for them.
-  Identical fleet and process checks for the same product run once and record
-  acceptance for both obligations. The complete specifications must match,
-  including the execution host, timeout and recovery command; checks through
-  different origins remain independent.
-- Existing pinned `product_requests` for legacy Transparent worker upgrades,
-  when selected. Their authority, resource, warmup, state preservation and load
-  checks remain in force. Root HTTPS provider roles preserve installed state.
-- Optional `loads`: managed checker `{host, unit}` pairs. The installed publisher
-  checker is discovered automatically. Its activity and critical disk latch are
-  preserved; `publisher_policies[host/unit].expected_disk_latch_sha256` may pin an
-  acknowledged existing latch. Legacy Transparent checker pins are captured,
-  updated after successful acceptance, and restored with the predecessor.
-- Optional `preparation`: reported build/qualification timing evidence bound to
-  the same `source_revision` and `executables` variant-to-digest map, with a
-  `seconds` map. This reports elapsed work; it does not qualify artifacts.
-
-Use the exact qualified binaries from the existing release preparation and
-archive-verification path. A `--binary` path supplies already-built bytes; it
-does not build or qualify them. Required service and hardware qualification,
-production `--release` settings and independent oracles are unchanged.
-Alternatively, pin `executables[variant].archive` with `kind` and `sha256` and
-pass `--archive variant=FILE` to preparation. Extraction verifies the complete
-archive inventory, source revision, clean-source metadata and executable hashes;
-the host then verifies the actual executable's report. Artifact integrity alone
-does not establish qualification.
-
-```sh
-python3 <release>/tools/scripts/wallet-pir-deploy.py --inventory fleet.json fleet-release-prepare \
-  --request release.json --request-sha256 <request-digest> \
-  --binary pir-publisher=<verified-publisher> --binary pir-query-server=<verified-query>
-python3 <release>/tools/scripts/wallet-pir-deploy.py --inventory fleet.json fleet-release-plan \
-  --request release.json --request-sha256 <request-digest>
-python3 <release>/tools/scripts/wallet-pir-deploy.py --inventory fleet.json fleet-release-preflight \
-  --request release.json --request-sha256 <request-digest> --expect-plan-sha256 <reviewed-plan-digest>
-python3 <release>/tools/scripts/wallet-pir-deploy.py --inventory fleet.json fleet-release-deploy \
-  --request release.json --request-sha256 <request-digest> --expect-plan-sha256 <reviewed-plan-digest>
-```
-
-Preparation stages verified executables while current services run. Copies shared
-by several services on one machine transfer once and copy locally into their
-immutable release roots. Configuration and product checks finish before shutdown.
-Activation revalidates the reviewed plan under one production lock, pauses managed
-load, stops consumers concurrently, and then joins the publisher and its writers.
-It installs the candidate files while stopped and reloads systemd once per machine.
-Publisher readiness and discovery from the required origins precede consumer
-startup. Independent hosts run concurrently, at most four; dependent routers and
-ingress wait for their peers. A machine preparing a query process cannot run a
-native acceptance workload concurrently. Transparent's query-prioritized
-background artifact validation policy is unchanged.
-
-Every enabled product must pass readiness before commit. Independent retrieval
-acceptance covers every affected product by default; a request can explicitly
-select `probe_products` for a scoped operational rollout. The request digest and
-journal retain that scope. A failure drains outstanding host
-operations, stops candidate consumers, restores and verifies the publisher, then
-restores complete consumer units/configurations/executables in dependency order.
-Failure to deploy and failure to restore are recorded separately. An interruption
-of the runner leaves durable intent on the lock coordinator under
-`/opt/wallet-pir-fleet/transactions/<id>.json`; unfinished fleet transactions fence
-other forward deployment entry points. Recovery refuses foreign file/process
-changes. No immutable data rebuild, large download or full artifact rescan is
-introduced into the interruption.
-
-Using the **recorded operations package**, inventory and request pins, run
-`fleet-release-status` for recorded state, `fleet-release-verify` to finish
-acceptance or recheck a committed fleet without restarts, and
-`fleet-release-reconcile` (or `fleet-release-rollback`) to restore the predecessor.
-Recovery retries reuse an acknowledged restored process that is still warming.
-Retain that operations release and all predecessor artifacts until recovery is
-no longer needed. Old transactions continue through their original product
-operations package and recovery commands.
-
-For repeated compatible query-node deployments, pin a short acceptance profile
-in the reviewed request: Enhance at two queries per second for eight seconds
-after two seconds of warmup, Status at twenty lookups per second for five seconds,
-one twelve-second History campaign covering recent and archive samples, and the
-existing Receiver and transaction-detail exact-answer checks. Require zero
-incorrect answers, errors or unstarted Status lookups. Keep independent oracle
-and artifact pins, freshness checks, production parameters and all enabled
-products. Run a repeated History endpoint once rather than repeating the same
-campaign. This profile reduces deployment sampling; it does not establish
-sustained-load qualification or replace required release and hardware campaigns.
-
-The clocks and unproven performance targets are defined in
-[deployment latency](ci-performance.md#fleet-release-clocks-and-evidence).
+A release within the live publisher's contract major can move one component group
+at a time. A major change moves the publisher and every consumer together:
+`pir-deploy product <group> <sha> --breaking` or `pir-deploy all <sha>`. Partial
+modes refuse it. Private query-to-query protocol qualification remains a separate
+release requirement.
 
 ## Operations releases
 
@@ -323,9 +208,9 @@ without staging when the transaction that promoted it is recorded and its files
 still match; that rehearsal (install, rollback, plan, install) reuses the exact
 retained bytes and never overwrites the directory.
 
-A clean installed package may install a newer package revision. Binary deploys
-keep requiring the operations package and the binary archive to name the same
-source revision.
+A clean installed package may install a newer package revision. The remaining
+binary commands (`transparent-binary-*`) keep requiring the operations package and
+the binary archive to name the same source revision.
 
 **Recovery.** Before each step the runner journal and the coordinator record the
 intent, and after it the completion. A transport failure leaves the step's outcome
@@ -383,96 +268,37 @@ keyed `role@host:unit`. A host may name its own existing `key` and a
 `known_hosts`/`known_hosts_sha256` pair, falling back to the inventory-wide `ssh`
 settings; only the private-key path is recorded, never key material. A product
 inventory that lists only its own services keeps working for that product's
-commands. `status SERVICE --only ROLE[@HOST]` and `ancillary-status [NAME]` are
-read-only and report an unreachable host as a result instead of leaving it out. The example inventory is complete in shape but uses
+commands. `ancillary-status [NAME]` is read-only and reports an unreachable host
+as a result instead of leaving it out. The example inventory is complete in shape but uses
 documentation values; it is not the live fleet.
 
 ```sh
 python3 <release>/tools/scripts/wallet-pir-deploy.py --inventory /path/to/inventory.json fleet --complete
-python3 <release>/tools/scripts/wallet-pir-deploy.py --inventory /path/to/inventory.json --json status enhance
-python3 <release>/tools/scripts/wallet-pir-deploy.py --inventory /path/to/inventory.json --json status transparent-history
 ```
 
-`fleet` reads configured roles without contacting hosts. `status` reports observed
-systemd state and executable identity plus the latest transaction, not encrypted
-query correctness. Structured results name the service, operation, roles, hosts,
-phases, changes and refusal reasons. The importable `deploy.lifecycle.Lifecycle`
-interface supports plan, preflight, deploy, status and rollback over the existing
-engine; the CLI consumes that interface. Mixed CPU/GPU releases emit one JSON
-result per artifact group, each with its binary digest and separate transaction.
-
-Immutable binary staging uploads to up to four hosts concurrently under the
-production lock. Every upload and binary self-check finishes before activation.
-A staging failure waits for the other uploads to finish before releasing the
-lock; no units restart. Activation and rollback keep their descriptor order.
-
-Enhance, Status and Receiver use the ordinary binary lifecycle:
-
-```sh
-python3 <release>/tools/scripts/wallet-pir-deploy.py --inventory /path/to/inventory.json capture-baseline enhance
-python3 <release>/tools/scripts/wallet-pir-deploy.py --inventory /path/to/inventory.json --json plan enhance --archive enhance-pir-native.tar.gz --kind enhance-pir-native --sha <full-revision>
-python3 <release>/tools/scripts/wallet-pir-deploy.py --inventory /path/to/inventory.json preflight enhance --archive enhance-pir-native.tar.gz --kind enhance-pir-native --sha <full-revision>
-```
-
-Review the complete captured unit and its drop-ins, the planned differences and
-the binary identities. Supply the matching CUDA artifact for selected GPU roles;
-missing variants are refused. Staging preflight honors baseline and configuration
-refusals before uploading anything. Deployment holds the existing production lock,
-records effects in the existing journal and retains the existing rollback rules.
-After deployment, report status and the rollback command from that product's runbook.
-
-If restoration restarted a process but readiness timed out, rerun rollback. The
-journal retains the acknowledged systemd invocation. Recovery can keep that same
-process preparing when the restored files and loaded unit still match; it repeats
-the full readiness and product authority checks before marking restoration done.
-A lost restart reply, changed files or a different invocation requires another
-restart. The receipt alone never establishes readiness.
+`fleet` reads configured roles without contacting hosts. Binary rollouts and their
+status go through `pir-deploy` (see [Deploying a build](#deploying-a-build)), not
+this inventory tool.
 
 Transparent history and display appear in the same role view and process status,
-but their mutation drivers remain product recipes: `schema-*` and
-`txid-display-*`. Ordinary binary deploys refuse those services because changing
-a publication is more than replacing an executable. Their retained request,
-plan-digest, authority, quiescence and recovery requirements continue to apply.
+but their publication drivers remain product recipes: `schema-*` and
+`txid-display-*`, because changing a publication is more than replacing an
+executable. Their retained request, plan-digest, authority, quiescence and recovery
+requirements continue to apply.
 
 ## Recover an interrupted rollout
 
-Recovery repeats only reviewed steps for the checkpoint the transaction recorded.
-Start from what the tools report, not from a new plan of your own.
+A failed `pirctl deploy` restores the previous release on that host by itself, and
+`pir-deploy` rolls back the components of the failed wave. Start from what the
+tools report, not from a new plan of your own:
 
-1. Read the latest transaction (`status <service>`, or `publisher-cutover-status`
-   for the unified publisher). When a publisher deploy fails and its automatic
-   rollback fails too, the journal keeps both errors apart:
-   `failure.deploy_error` says why the rollout stopped and
-   `failure.rollback_error` says where restoration stopped. The command's error
-   names both.
-2. For a publisher cutover whose restoration stopped before verification
-   finished, use the staged Status repair path:
-
-   ```sh
-   python3 <release>/tools/scripts/wallet-pir-deploy.py publisher-cutover-repair-probe-plan --request <request.json> --request-sha256 <digest>
-   python3 <release>/tools/scripts/wallet-pir-deploy.py publisher-cutover-repair-probe-verify --request <request.json> --request-sha256 <digest> --expect-plan-sha256 <plan digest>
-   ```
-
-   It applies only when all of these hold:
-   - the continuous-load checker is stopped;
-   - the transaction is this request's restored transaction: restoration
-     recorded the publisher start and both serving roles passed their restored
-     identity checks;
-   - no effect is pending (no recorded intent);
-   - the replacement Status probe client is the staged publisher executable,
-     unchanged since staging.
-
-   The plan pins the restored processes and the replacement client; verify
-   repeats all four exact-answer checks and finishes the rollback without
-   stopping or starting any service. [The unified publisher](publisher.md)
-   describes what it checks.
-3. Outside those preconditions the repair refuses and names the check that
-   failed. That is an unsupported checkpoint: report it with the refusal and the
-   transaction's recorded phase. Do not bypass the guard, and do not fall back to
-   a generic `rollback`, which repeats restoration effects. Use another recovery
-   command only where this runbook or [the unified publisher](publisher.md) names
-   it for that exact phase (`publisher-cutover-continue` for a lost stop reply,
-   `publisher-cutover-verify` for verification recovery).
+1. `pir-deploy status` prints the release each component runs.
+2. `pir-deploy rollback <group|host>` swaps a component back to its `previous`
+   release and verifies it. On one host, `pirctl rollback <component>` does the
+   same.
+3. An interrupted run leaves the deploy lease on the publisher host until it
+   expires (20 minutes, 70 with `--cold`), so a second deploy cannot start
+   meanwhile. APM ends an unfinished alert window on its own.
 
 Remote checks during recovery go through `ssh-check`. Never rerun a failed
 `ssh-check` unchanged: read its JSON result (the last stderr line) and change
@@ -540,29 +366,13 @@ python3 <release>/tools/scripts/wallet-pir-roles.py --service receiver --role qu
   --settings settings.json --release /opt/receiver-pir/releases/<sha256>
 ```
 
-The existing `plan`/`preflight`/`deploy`/`rollback` install, update and remove
-them with the usual exact artifact identity, pinned hosts, lock and journal:
-
-1. `capture-baseline SERVICE --only ROLE` records the unit as absent.
-2. `plan`/`preflight` show the action `install` and every file written. A unit
-   is installed only where the entry says `"install": true`; a fresh install
-   refuses to overwrite a configuration file it did not render.
-3. `deploy` stages the release, then runs the product's own check on the
-   staged release against a staged copy of the configuration before any unit
-   changes: `pir-query-server --config FILE --check`. Receiver downloads
-   immutable objects over HTTPS and requires fresh publisher authority before
-   activating them. Other workers use their registered configuration checks. The
-   unit is then written, enabled, started and verified: active, the release's
-   digest running, health answering with that `binary_sha256`, and the role's
-   own readiness where it has one.
-4. A failure, or `rollback`, returns a fresh install to absence: the unit is
-   stopped, disabled and removed with the configuration it wrote. State
-   directories stay; they hold no authority.
-
-Transparent services keep their product recipes for every other role; the
-shared engine admits them only when `--only` selects external workers (and a
-rollback only of such a transaction). Verification proves the process and its
-identity, never serving authority:
+Install the rendered unit and configuration on the operator's host, then list the
+worker in that host's `/etc/wallet-pir/pirctl.conf` so `pir-deploy` rolls its
+releases like any other component. With `config=` on that line, `pirctl prepare`
+runs the new release's own check against the installed configuration before anything
+restarts (`pir-query-server --config FILE --check`). Receiver downloads immutable objects
+over HTTPS and requires fresh publisher authority before activating them.
+Verification proves the process and its identity, never serving authority:
 
 | Role | Controller and dependencies | Ready when |
 |---|---|---|

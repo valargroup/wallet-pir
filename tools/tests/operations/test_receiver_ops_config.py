@@ -21,12 +21,12 @@ QUERY = {
 
 
 class ReceiverOpsConfig(unittest.TestCase):
-    def test_shared_deployment_replaces_one_off_cutover_commands(self):
+    def test_binary_rollouts_leave_the_operations_command_line(self):
         from wallet_pir_ops.deploy import cli
         help_text = cli.parser().format_help()
-        self.assertIn('publisher-cutover-deploy', help_text)
-        self.assertIn('fleet-release-deploy', help_text)
-        self.assertNotIn('receiver-routing-', help_text)
+        self.assertIn('tools/deploy/pir-deploy', help_text)
+        for retired in ('publisher-cutover-', 'fleet-release-', 'receiver-routing-', 'capture-baseline'):
+            self.assertNotIn(retired, help_text)
         self.assertNotIn('query-node-provision', help_text)
 
     def test_query_uses_https_only_and_preserves_capacity_and_sandbox(self):

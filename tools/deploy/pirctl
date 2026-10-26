@@ -231,9 +231,13 @@ public() {
   if [ -n "${3:-}" ]; then
     sha=$(short "$3")
     mkdir -p "$OPT/pir-probe/releases"
-    fetch_probe "$sha" "$OPT/pir-probe/releases/$sha"
+    # The driver probes several origins at once; one of them unpacks the probe.
+    (
+      flock 8
+      fetch_probe "$sha" "$OPT/pir-probe/releases/$sha"
+      ls -1dt "$OPT/pir-probe/releases"/*/ | tail -n +4 | xargs rm -rf
+    ) 8>"$OPT/pir-probe/.lock"
     probe=$OPT/pir-probe/releases/$sha/probe/pir-probe
-    ls -1dt "$OPT/pir-probe/releases"/*/ | tail -n +4 | xargs rm -rf
   else
     probe=$(ls -t "$OPT"/*/current/probe/pir-probe 2>/dev/null | head -1)
   fi

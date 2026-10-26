@@ -1,12 +1,13 @@
 ---
 name: wallet-pir-prod-host
-description: Build, debug, repair, and deploy Wallet PIR directly on production hosts over SSH, reusing host build caches and the existing transactional deployment tool. Use for authorized production rollouts, startup failures, slow publication, and interrupted deployments.
+description: Build, debug, repair, and deploy Wallet PIR directly on production hosts over SSH, reusing host build caches, and deploy build releases with pir-deploy and pirctl. Use for authorized production rollouts, startup failures, slow publication, and interrupted deployments.
 ---
 
 # Wallet PIR production host workflow
 
-Prefer building and investigating on the affected Linux host, then activating
-through `tools/scripts/wallet-pir-deploy.py`. Keep the iteration short: one pinned
+Prefer building and investigating on the affected Linux host, then activating a
+build release through `tools/deploy/pir-deploy`, which runs `tools/deploy/pirctl` on
+each host. Keep the iteration short: one pinned
 source checkout, one reusable build cache, focused checks, and one acceptance pass
 per deployed component. Read the relevant sections of [operations](../../../docs/operations.md)
 and [publisher deployment](../../../docs/publisher.md) for the operation selected.
@@ -18,8 +19,8 @@ and [publisher deployment](../../../docs/publisher.md) for the operation selecte
   build, repair, or deployment within the same scope.
 - Pin one source revision for the rollout. New merges do not silently change an
   in-flight candidate. Record later changes for the next candidate.
-- Discover the current operator inventory, installed configuration, transaction
-  state, and rollback artifacts. Obtain hosts and roles from that inventory;
+- Discover the current `pir-deploy` inventory, installed configuration, what each
+  host runs (`pir-deploy status`), and its previous release. Obtain hosts and roles from that inventory;
   historical IPs, process IDs, scratch paths, hashes, and receipts are not defaults.
 - Keep the requested products and transport. “HTTP” is not permission to replace
   existing HTTPS. A shared publisher restart must preserve unselected products;
@@ -65,34 +66,27 @@ predecessor.
 For Transparent feature examples and recovery details, read
 [the Transparent recipe](references/transparent.md).
 
-## Activate with the existing transaction
+## Activate with pir-deploy
 
-Run the current CLI's `--help` and the selected operation's help before composing
-arguments. Use its plan/preflight, production lock, request/plan digests, journal,
-status, and rollback. Keep the same state directory throughout the transaction.
-Use a host-local runner when its existing inventory and credentials support it;
-otherwise run the CLI from the authenticated operator machine while the build
-and expensive diagnostics stay on the host. Do not invent a local-runner flag,
-copy credentials to enable one, or recreate the deployment engine in a wrapper.
+`pir-deploy` installs only published `build-<sha12>` releases. Commit a host fix,
+push it, and dispatch the Release workflow on that branch
+(`gh workflow run release.yml --ref <branch>`) to get a deployable release; a binary
+built on the host is for diagnosis, not activation. Then, from the operator
+machine:
 
-Reuse an already-staged executable when the tool verifies its digest. Avoid
-unnecessary artifact round trips, cold target directories, repeated full suites,
-and additional verification ceremonies around checks the transaction already
-performs. Retain affected-service correctness and encrypted-answer acceptance;
-unrelated CI is not a deployment blocker when the user has explicitly waived it.
+- `pir-deploy --dry-run <mode> <sha>` checks every selected host without restarting
+  anything; then run the mode itself (`publisher`, `product <group>`, `unified`,
+  `all`; `--breaking` for a contract-major change). Deploy the publisher before
+  dependent query servers.
+- `pirctl` verifies readiness and the release's `pir-probe` and restores the previous
+  release on failure. `pir-deploy rollback <group|host>` and `pirctl rollback
+  <component>` swap back later; `pir-deploy status` shows what runs.
+- On loss of SSH, check `pir-deploy status` and the running process before acting.
+  A lost connection is neither success nor proof of rollback. The deploy lease
+  expires on its own; never remove another session's lease or kill its owner.
 
-Deploy the publisher before dependent query servers. Verify publisher discovery
-and publication availability over the existing HTTPS origin before restarting
-consumers. A CPU Transparent-only query binary must not replace an Enhance or
-Status serving executable. Changes to units, binaries, routes, or ownership go
-through the locked tool, including repairs and bounded shutdown handling.
-
-On loss of SSH, inspect the recorded transaction and the actual running process
-before acting. A lost connection is neither success nor proof of rollback. Use
-the supported continuation or verification operation for the observed phase;
-do not rebuild, restart, or roll back a healthy candidate merely to rerun the
-workflow. A command named `reconcile` may restore the predecessor: check its
-documented behavior first. Never remove another session's lock or kill its owner.
+Changes to units, configuration or routes are host configuration, not a release:
+make them deliberately and verify the service afterwards.
 
 ## Diagnose the affected service and accept once
 
@@ -117,7 +111,7 @@ Recovered disk space does not itself acknowledge a stopped checker's incident.
 Use filesystem free-space measurements to establish disk recovery; hard-linked
 directory sizes alone do not establish reclaimable bytes.
 
-Finish with the deployed source and artifact identities, transaction status,
+Finish with the deployed source and release identities, `pir-deploy status`,
 passed acceptance, rollback command, follow-up PRs, and specific remaining alerts
 or stopped observers. Keep receipts and raw output in ignored `.local-pir/`.
 Distinguish deployed, ready, encrypted-answer accepted, and fully qualified.

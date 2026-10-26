@@ -748,12 +748,11 @@ class CommandTests(PackageCase):
         calls = []
         with mock.patch('wallet_pir_ops.bundle.check_installed', side_effect=lambda **k: calls.append(k)):
             self.run_cli('ops-package-status')
-            cli.main(['--inventory', str(self.inventory_path), 'plan', 'enhance', '--sha256', 'f' * 64],
-                     executor=self.host, out=lambda line: None)
-            cli.main(['--inventory', str(self.inventory_path), 'deploy', 'enhance', '--archive', 'x', '--sha', B],
+            cli.main(['--inventory', str(self.inventory_path), 'coordinator-edge-deploy', '--request', 'x',
+                      '--request-sha256', 'f' * 64, '--expect-plan-sha256', 'f' * 64],
                      executor=self.host, out=lambda line: None)
         self.assertEqual(calls[0], {'mutation': False, 'revision': None})
-        self.assertEqual(calls[2], {'mutation': True, 'revision': B})
+        self.assertEqual(calls[1], {'mutation': True, 'revision': None})
 
     def test_installed_package_upgrades_but_keeps_binary_revision_matching(self):
         destination = self.dir / 'installed-a'
