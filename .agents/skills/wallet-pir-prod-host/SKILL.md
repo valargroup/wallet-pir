@@ -5,6 +5,9 @@ description: Build, debug, repair, and deploy Wallet PIR directly on production 
 
 # Wallet PIR production host workflow
 
+To ship a main commit's release, use the `wallet-pir-deploy` skill. This workflow
+covers host builds, repairs and investigations that a release does not.
+
 Prefer building and investigating on the affected Linux host, then activating
 through `tools/scripts/wallet-pir-deploy.py`. Keep the iteration short: one pinned
 source checkout, one reusable build cache, focused checks, and one acceptance pass
