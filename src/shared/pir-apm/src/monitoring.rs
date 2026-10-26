@@ -25,6 +25,7 @@ pub struct View {
     pub chain: Chain,
     pub peer: Peer,
     pub publication: Publication,
+    pub receiver: ReceiverAudit,
 }
 /// Fresh measurements used by publication rules, also retained by the observer.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -84,6 +85,20 @@ pub struct Chain {
     pub height: u64,
     pub hash: String,
     pub advanced_at: u64,
+    pub error: bool,
+}
+/// The Receiver payout audit as the publisher's health route reports it.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ReceiverAudit {
+    pub sampled_at: u64,
+    /// The newer of the last successful NEAR read and the stored feed cursor, so
+    /// a publisher restart does not look like a stalled audit. Kept across
+    /// reports that carry neither, such as before a restarted publisher's first
+    /// read.
+    pub last_read: Option<u64>,
+    /// When this monitor first read the health route. Staleness counts from
+    /// here until the route reports a read.
+    pub since: u64,
     pub error: bool,
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -362,6 +377,9 @@ pub fn start(dashboard: SharedDashboard, config: Config) -> Result<()> {
     ) {
         tokio::spawn(chain_loop(dashboard.clone(), url, PathBuf::from(cookie)));
     }
+    if let Ok(url) = std::env::var("PIR_APM_RECEIVER_HEALTH_URL") {
+        tokio::spawn(receiver_loop(dashboard.clone(), url));
+    }
     if let Ok(url) = std::env::var("PIR_APM_PEER_STATUS_URL") {
         tokio::spawn(peer_loop(dashboard, url));
     }
@@ -386,6 +404,8 @@ pub struct Policy {
     pub publication_warning_blocks: u64,
     pub publication_critical_blocks: u64,
     pub publication_failure_hold_seconds: u64,
+    /// How long the Receiver payout audit may go without a successful NEAR read.
+    pub receiver_audit_stale_seconds: u64,
     /// Transparent service-quality and capacity thresholds.
     pub quality: crate::quality::Policy,
 }
@@ -407,6 +427,7 @@ impl Default for Policy {
             publication_warning_blocks: 8,
             publication_critical_blocks: 16,
             publication_failure_hold_seconds: 120,
+            receiver_audit_stale_seconds: 1800,
             quality: Default::default(),
         }
     }
@@ -436,6 +457,7 @@ impl Policy {
                 && p.publication_warning_blocks > 0
                 && p.publication_critical_blocks > p.publication_warning_blocks
                 && p.publication_failure_hold_seconds > 0
+                && p.receiver_audit_stale_seconds > 0
                 && p.quality.valid(),
             "invalid alert policy"
         );
@@ -839,6 +861,58 @@ pub fn conditions(d: &DashboardData, now: u64, p: &Policy) -> Vec<Condition> {
         0,
         chain.sampled_at,
     );
+    let receiver = &d.monitoring.receiver;
+    if receiver.sampled_at > 0 {
+        let sampled = fresh(receiver.sampled_at, now) && !receiver.error;
+        // Before any read the grace is unknown, not healthy, so an APM
+        // restart cannot recover an incident that is still failing.
+        let stale = sampled
+            .then(|| match receiver.last_read {
+                Some(read) => Some(now.saturating_sub(read) >= p.receiver_audit_stale_seconds),
+                None => (now.saturating_sub(receiver.since) >= p.receiver_audit_stale_seconds)
+                    .then_some(true),
+            })
+            .flatten();
+        add(
+            "receiver_payout_crosscheck_paused".into(),
+            "receiver".into(),
+            "warning",
+            stale,
+            // A NEAR outage or bad key stops only the cross-check, so say so.
+            // Recovery reuses this text, so the pause note follows the verdict.
+            format!(
+                "{}{}",
+                receiver.last_read.map_or("No NEAR payout read yet".into(), |read| {
+                    format!(
+                        "Last NEAR payout read {} min ago",
+                        now.saturating_sub(read) / 60
+                    )
+                }),
+                if stale == Some(true) {
+                    ". Receiver lookups are unaffected, but new payouts are not \
+                     cross-checked against NEAR until reads resume."
+                } else {
+                    ""
+                }
+            ),
+            format!(
+                "no NEAR payout read for {} min (key or NEAR API; see `near feed deferred` in the publisher journal)",
+                p.receiver_audit_stale_seconds / 60
+            ),
+            0,
+            receiver.sampled_at,
+        );
+        add(
+            "receiver_health".into(),
+            "receiver".into(),
+            "warning",
+            Some(!sampled),
+            "Receiver health route".into(),
+            "health unavailable for 120s".into(),
+            120,
+            if sampled { receiver.sampled_at } else { now },
+        );
+    }
     let peer = &d.monitoring.peer;
     add(
         "external_monitor".into(),
@@ -1004,6 +1078,47 @@ async fn peer_loop(d: SharedDashboard, url: String) {
         drop(v);
         tokio::time::sleep(Duration::from_secs(15)).await;
     }
+}
+
+/// Samples the Receiver health route every 30 seconds for the payout audit's
+/// last successful NEAR read (see [`ReceiverAudit`]).
+async fn receiver_loop(d: SharedDashboard, url: String) {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(4))
+        .build()
+        .expect("receiver health client");
+    let mut audit = ReceiverAudit::default();
+    loop {
+        let result = async {
+            client
+                .get(&url)
+                .send()
+                .await?
+                .error_for_status()?
+                .json::<serde_json::Value>()
+                .await
+        }
+        .await;
+        let now = incidents::unix_time();
+        audit.sampled_at = now;
+        audit.error = result.is_err();
+        if let Ok(body) = result {
+            if audit.since == 0 {
+                audit.since = now;
+            }
+            audit.last_read = audit.last_read.max(audit_read(&body));
+        }
+        d.write().await.monitoring.receiver = audit.clone();
+        tokio::time::sleep(Duration::from_secs(30)).await;
+    }
+}
+
+/// The newer of the health report's in-memory NEAR read and its stored feed
+/// cursor for the payout audit, or `None` when neither has one.
+fn audit_read(health: &serde_json::Value) -> Option<u64> {
+    let read = health["near"]["reads"]["near-payout-audit"].as_u64();
+    let stored = health["indexer"]["feeds"]["near-payout-audit"].as_u64();
+    read.max(stored)
 }
 
 fn progress_ok(d: &DashboardData, now: u64) -> bool {
@@ -1294,6 +1409,85 @@ mod tests {
             .into_iter()
             .find(|c| c.key == key)
             .unwrap()
+    }
+    #[test]
+    fn receiver_audit_staleness_and_health_follow_the_health_route() {
+        let now = 10_000;
+        let mut d = view(now);
+        assert!(
+            conditions(&d, now, &Policy::default())
+                .iter()
+                .all(|c| c.resource != "receiver"),
+            "an unconfigured health route adds no Receiver conditions"
+        );
+        d.monitoring.receiver = ReceiverAudit {
+            sampled_at: now,
+            last_read: Some(now - 60),
+            since: now - 3600,
+            error: false,
+        };
+        assert_eq!(
+            check(&d, now, "receiver_payout_crosscheck_paused").firing,
+            Some(false)
+        );
+        assert_eq!(check(&d, now, "receiver_health").firing, Some(false));
+        // Recovery reuses the observed text, so only a stale read mentions the pause.
+        let fresh_text = check(&d, now, "receiver_payout_crosscheck_paused").observed;
+        assert_eq!(fresh_text, "Last NEAR payout read 1 min ago");
+        d.monitoring.receiver.last_read = Some(now - 1800);
+        let paused = check(&d, now, "receiver_payout_crosscheck_paused");
+        assert_eq!(paused.firing, Some(true));
+        assert!(paused
+            .observed
+            .starts_with("Last NEAR payout read 30 min ago. Receiver lookups are unaffected"));
+        // Without any reported read, staleness counts from the first sample, so
+        // a publisher that has not read yet gets the full threshold, and the
+        // grace leaves an incident from before an APM restart open.
+        d.monitoring.receiver.last_read = None;
+        d.monitoring.receiver.since = now - 60;
+        assert_eq!(
+            check(&d, now, "receiver_payout_crosscheck_paused").firing,
+            None
+        );
+        d.monitoring.receiver.since = now - 1800;
+        assert_eq!(
+            check(&d, now, "receiver_payout_crosscheck_paused").firing,
+            Some(true)
+        );
+        // An unreachable route leaves staleness unknown and fails health instead.
+        d.monitoring.receiver = ReceiverAudit {
+            sampled_at: now,
+            last_read: None,
+            since: 0,
+            error: true,
+        };
+        assert_eq!(
+            check(&d, now, "receiver_payout_crosscheck_paused").firing,
+            None
+        );
+        let health = check(&d, now, "receiver_health");
+        assert_eq!((health.firing, health.hold_seconds), (Some(true), 120));
+        d.monitoring.receiver = ReceiverAudit {
+            sampled_at: now - 100,
+            last_read: Some(now - 60),
+            since: now - 3600,
+            error: false,
+        };
+        assert_eq!(check(&d, now, "receiver_health").firing, Some(true));
+    }
+    #[test]
+    fn audit_read_prefers_the_newer_of_read_and_stored_cursor() {
+        let health = |read: Option<u64>, stored: Option<u64>| {
+            serde_json::json!({
+                "near": {"reads": {"near-payout-audit": read}},
+                "indexer": {"feeds": {"near-payout-audit": stored}},
+            })
+        };
+        assert_eq!(audit_read(&health(Some(5), Some(9))), Some(9));
+        assert_eq!(audit_read(&health(Some(9), None)), Some(9));
+        // A restarted publisher has no read yet but keeps its stored cursor.
+        assert_eq!(audit_read(&health(None, Some(7))), Some(7));
+        assert_eq!(audit_read(&health(None, None)), None);
     }
     #[test]
     fn advancing_behind_tip_is_not_a_stall_but_stalls_and_backlogs_are_detected() {
