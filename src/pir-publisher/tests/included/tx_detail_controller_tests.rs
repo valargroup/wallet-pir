@@ -905,6 +905,44 @@ fn verify_reproduces_a_running_root() {
 }
 
 #[cfg(feature = "qualification-tests")]
+#[tokio::test(flavor = "multi_thread")]
+async fn restart_bench_prepares_the_same_publication_on_every_pass() {
+    let temp = tempfile::tempdir().unwrap();
+    let journal = temp.path().join("journal");
+    fixture::write_journal(&journal, 0, 8, 0);
+    let store = EventStore::open_existing(&journal).unwrap();
+    let root = temp.path().join("root");
+    bootstrap(&store, &root, &fixture::layout(&store, 1, 16), 7).unwrap();
+    let passes = crate::tx_detail::offline::bench_restore(&root, 2)
+        .await
+        .unwrap();
+    assert_eq!(passes.len(), 2);
+    assert!(passes[0]["files"].as_u64().unwrap() > 0);
+    for field in ["inventory_sha256", "files", "bytes"] {
+        assert_eq!(passes[0][field], passes[1][field], "{field}");
+    }
+}
+
+#[tokio::test]
+async fn restart_bench_refuses_a_root_another_process_owns() {
+    let temp = tempfile::tempdir().unwrap();
+    let journal = temp.path().join("journal");
+    fixture::write_journal(&journal, 0, 8, 0);
+    let store = EventStore::open_existing(&journal).unwrap();
+    let root = temp.path().join("root");
+    bootstrap(&store, &root, &fixture::layout(&store, 1, 16), 7).unwrap();
+    let revision = root.join("distribution-revision.json");
+    let before = std::fs::read(&revision).ok();
+    let _owner = crate::tx_detail::controller::own_root(&root).unwrap();
+    let error = crate::tx_detail::offline::bench_restore(&root, 1)
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("owns this root"), "{error}");
+    // Refused before anything reserved a distribution revision.
+    assert_eq!(std::fs::read(&revision).ok(), before);
+}
+
+#[cfg(feature = "qualification-tests")]
 #[test]
 fn bench_records_follow_the_requested_case_mix() {
     // Large enough that the 1% of outputs without an address is countable.

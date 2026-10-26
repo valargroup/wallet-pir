@@ -1,6 +1,6 @@
 //! Offline tools around the display controller: verifying a root against its
-//! journal, planning a bootstrap start, benching recent shards and writing
-//! synthetic journals. None of them publish.
+//! journal, planning a bootstrap start, benching recent shards and restart
+//! preparation, and writing synthetic journals. None of them publish.
 
 use zakura_pir_protocol::transparent::events as transparent_events;
 use zakura_pir_publisher::transparent as transparent_shard;
@@ -276,6 +276,44 @@ pub fn bench_recent(
             "used_bytes": shard.used_bytes, "fill": size as f64 / slots as f64,
             "build_s": shard.timings.build_s, "verify_s": shard.timings.verify_s,
             "digest_s": shard.timings.digest_s, "write_s": shard.timings.write_s,
+        }));
+    }
+    Ok(out)
+}
+
+/// Prepares the root's active publication `passes` times in one process, as
+/// a restarted publisher does before it may serve, and reports each pass.
+///
+/// The first pass starts with no evidence, like a fresh process; later passes
+/// reuse what earlier ones verified, like a running publisher. Nothing is
+/// committed and the node is never asked. Preparation still advances the
+/// root's distribution revision and may install objects, so it holds the
+/// controller lock throughout and refuses a root a running publisher owns.
+pub async fn bench_restore(root: &Path, passes: u32) -> Result<Vec<Value>, BoxError> {
+    let _lock = super::controller::own_root(root)?;
+    let scratch = tempfile::tempdir()?;
+    let cookie = scratch.path().join("cookie");
+    std::fs::write(&cookie, "bench:bench")?;
+    // Preparation never reaches the node; the client only completes the type.
+    let rpc = crate::ingest::zakura::connect("http://127.0.0.1:9", cookie)?;
+    let distribution = super::distribution::Distribution::new(root, rpc)?;
+    let active = ActiveRecord::load(root)?;
+    let mut out = Vec::new();
+    for pass in 0..passes {
+        let started = std::time::Instant::now();
+        let finalized = distribution
+            .prepare(
+                active.directory.clone(),
+                vec![active.directory.clone()],
+                Default::default(),
+                || false,
+            )
+            .await?;
+        out.push(json!({
+            "pass": pass, "seconds": started.elapsed().as_secs_f64(),
+            "inventory_sha256": finalized.sha256,
+            "files": finalized.files.len(),
+            "bytes": finalized.files.values().map(|(_, bytes)| bytes).sum::<u64>(),
         }));
     }
     Ok(out)
