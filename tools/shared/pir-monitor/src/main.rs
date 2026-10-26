@@ -126,6 +126,11 @@ fn load_oracle(bytes: &[u8], checksum: &str) -> Result<Oracle> {
 async fn main() -> Result<()> {
     let origin = env("PIR_MONITOR_ORIGIN")?;
     let status_url = env("PIR_MONITOR_APM_STATUS_URL")?;
+    // Incidents link to the dashboard that serves the APM status this monitor reads.
+    let dashboard_url = match status_url.rsplit_once('/') {
+        Some((parent, _)) => format!("{parent}/"),
+        None => anyhow::bail!("PIR_MONITOR_APM_STATUS_URL has no path"),
+    };
     let oracle = load_oracle(
         &std::fs::read(env("PIR_MONITOR_ORACLE")?)?,
         &env("PIR_MONITOR_ORACLE_SHA256")?,
@@ -359,13 +364,7 @@ async fn main() -> Result<()> {
                     service_mode != "active",
                     &public_status,
                 )?;
-                store.evaluate(
-                    &checks,
-                    now,
-                    shadow,
-                    "production",
-                    &format!("{origin}/apm/"),
-                )?;
+                store.evaluate(&checks, now, shadow, "production", &dashboard_url)?;
                 Ok((store.incidents()?, store.health(configured, now)?))
             })();
             let mut v = eval.write().await;

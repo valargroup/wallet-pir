@@ -175,14 +175,14 @@ out to keep its default; warnings must not exceed their critical limits.
 The independent checker requires:
 
 - `PIR_MONITOR_ORIGIN=https://enhance-pir.valargroup.dev`
-- `PIR_MONITOR_APM_STATUS_URL=https://enhance-pir.valargroup.dev/apm/monitor-status`
+- `PIR_MONITOR_APM_STATUS_URL=https://wallet-pir.valargroup.dev/apm/monitor-status`
 - `PIR_MONITOR_ORACLE`: protected JSON file with `anchor_height`, `anchor_hash`,
   and `records` containing `position` and `record_hex`.
 - `PIR_MONITOR_ORACLE_SHA256`: SHA-256 of the exact file bytes.
 - `PIR_MONITOR_STATE_PATH=/var/lib/pir-monitor/incidents.sqlite`
 - `PIR_MONITOR_ALERT_MODE=shadow` initially; `active` after qualification.
 
-Its incidents link to `PIR_MONITOR_ORIGIN`'s APM dashboard, except the service
+Its incidents link to the APM dashboard that serves `PIR_MONITOR_APM_STATUS_URL`, except the service
 probes' (Status, Transparent and receiver), which link to
 `PIR_MONITOR_PUBLIC_STATUS_URL`, by default
 `https://monitor-pir.valargroup.dev/monitor-status`.

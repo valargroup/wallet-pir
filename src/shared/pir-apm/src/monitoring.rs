@@ -193,7 +193,7 @@ pub fn start(dashboard: SharedDashboard, config: Config) -> Result<()> {
     };
     let policy = Policy::load()?;
     let url = std::env::var("PIR_APM_PUBLIC_URL")
-        .unwrap_or_else(|_| "https://enhance-pir.valargroup.dev/apm/".into());
+        .unwrap_or_else(|_| "https://wallet-pir.valargroup.dev/apm/".into());
     let transparent_url = format!("{}/transparent/", url.trim_end_matches('/'));
     let notifier_path = path.clone();
     let webhook = config.slack_webhook_url.clone();

@@ -70,7 +70,7 @@ class Rendering(unittest.TestCase):
                                            '/transparent/v1/*', '/transparent/v1/filters/shards*',
                                            '/transparent/v1/filters/parents/*']))
         self.assertNotIn(UNIFIED_HOST, unified.split('{', 1)[1])
-        for legacy in ('/v1/enhance', '/v1/status', '/v1/filters', '/v2/', '/v1/receiver', '/apm', '/provider/'):
+        for legacy in ('/v1/enhance', '/v1/status', '/v1/filters', '/v2/', '/v1/receiver', '/provider/'):
             self.assertFalse([path for path in handled if path.startswith(legacy)])
 
     def test_publisher_discovery_route_lands_in_the_enhance_site_only(self):
@@ -178,7 +178,7 @@ class LiveEdge(unittest.TestCase):
             (root / (host + '.pem')).write_bytes(pem)
             (root / (host + '.key')).write_bytes(key)
             origins[host] = Recorder(host, (root / (host + '.pem'), root / (host + '.key')))
-        cls.upstreams = {'enhance': Recorder('enhance'), 'status': Recorder('status'),
+        cls.upstreams = {'enhance': Recorder('enhance'), 'status': Recorder('status'), 'apm': Recorder('apm'),
                          'transparent': origins[TRANSPARENT_HOST],
                          'receiver': origins[RECEIVER_HOST]}
         parents = root / 'parents'
@@ -207,7 +207,7 @@ class LiveEdge(unittest.TestCase):
 
     @classmethod
     def plumb(cls, text, root, parents):
-        ports = {'127.0.0.1:8082': 'enhance', '127.0.0.1:8492': 'status'}
+        ports = {'127.0.0.1:8082': 'enhance', '127.0.0.1:8492': 'status', '127.0.0.1:3002': 'apm'}
         for address, name in ports.items():
             text = text.replace('reverse_proxy ' + address, f'reverse_proxy 127.0.0.1:{cls.upstreams[name].port}')
         for host, name in ((TRANSPARENT_HOST, 'transparent'), (RECEIVER_HOST, 'receiver')):
@@ -293,10 +293,18 @@ class LiveEdge(unittest.TestCase):
 
     def test_unified_host_refuses_legacy_and_operator_paths(self):
         for path in ('/v1/enhance/query', '/v1/status/init', '/v1/filters/shards', '/v2/query',
-                     '/v1/receiver/query', '/metrics', '/v1/health', '/v1/ready', '/apm', '/control/health',
+                     '/v1/receiver/query', '/metrics', '/v1/health', '/v1/ready', '/control/health',
                      '/internal/x', '/provider/enhance/v1/x', '/', '/wallet-pir/v1/x'):
             with self.subTest(path=path):
                 self.assertEqual(self.request(UNIFIED_HOST, 'GET', path)[0], 404)
+        self.nothing_reached()
+
+    def test_apm_dashboard_is_served_only_on_the_unified_host(self):
+        self.assertEqual(self.request(UNIFIED_HOST, 'GET', '/apm/capacity/')[0], 200)
+        self.assertEqual(self.only('apm')['path'], '/capacity/')
+        for path in ('/apm/', '/apm/monitor-status'):
+            with self.subTest(path=path):
+                self.assertEqual(self.request(ENHANCE_HOST, 'GET', path)[0], 404)
         self.nothing_reached()
 
     def test_enhance_host_keeps_its_legacy_and_canonical_routes(self):

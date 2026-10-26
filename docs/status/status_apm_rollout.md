@@ -1,6 +1,6 @@
 # Live Status APM rollout
 
-The public [Status pane](https://enhance-pir.valargroup.dev/apm/?pane=status)
+The public [Status pane](https://wallet-pir.valargroup.dev/apm/?pane=status)
 monitors the live, separate coordinator, router, and worker processes. It no longer
 scrapes the original synthetic single-process service.
 
@@ -67,7 +67,7 @@ latencies remain blank until requests occur across successful scrapes.
 ```sh
 cargo test --locked -p pir-apm
 cargo clippy --locked -p pir-apm --all-targets -- -D warnings
-curl -fsS 'https://enhance-pir.valargroup.dev/apm/?pane=status'
+curl -fsS 'https://wallet-pir.valargroup.dev/apm/?pane=status'
 ssh-check root@167.99.42.60 -- systemctl is-active pir-apm wallet-pir-control-sessions
 ```
 

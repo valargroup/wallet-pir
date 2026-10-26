@@ -22,10 +22,6 @@ ENHANCE_PUBLIC_HOST {
 		header Cache-Control "public, max-age=300"
 		file_server
 	}
-	# Unauthenticated, aggregate-only dashboard served by the pir-apm sidecar.
-	handle_path /apm* {
-		reverse_proxy 127.0.0.1:3002
-	}
 	# Status wallets reach the query router through the existing loopback tunnel.
 	# `/status/v1/*` is canonical; `/v1/status/*` remains its legacy alias.
 	handle /v1/status/* {
@@ -70,8 +66,8 @@ ENHANCE_PUBLIC_HOST {
 	}
 }
 
-# The unified wallet entry point. Only canonical product prefixes are served
-# here; legacy aliases (`/v1/enhance`, `/v1/status`, `/v2`, `/v1/receiver`)
+# The unified wallet entry point. Only canonical product prefixes and the APM
+# dashboard are served here; legacy aliases (`/v1/enhance`, `/v1/status`, `/v2`, `/v1/receiver`)
 # stay on the product hosts above and on their own hosts, which remain in
 # service for released wallets. Enhance and Status reach the same loopback
 # services as the Enhance host. Transparent and Receiver cross to their own
@@ -123,6 +119,10 @@ wallet-pir.valargroup.dev {
 	handle /enhance/v1/* {
 		uri replace /enhance/v1 /v1/enhance 1
 		reverse_proxy 127.0.0.1:8082
+	}
+	# Unauthenticated, aggregate-only dashboard served by the pir-apm sidecar.
+	handle_path /apm* {
+		reverse_proxy 127.0.0.1:3002
 	}
 	handle /receiver/v1/* {
 		uri replace /receiver/v1 /v1/receiver 1
