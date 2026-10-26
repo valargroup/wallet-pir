@@ -14,6 +14,7 @@ import tarfile
 from .paths import ROOT
 BINARIES = {
     'pir-query-server': ['pir-query-server'],
+    'pir-query-server-cuda': ['pir-query-server'],
     'pir-publisher': ['pir-publisher'],
     'wallet-pir-ops': [],
     # pir-apm is the Enhance/Status/Transparent dashboard and alerting sidecar;
@@ -78,9 +79,11 @@ FILES['enhance-pir-native'] = FILES['enhance-pir'] + ['tools/enhance/deploy/nati
 FILES['enhance-pir-native-cuda'] = FILES['enhance-pir-native'] + [
     'tools/enhance/scripts/cuda-smoke.py', 'tools/enhance/scripts/verify-cuda-deployment.py',
 ]
+FILES['pir-query-server-cuda'] = FILES['pir-query-server']
+CUDA_KINDS = ('enhance-pir-native-cuda', 'pir-query-server-cuda')
 # The operations package needs no compiled binary: full CI assembles and tests
 # it in its own job, so publishing it never waits on Rust compilation.
-ON_REQUEST = ('pir-publisher', 'pir-query-server', 'enhance-pir-native', 'enhance-pir-native-cuda', 'status-pir', 'wallet-pir-ops')
+ON_REQUEST = ('pir-publisher', 'pir-query-server', 'pir-query-server-cuda', 'enhance-pir-native', 'enhance-pir-native-cuda', 'status-pir', 'wallet-pir-ops')
 # Build-time protocol identity recorded in candidate.json and re-checked on extract.
 PROTOCOLS = {
     'pir-publisher': 'wallet-pir-publisher-v1',
@@ -206,7 +209,7 @@ def resolve(sha, kind):
 def assemble(sha, target, output, kind=None, build_metadata=None):
     check_sha(sha)
     dirty = bool(subprocess.check_output(['git', 'status', '--porcelain', '--untracked-files=normal'], cwd=ROOT))
-    if kind == 'enhance-pir-native-cuda':
+    if kind in CUDA_KINDS:
         check_cuda_build(build_metadata)
     output.mkdir(parents=True, exist_ok=False)
     selected = {kind: BINARIES[kind]} if kind else {k: v for k, v in BINARIES.items() if k not in ON_REQUEST}
@@ -222,12 +225,23 @@ def assemble(sha, target, output, kind=None, build_metadata=None):
             (directory / name).chmod(0o755)
         for source in FILES[kind]:
             shutil.copy2(ROOT / source, directory / Path(source).name)
+        from . import contract
+        identities = {}
+        for name in set(binaries) & set(contract.EXECUTABLES):
+            binary = directory / name
+            digest = hashlib.sha256(binary.read_bytes()).hexdigest()
+            result = subprocess.run([str(binary.resolve()), '--contract-info'], check=True,
+                                    capture_output=True, text=True, timeout=30)
+            identities[name] = contract.parse_contract_info(result.stdout, executable=name, sha256=digest).to_json()
+        if identities:
+            (directory / 'contracts.json').write_text(json.dumps({'schema': 'wallet-pir-contract-artifact/1',
+                'source_revision': sha, 'source_dirty': dirty, 'executables': identities}, sort_keys=True) + '\n')
         if kind in PROTOCOLS:
             (directory / 'candidate.json').write_text(json.dumps({
                 'kind': kind, 'schema_version': 11, 'protocol_revision': PROTOCOLS[kind],
                 'qualification': 'unqualified', 'source_revision': sha, 'source_dirty': dirty,
             }, indent=2) + '\n')
-        if kind == 'enhance-pir-native-cuda':
+        if kind in CUDA_KINDS:
             (directory / 'build.json').write_text(json.dumps(build_metadata, indent=2) + '\n')
         (directory / 'revision').write_text(sha + '\n')
         (directory / 'SHA256SUMS').write_text(''.join(
@@ -252,9 +266,12 @@ def extract(archive_path, destination, sha, kind):
             raise ValueError('release archive must contain unique flat regular files')
         payload = {m.name: archive.extractfile(m).read() for m in members}
     required = set(BINARIES[kind]) | {Path(p).name for p in FILES[kind]} | {'revision', 'SHA256SUMS'}
+    from . import contract
+    if set(BINARIES[kind]) & set(contract.EXECUTABLES):
+        required.add('contracts.json')
     if kind in PROTOCOLS:
         required.add('candidate.json')
-    if kind == 'enhance-pir-native-cuda':
+    if kind in CUDA_KINDS:
         required.add('build.json')
     if set(payload) != required:
         raise ValueError('release archive contents differ from the required artifact inventory')
@@ -271,6 +288,23 @@ def extract(archive_path, destination, sha, kind):
     for name, digest in checksums.items():
         if hashlib.sha256(payload[name]).hexdigest() != digest:
             raise ValueError(f'checksum mismatch: {name}')
+    from . import contract
+    hosts = set(BINARIES[kind]) & set(contract.EXECUTABLES)
+    if hosts:
+        if 'contracts.json' not in payload:
+            raise ValueError('release is missing executable contract identities; rebuild it')
+        metadata = json.loads(payload['contracts.json'])
+        if (metadata.get('schema') != 'wallet-pir-contract-artifact/1' or metadata.get('source_revision') != sha
+                or type(metadata.get('source_dirty')) is not bool):
+            raise ValueError('invalid executable contract artifact metadata')
+        identities = metadata['executables']
+        if set(identities) != hosts:
+            raise ValueError('release contract identity inventory differs from its executables')
+        for name, info in identities.items():
+            if info.get('sha256') != checksums[name]:
+                raise ValueError('release contract identity digest differs from executable ' + name)
+            contract.parse_contract_info(json.dumps({'schema': contract.CONTRACT_INFO_SCHEMA, **info}),
+                                         executable=name, sha256=checksums[name])
     if kind in PROTOCOLS:
         candidate = json.loads(payload['candidate.json'])
         if (candidate.get('kind') != kind or candidate.get('source_revision') != sha
@@ -279,7 +313,7 @@ def extract(archive_path, destination, sha, kind):
                 or candidate.get('qualification') != 'unqualified'
                 or not isinstance(candidate.get('source_dirty'), bool)):
             raise ValueError('invalid candidate metadata; qualification is a separate gate')
-    if kind == 'enhance-pir-native-cuda':
+    if kind in CUDA_KINDS:
         check_cuda_build(json.loads(payload['build.json']))
     destination.mkdir(parents=True, exist_ok=False)
     for name, data in payload.items():

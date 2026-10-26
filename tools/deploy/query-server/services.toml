@@ -1,7 +1,7 @@
 [services.query-server]
 root = "/opt/wallet-pir-query"
 binary = "pir-query-server"
-artifact_kinds = ["pir-query-server"]
+artifact_kinds = ["pir-query-server", "pir-query-server-cuda"]
 self_check = ["--help"]
 min_free_bytes = 21474836480
 order = ["combined"]

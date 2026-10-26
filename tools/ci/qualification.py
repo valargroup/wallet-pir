@@ -109,17 +109,30 @@ def verify(family, sha, output, cuda=False):
         for kind in kinds:
             destination = Path(directory) / kind
             release.extract(output / kind / (kind + '.tar.gz'), destination, sha, kind)
-            for name in ('candidate.json', 'operations.json'):
+            for name in ('candidate.json', 'operations.json', 'contracts.json'):
                 metadata = destination / name
                 if metadata.exists() and json.loads(metadata.read_text()).get('source_dirty') is not False:
                     raise ValueError(f'{kind}: candidate source was dirty')
 
 
-def build(family):
+def build(family, products=None):
     if family == 'ops':
         return
     command = ['cargo', 'build', '--locked', '--release']
-    if family == 'receiver':
+    if family == 'fleet':
+        # One feature union serves unified and distributed CPU roles. Cargo
+        # shares dependencies across the publisher and query host invocation.
+        supported = {'enhance', 'status', 'transparent-history', 'transparent-detail', 'receiver'}
+        products = set(products or ('enhance', 'status', 'transparent-history', 'transparent-detail'))
+        if not products or not products <= supported:
+            raise ValueError('fleet products must name supported host features')
+        features = [host + '/' + product for host in ('pir-publisher', 'pir-query-server')
+                    for product in sorted(products)]
+        if products & {'enhance', 'status'}:
+            features += [host + '/native-reinspiring' for host in ('pir-publisher', 'pir-query-server')]
+        command += ['-p', 'pir-publisher', '-p', 'pir-query-server', '--bin', 'pir-publisher',
+                    '--bin', 'pir-query-server', '--features', ','.join(features)]
+    elif family == 'receiver':
         command += ['-p', 'receiver-indexer', '-p', 'pir-publisher', '-p', 'pir-query-server',
                     '--features', 'pir-publisher/receiver,pir-query-server/receiver',
                     '--bin', 'pir-publisher', '--bin', 'pir-query-server', '--bin', 'receiver-probe']
@@ -161,7 +174,9 @@ def main():
     check.add_argument('--service-only', action='store_true')
     for command in ('build', 'assemble', 'verify'):
         child = sub.add_parser(command)
-        child.add_argument('--family', choices=FAMILIES, required=True)
+        child.add_argument('--family', choices=[*FAMILIES, *(['fleet'] if command == 'build' else [])], required=True)
+        if command == 'build':
+            child.add_argument('--products', help='fleet host feature union, comma separated')
         if command in ('assemble', 'verify'):
             child.add_argument('--sha', required=True)
             child.add_argument('--target', type=Path, default=Path(os.environ.get('CARGO_TARGET_DIR', 'target')))
@@ -181,7 +196,9 @@ def main():
     elif args.command == 'verify':
         verify(args.family, args.sha, args.output, args.cuda)
     elif args.command == 'build':
-        build(args.family)
+        if args.products and args.family != 'fleet':
+            parser.error('--products is for --family fleet')
+        build(args.family, args.products.split(',') if args.products else None)
     else:
         assemble(args.family, args.sha, args.target, args.output, args.native)
 

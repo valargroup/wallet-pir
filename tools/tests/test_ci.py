@@ -690,10 +690,26 @@ class BoundaryTests(unittest.TestCase):
 
 
 class ReleaseTests(unittest.TestCase):
+    @staticmethod
+    def contract_report(name):
+        return {'schema': 'wallet-pir-contract-info/1', 'executable': name,
+                'contract_version': '1.0.0', 'contract_major': 1,
+                'products': ['enhance', 'status', 'transparent_history', 'transaction_details'], 'backends': ['cuda']}
+
+    @classmethod
+    def binary_bytes(cls, name, content):
+        if name not in ('pir-query-server', 'pir-publisher'):
+            return content
+        return ("#!/bin/sh\nprintf '%s\\n' '" + json.dumps(cls.contract_report(name)) + "'\n# " + content.hex() + '\n').encode()
+
     def bundle(self, directory, mutate=None):
         data = {name: b'binary' for name in release.BINARIES['transparent-txid-display']}
         data.update({Path(name).name: b'unit' for name in release.FILES['transparent-txid-display']})
         data['revision'] = (SHA + '\n').encode()
+        identities = {name: {**self.contract_report(name), 'sha256': hashlib.sha256(data[name]).hexdigest()}
+                      for name in ('pir-publisher', 'pir-query-server')}
+        data['contracts.json'] = json.dumps({'schema': 'wallet-pir-contract-artifact/1',
+            'source_revision': SHA, 'source_dirty': False, 'executables': identities}).encode()
         data['SHA256SUMS'] = ''.join(f'{hashlib.sha256(v).hexdigest()}  {k}\n' for k, v in data.items()).encode()
         if mutate:
             mutate(data)
@@ -745,7 +761,7 @@ class ReleaseTests(unittest.TestCase):
             revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
             (root / 'target/release').mkdir(parents=True)
             for name in set(sum(release.BINARIES.values(), [])):
-                (root / 'target/release' / name).write_bytes(b'fake binary')
+                (root / 'target/release' / name).write_bytes(self.binary_bytes(name, b'fake binary'))
             release.assemble(revision, root / 'target', root / 'bundles')
             # Native bundles are only assembled on request, from their own target.
             for kind in release.ON_REQUEST:
@@ -753,22 +769,22 @@ class ReleaseTests(unittest.TestCase):
                 target = root / f'target-{kind}'
                 (target / 'release').mkdir(parents=True)
                 for name in release.BINARIES[kind]:
-                    (target / 'release' / name).write_bytes(kind.encode())
+                    (target / 'release' / name).write_bytes(self.binary_bytes(name, kind.encode()))
                 release.assemble(revision, target, root / f'bundles-{kind}', kind,
-                                 release.CUDA_BUILD if kind == 'enhance-pir-native-cuda' else None)
+                                 release.CUDA_BUILD if kind in release.CUDA_KINDS else None)
             for kind in release.BINARIES:
                 bundles = root / (f'bundles-{kind}' if kind in release.ON_REQUEST else 'bundles')
                 release.extract(bundles / f'{kind}.tar.gz', root / kind, revision, kind)
                 expected = kind.encode() if kind in release.ON_REQUEST else b'fake binary'
                 for name in release.BINARIES[kind]:
-                    self.assertEqual((root / kind / name).read_bytes(), expected)
+                    self.assertEqual((root / kind / name).read_bytes(), self.binary_bytes(name, expected))
             native = json.loads((root / 'enhance-pir-native' / 'candidate.json').read_text())
             self.assertEqual(native['protocol_revision'], 'ironwood-enhance-pir-v9-native-two-mask-m29')
             with self.assertRaises(ValueError):
                 release.extract(root / 'bundles-enhance-pir-native' / 'enhance-pir-native.tar.gz', root / 'cross', revision, 'enhance-pir')
             # The Status bundle carries the unit templates its deploy renders, and no candidate claim.
             self.assertEqual(sorted(p.name for p in (root / 'status-pir').iterdir()),
-                             ['SHA256SUMS', 'pir-publisher', 'pir-query-server', 'revision', 'status-router.example.json', 'status-router.service.in',
+                             ['SHA256SUMS', 'contracts.json', 'pir-publisher', 'pir-query-server', 'revision', 'status-router.example.json', 'status-router.service.in',
                               'status-worker.example.json', 'status-worker.service.in'])
             self.assertTrue((root / 'status-pir' / 'pir-publisher').stat().st_mode & 0o111)
             with self.assertRaises(ValueError):
@@ -805,7 +821,7 @@ class ReleaseTests(unittest.TestCase):
             root = Path(tmp)
             (root / 'target/release').mkdir(parents=True)
             for name in release.BINARIES[kind]:
-                (root / 'target/release' / name).write_bytes(b'CUDA binary')
+                (root / 'target/release' / name).write_bytes(self.binary_bytes(name, b'CUDA binary'))
             with self.assertRaises(ValueError):
                 release.assemble(SHA, root / 'target', root / 'missing-metadata', kind)
             self.assertFalse((root / 'missing-metadata').exists())
@@ -858,7 +874,7 @@ class ReleaseTests(unittest.TestCase):
             root = Path(tmp)
             (root / 'target/release').mkdir(parents=True)
             for name in release.BINARIES[kind]:
-                (root / 'target/release' / name).write_bytes(b'candidate binary')
+                (root / 'target/release' / name).write_bytes(self.binary_bytes(name, b'candidate binary'))
             release.assemble(SHA, root / 'target', root / 'bundles', kind)
             archive = root / 'bundles' / f'{kind}.tar.gz'
             release.extract(archive, root / 'verified', SHA, kind)

@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # Build in Ubuntu 22.04; CUDA libraries are dynamically loaded on the GPU host.
 set -euo pipefail
+products=enhance,native-reinspiring,cuda
+if [[ ${1:-} == --unified ]]; then
+  products=enhance,status,transparent-history,transparent-detail,native-reinspiring,cuda
+  shift
+fi
+[[ $# == 0 ]] || { echo 'usage: build-cuda.sh [--unified]' >&2; exit 2; }
 # shellcheck disable=SC1091
 source /etc/os-release
 [[ "$ID" == ubuntu && "$VERSION_ID" == 22.04 ]]
@@ -21,7 +27,7 @@ python3 tools/ci/stage.py compile:cuda-clients -- cargo build --locked --release
   --features enhance-pir-client/native-reinspiring,enhance-pir-load-test/native-reinspiring
 python3 tools/ci/stage.py compile:cuda -- cargo build --locked --release \
   -p pir-query-server --bin pir-query-server \
-  --features enhance,native-reinspiring,cuda \
+  --features "$products" \
   --message-format=json-render-diagnostics > "$CARGO_TARGET_DIR/build-artifacts.jsonl"
 python3 tools/ci/verify_cuda_build.py --messages "$CARGO_TARGET_DIR/build-artifacts.jsonl" \
   --target "$CARGO_TARGET_DIR" --revision "$WALLET_PIR_SOURCE_REVISION"

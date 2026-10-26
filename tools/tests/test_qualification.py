@@ -1,5 +1,7 @@
 """Qualification must remain cumulative and independent for each service."""
 import json
+import hashlib
+import io
 import os
 from pathlib import Path
 import re
@@ -50,6 +52,50 @@ def complete_jobs(family):
 
 
 class QualificationTests(unittest.TestCase):
+    def test_release_binds_the_executable_contract_to_archive_checksums(self):
+        kind = 'pir-query-server'
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / 'target/release'
+            target.mkdir(parents=True)
+            report = {'schema': 'wallet-pir-contract-info/1', 'executable': kind,
+                      'contract_version': '1.0.0', 'contract_major': 1, 'products': ['status'], 'backends': []}
+            binary = target / kind
+            binary.write_text("#!/bin/sh\nprintf '%s\\n' '" + json.dumps(report) + "'\n")
+            binary.chmod(0o755)
+            with patch.object(release, 'BINARIES', {kind: [kind]}), patch.object(release, 'FILES', {kind: []}):
+                release.assemble(SHA, target.parent, root / 'output', kind)
+                archive = root / 'output' / (kind + '.tar.gz')
+                destination = root / 'extracted'
+                release.extract(archive, destination, SHA, kind)
+                info = json.loads((destination / 'contracts.json').read_text())['executables'][kind]
+                self.assertEqual(info['sha256'], hashlib.sha256(binary.read_bytes()).hexdigest())
+                payload = {p.name: p.read_bytes() for p in destination.iterdir()}
+                metadata = json.loads(payload['contracts.json'])
+                metadata['executables'][kind]['sha256'] = 'f' * 64
+                payload['contracts.json'] = json.dumps(metadata).encode()
+                payload['SHA256SUMS'] = ''.join(hashlib.sha256(data).hexdigest() + '  ' + name + '\n'
+                    for name, data in sorted(payload.items()) if name != 'SHA256SUMS').encode()
+                with tarfile.open(archive, 'w:gz') as output:
+                    for name, data in payload.items():
+                        entry = tarfile.TarInfo(name)
+                        entry.size = len(data)
+                        output.addfile(entry, io.BytesIO(data))
+                with self.assertRaisesRegex(ValueError, 'digest differs from executable'):
+                    release.extract(archive, root / 'refused', SHA, kind)
+
+    def test_fleet_cpu_build_shares_one_locked_release_invocation_for_both_hosts(self):
+        with patch.object(q, 'run') as run:
+            q.build('fleet', ['enhance', 'status', 'transparent-history', 'transparent-detail'])
+        self.assertEqual(run.call_count, 1)
+        command = run.call_args.args[0]
+        self.assertEqual(command[:4], ['cargo', 'build', '--locked', '--release'])
+        features = set(command[command.index('--features') + 1].split(','))
+        for host in ('pir-publisher', 'pir-query-server'):
+            self.assertTrue({host + '/' + product for product in
+                             ('enhance', 'status', 'transparent-history', 'transparent-detail', 'native-reinspiring')} <= features)
+        self.assertFalse(any('cuda' in feature for feature in features))
+
     def test_skipped_reusable_publication_does_not_hide_the_executed_gate(self):
         jobs = complete_jobs('enhance')
         name = 'Enhance / Prepare qualified release artifacts'
