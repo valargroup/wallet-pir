@@ -68,6 +68,11 @@ def sha256(data):
 
 
 def binary_bytes(name):
+    if name in ('pir-query-server', 'pir-publisher'):
+        identity = {'schema': 'wallet-pir-contract-info/1', 'executable': name,
+                    'contract_version': '1.0.0', 'contract_major': 1,
+                    'products': ['transaction_details'], 'backends': []}
+        return ("#!/bin/sh\nprintf '%s\\n' '" + json.dumps(identity) + "'\n").encode()
     return ('#!/bin/sh\n# %s built for the test\n' % name).encode()
 
 
