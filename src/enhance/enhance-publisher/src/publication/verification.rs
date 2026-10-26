@@ -101,6 +101,7 @@ pub(super) struct VerificationPass {
 }
 
 impl VerificationPass {
+    #[cfg(test)]
     pub(super) fn check_object(
         &mut self,
         root: &Path,
@@ -133,6 +134,7 @@ impl VerificationPass {
 
 /// Check one object, reusing `prior` while the path still names the same,
 /// unchanged file. Returns the identity to reuse next time, if it has settled.
+#[cfg(test)]
 pub(super) fn check_object(
     root: &Path,
     object: &Object,
