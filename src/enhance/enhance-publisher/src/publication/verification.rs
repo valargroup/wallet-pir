@@ -37,7 +37,12 @@ impl PreparedPublication {
     /// Verify the objects again under `root`, rehashing only files whose
     /// identity differs from the one recorded when they were last hashed.
     pub fn recheck(self, root: &Path) -> Result<Self, String> {
-        verify_with(root, self.inventory, &self.evidence)
+        self.recheck_until(root, &|| false)
+    }
+
+    /// [`Self::recheck`] that ends with [`super::STOPPED`] once `stop` is true.
+    pub fn recheck_until(self, root: &Path, stop: super::Stop) -> Result<Self, String> {
+        verify_with(root, self.inventory, &self.evidence, stop)
     }
 }
 
@@ -46,13 +51,23 @@ pub fn verify_publication(
     root: &Path,
     inventory: Inventory,
 ) -> Result<PreparedPublication, String> {
-    verify_with(root, inventory, &BTreeMap::new())
+    verify_publication_until(root, inventory, &|| false)
+}
+
+/// [`verify_publication`] that ends with [`super::STOPPED`] once `stop` is true.
+pub fn verify_publication_until(
+    root: &Path,
+    inventory: Inventory,
+    stop: super::Stop,
+) -> Result<PreparedPublication, String> {
+    verify_with(root, inventory, &BTreeMap::new(), stop)
 }
 
 fn verify_with(
     root: &Path,
     inventory: Inventory,
     prior: &BTreeMap<String, FileIdentity>,
+    stop: super::Stop,
 ) -> Result<PreparedPublication, String> {
     inventory.validate()?;
     let mut pass = VerificationPass::default();
@@ -63,7 +78,10 @@ fn verify_with(
             .iter()
             .chain([&domain.hint, &domain.public, &packing])
         {
-            pass.check_object(root, object, prior.get(&object.sha256))?;
+            if stop() {
+                return Err(super::STOPPED.into());
+            }
+            pass.check_until(root, object, prior.get(&object.sha256), stop)?;
         }
     }
     Ok(PreparedPublication {
@@ -89,13 +107,23 @@ impl VerificationPass {
         object: &Object,
         prior: Option<&FileIdentity>,
     ) -> Result<(), String> {
+        self.check_until(root, object, prior, &|| false)
+    }
+
+    fn check_until(
+        &mut self,
+        root: &Path,
+        object: &Object,
+        prior: Option<&FileIdentity>,
+        stop: super::Stop,
+    ) -> Result<(), String> {
         if let Some(bytes) = self.checked.get(&object.sha256) {
             if *bytes != object.bytes {
                 return Err("publication object checksum or length mismatch".into());
             }
             return Ok(());
         }
-        if let Some(identity) = check_object(root, object, prior, &mut self.hashed)? {
+        if let Some(identity) = check_object_until(root, object, prior, &mut self.hashed, stop)? {
             self.evidence.insert(object.sha256.clone(), identity);
         }
         self.checked.insert(object.sha256.clone(), object.bytes);
@@ -111,6 +139,16 @@ pub(super) fn check_object(
     prior: Option<&FileIdentity>,
     hashed: &mut VerificationStats,
 ) -> Result<Option<FileIdentity>, String> {
+    check_object_until(root, object, prior, hashed, &|| false)
+}
+
+fn check_object_until(
+    root: &Path,
+    object: &Object,
+    prior: Option<&FileIdentity>,
+    hashed: &mut VerificationStats,
+    stop: super::Stop,
+) -> Result<Option<FileIdentity>, String> {
     let path = object.path(root)?;
     let mut file = open_object_file(&path, Some(object.bytes)).map_err(|e| e.to_string())?;
     let reference = object.reference();
@@ -119,9 +157,12 @@ pub(super) fn check_object(
         &mut file,
         Some(&reference),
         prior.map(|identity| (&reference, *identity)),
-        &|| false,
+        stop,
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| match stop() {
+        true => super::STOPPED.to_string(),
+        false => e.to_string(),
+    })?;
     if verified.reused {
         hashed.reused += 1;
     } else {

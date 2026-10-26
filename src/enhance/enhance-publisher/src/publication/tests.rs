@@ -205,8 +205,13 @@ fn repeated_digest_with_a_different_length_is_rejected() {
     // Only the row file exists: verification must reject the contradictory
     // hint length before attempting to open the later public or packing files.
     assert_eq!(
-        verify_publication(root.path(), inventory).unwrap_err(),
+        verify_publication(root.path(), inventory.clone()).unwrap_err(),
         "publication object checksum or length mismatch"
+    );
+    // A publisher stop ends verification before any file is read.
+    assert_eq!(
+        verify_publication_until(root.path(), inventory, &|| true).unwrap_err(),
+        STOPPED
     );
 }
 

@@ -18,10 +18,14 @@ pub(super) fn prepare_domains(
     coverage: &Coverage,
     epochs: &BTreeMap<u64, String>,
     read: &mut impl FnMut(u64, usize) -> Result<Vec<u8>, String>,
+    stop: super::Stop,
 ) -> Result<Vec<Domain>, String> {
     let mut engine = runtime::Engine::new(&root.join("preparation"));
     let mut domains = Vec::new();
     for shard in &coverage.shards {
+        if stop() {
+            return Err(super::STOPPED.into());
+        }
         let mut plan = runtime::plan(shard.clone(), &mut *read)?;
         for unit in &mut plan.units {
             unit.recovery_epoch = epochs[&shard.id]
@@ -30,6 +34,9 @@ pub(super) fn prepare_domains(
         }
         let mut rows = Vec::new();
         for (spec, unit) in plan.shard.units.iter().zip(&plan.units) {
+            if stop() {
+                return Err(super::STOPPED.into());
+            }
             let bytes = runtime::unit_rows(&plan.shard, spec, &mut *read)?;
             if hex::encode(Sha256::digest(&bytes)) != unit.content_sha256 {
                 return Err("canonical rows changed during publication preparation".into());
