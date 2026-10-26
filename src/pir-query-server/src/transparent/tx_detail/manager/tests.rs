@@ -187,3 +187,59 @@ async fn failed_sync_collects_old_downloads_but_preserves_restart_inputs() {
         }
     }
 }
+
+#[tokio::test]
+async fn a_failed_first_download_keeps_its_objects_for_the_next_attempt() {
+    // A first download refused partway (the publisher retired an artifact)
+    // leaves its tree of links. Collection after the failed pass must keep the
+    // downloads, and the next attempt's tree takes them over.
+    use pir_pipeline::consumer::polling::SyncTask;
+    let root = tempfile::tempdir().unwrap();
+    let root = root.path().canonicalize().unwrap();
+    let objects = root.join("objects");
+    std::fs::create_dir(&objects).unwrap();
+    let object = |name: char, body: &[u8]| {
+        let path = objects.join(name.to_string().repeat(64));
+        std::fs::write(&path, body).unwrap();
+        path
+    };
+    let (map, rows) = (object('a', b"map"), object('b', b"rows"));
+    let attempt = |revision: u64, linked: &[&Path]| {
+        let tree = root.join(format!("staging-{revision}-100"));
+        std::fs::create_dir(&tree).unwrap();
+        std::fs::hard_link(linked[0], tree.join(MAP_FILE)).unwrap();
+        for (n, path) in linked[1..].iter().enumerate() {
+            std::fs::hard_link(path, tree.join(format!("part-{n}"))).unwrap();
+        }
+        std::fs::File::open(&tree)
+            .unwrap()
+            .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(revision + 1))
+            .unwrap();
+    };
+    let mut sync = ConsumerEngine::new(
+        DisplaySync::new(
+            Config {
+                publisher: "https://127.0.0.1:1".into(),
+                network: "main".into(),
+                genesis_hash: "22".repeat(32),
+                directory: root.clone(),
+                cache_bytes: 1 << 20,
+                max_download_bytes: 1 << 20,
+                roots: Vec::new(),
+            },
+            crate::transparent::config::ServiceConfig::default(),
+        )
+        .unwrap(),
+    );
+    attempt(0, &[&map, &rows]);
+    // Discovery fails; the failed pass still runs collection.
+    assert!(sync.synchronize().await.is_err());
+    assert!(
+        map.exists() && rows.exists(),
+        "the first attempt's downloads survive"
+    );
+    let later = object('c', b"more");
+    attempt(1, &[&map, &rows, &later]);
+    assert!(sync.synchronize().await.is_err());
+    assert!(map.exists() && rows.exists() && later.exists());
+}

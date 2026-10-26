@@ -223,7 +223,12 @@ impl DisplaySync {
                 .as_nanos()
         ));
         std::fs::create_dir(&stage)?;
-        let result = async {
+        // Keep a failed tree: it links only downloaded objects and is never
+        // served, so the next attempt re-links them and downloads only what is
+        // missing. A first download outlasts the publisher's retention of
+        // superseded artifacts, so without this every retry restarts from
+        // nothing. Collection bounds kept trees like any unused publication.
+        async {
             let objects = crate::transparent::objects::prepare_objects(&self.config.directory)?;
             let mut transfer = std::time::Duration::ZERO;
             for artifact in &inventory.artifacts {
@@ -262,11 +267,7 @@ impl DisplaySync {
                 map_sha256: inventory.map_sha256,
             })
         }
-        .await;
-        if result.is_err() {
-            let _ = std::fs::remove_dir_all(&stage);
-        }
-        result
+        .await
     }
     async fn prepare_display(
         &mut self,
