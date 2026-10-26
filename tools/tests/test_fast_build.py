@@ -545,7 +545,9 @@ class FastBuildTests(unittest.TestCase):
         self.assertTrue(publisher['dependencies']['pir-query-server']['optional'])
         self.assertEqual(publisher['features']['qualification-tests'],
                          ['dep:pir-query-server', 'pir-query-server/test-support'])
-        self.assertEqual(query['dev-dependencies']['pir-query-server']['features'], ['test-support'])
+        support = query['dev-dependencies']['query-test-support']
+        self.assertEqual(support['package'], 'pir-query-server')
+        self.assertEqual(support['features'], ['test-support'])
         self.assertIn('operator', tests)
         status_builds = self._cargo_tests(['status-publisher'])
         self.assertEqual(len(status_builds), 1)
