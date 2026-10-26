@@ -8,7 +8,7 @@ from wallet_pir_ops.deploy import descriptors
 from wallet_pir_ops.deploy.engine import DeployError
 
 
-PRODUCTS = ('enhance', 'status', 'transparent_history', 'transaction_details')
+PRODUCTS = ('enhance', 'status', 'transparent_history', 'transaction_details', 'receiver')
 
 
 class QueryAcceptance(Fleet):
@@ -68,6 +68,9 @@ class QueryAcceptance(Fleet):
     def test_details_failure_rolls_the_node_back(self):
         self.assert_product_failure_rolls_back('transaction_details')
 
+    def test_receiver_failure_rolls_the_node_back(self):
+        self.assert_product_failure_rolls_back('receiver')
+
     def test_refused_acceptance_host_prevents_all_deployment_mutations(self):
         deployer = self.query_fleet()
         self.fake.refuse_identity.add('receiver-01')
@@ -88,7 +91,7 @@ class QueryAcceptance(Fleet):
             del missing['products'][product]
             invalid.append(missing)
         extra = copy.deepcopy(original)
-        extra['products']['receiver'] = copy.deepcopy(extra['products']['enhance'])
+        extra['products']['unknown-product'] = copy.deepcopy(extra['products']['enhance'])
         invalid.append(extra)
         for field, value in [('host', 'unknown'), ('host', []), ('argv', []), ('argv', ['']),
                              ('timeout', True), ('timeout', 0), ('timeout', 901)]:

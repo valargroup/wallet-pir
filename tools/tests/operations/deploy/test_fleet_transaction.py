@@ -194,6 +194,32 @@ class FleetTransactions(unittest.TestCase):
         self.target.deploy(plan['plan_sha256'])
         self.assertEqual(self.ex.probe_unit('query', 'wallet-pir-query.service')['invocation_id'], before)
 
+    def test_identical_fleet_and_node_checks_run_once_and_record_both_obligations(self):
+        self.fixture(distributed=False)
+        self.request['process_probes'][self.query_key] = copy.deepcopy(self.request['probes'])
+        self.target = self.new_target()
+        plan = self.prepare()
+        self.target.deploy(plan['plan_sha256'])
+        for product in PRODUCTS:
+            calls = [argv for host, argv in self.ex.runs if argv == ['probe', product]]
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(self.target.data['checks'][product],
+                             self.target.data['checks'][self.query_key + '#' + product])
+        self.new_target().recover('rollback')
+        for product in PRODUCTS:
+            self.assertEqual(sum(argv == ['probe', product] for host, argv in self.ex.runs), 2)
+
+    def test_distinct_recovery_commands_are_not_deduplicated(self):
+        self.fixture(distributed=False)
+        probes = copy.deepcopy(self.request['probes'])
+        probes['status']['restore_argv'] = ['different-predecessor-client']
+        self.request['process_probes'][self.query_key] = probes
+        self.target = self.new_target()
+        plan = self.prepare()
+        self.target.deploy(plan['plan_sha256'])
+        checks = self.target.probe_checks()
+        self.assertEqual(sum(label.split('#')[-1] == 'status' for label, _ in checks), 2)
+
     def test_each_product_failure_restores_complete_release(self):
         for product in PRODUCTS:
             with self.subTest(product=product):

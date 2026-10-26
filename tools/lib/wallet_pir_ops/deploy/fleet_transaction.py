@@ -733,7 +733,7 @@ class FleetTransaction:
             self.ex.systemctl(host, 'daemon-reload')
         self.parallel(list(representatives.values()), reload)
 
-    def probe_checks(self, *, restored=False):
+    def probe_obligations(self, *, restored=False):
         checks = []
         previous = {product for key in self.data['children']
                     for product in self.data['processes'][key].get('previous_products', [])}
@@ -748,15 +748,20 @@ class FleetTransaction:
         if selected is not None:
             # An explicitly scoped rollout retains readiness for the complete
             # process, but runs each requested retrieval command only once.
-            seen = set()
-            scoped = []
-            for label, probe in checks:
-                identity = (probe['host'], tuple(probe['argv']), probe.get('timeout', 120))
-                if label.split('#')[-1] in selected and identity not in seen:
-                    scoped.append((label, probe))
-                    seen.add(identity)
-            return scoped
+            return [(label, probe) for label, probe in checks if label.split('#')[-1] in selected]
         return checks
+
+    @staticmethod
+    def probe_identity(label, probe):
+        # Include the product and the entire pinned specification, including
+        # recovery arguments. Different origins or recovery clients stay separate.
+        return label.split('#')[-1], json.dumps(probe, sort_keys=True)
+
+    def probe_checks(self, *, restored=False):
+        checks = {}
+        for label, probe in self.probe_obligations(restored=restored):
+            checks.setdefault(self.probe_identity(label, probe), (label, probe))
+        return list(checks.values())
 
     def run_probe(self, label, probe, *, restored=False):
         self.event('encrypted probe intent', product=label, restored=restored)
@@ -766,8 +771,13 @@ class FleetTransaction:
             code, _output = self.ex.run(probe['host'], argv, probe.get('timeout', 120))
         require(code == 0, label + ': independent encrypted-answer probe failed')
         with self.mutex:
-            self.data['checks'][label] = {'unix': self.now(), 'restored': restored}
-            self.event('encrypted probe passed', product=label, restored=restored)
+            identity = self.probe_identity(label, probe)
+            for obligation, specification in self.probe_obligations(restored=restored):
+                if self.probe_identity(obligation, specification) == identity:
+                    self.data['checks'][obligation] = {'unix': self.now(), 'restored': restored,
+                                                     'executed_as': label}
+                    self.event('encrypted probe passed', product=obligation, restored=restored,
+                               executed_as=label)
 
     def probes(self, *, restored=False, skip_completed=False):
         # One native workload per physical host, four independent hosts maximum.
@@ -807,11 +817,18 @@ class FleetTransaction:
             return self.data['machines'][host]
 
         def probe_ready(label):
-            if '#' in label:
-                return label.rsplit('#', 1)[0] in ready
-            return all(key in ready for key in self.data['children']
-                       if not self.data['processes'][key]['publisher']
-                       and label in self.data['processes'][key]['products'])
+            identity = self.probe_identity(label, probe_pending[label])
+            for obligation, specification in self.probe_obligations():
+                if self.probe_identity(obligation, specification) != identity:
+                    continue
+                if '#' in obligation:
+                    if obligation.rsplit('#', 1)[0] not in ready:
+                        return False
+                elif any(key not in ready for key in self.data['children']
+                         if not self.data['processes'][key]['publisher']
+                         and obligation in self.data['processes'][key]['products']):
+                    return False
+            return True
 
         def probe(label, specification):
             self.run_probe(label, specification)

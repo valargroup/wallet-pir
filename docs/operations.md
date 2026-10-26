@@ -75,6 +75,10 @@ Prepare a private, checksum-pinned `fleet-release/1` request. It contains:
   require `restore_argv` on each check, using a predecessor-compatible client.
   Probe commands retain the existing source, artifact, oracle and answer pins;
   a successful readiness HTTP request cannot substitute for them.
+  Identical fleet and process checks for the same product run once and record
+  acceptance for both obligations. The complete specifications must match,
+  including the execution host, timeout and recovery command; checks through
+  different origins remain independent.
 - Existing pinned `product_requests` for legacy Transparent worker upgrades,
   when selected. Their authority, resource, warmup, state preservation and load
   checks remain in force. Root HTTPS provider roles preserve installed state.
@@ -142,6 +146,17 @@ Recovery retries reuse an acknowledged restored process that is still warming.
 Retain that operations release and all predecessor artifacts until recovery is
 no longer needed. Old transactions continue through their original product
 operations package and recovery commands.
+
+For repeated compatible query-node deployments, pin a short acceptance profile
+in the reviewed request: Enhance at two queries per second for eight seconds
+after two seconds of warmup, Status at twenty lookups per second for five seconds,
+one twelve-second History campaign covering recent and archive samples, and the
+existing Receiver and transaction-detail exact-answer checks. Require zero
+incorrect answers, errors or unstarted Status lookups. Keep independent oracle
+and artifact pins, freshness checks, production parameters and all enabled
+products. Run a repeated History endpoint once rather than repeating the same
+campaign. This profile reduces deployment sampling; it does not establish
+sustained-load qualification or replace required release and hardware campaigns.
 
 The clocks and unproven performance targets are defined in
 [deployment latency](ci-performance.md#fleet-release-clocks-and-evidence).
