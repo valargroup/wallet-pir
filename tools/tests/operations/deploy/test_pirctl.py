@@ -40,7 +40,9 @@ def exec_start(unit):
     lines = [l for l in (units / unit).read_text().splitlines() if l.startswith('ExecStart=') and l != 'ExecStart=']
     for dropin in sorted((units / (unit + '.d')).glob('*.conf')) if (units / (unit + '.d')).exists() else []:
         lines += [l for l in dropin.read_text().splitlines() if l.startswith('ExecStart=') and l != 'ExecStart=']
-    return lines[-1][len('ExecStart='):].split()[0]
+    words = lines[-1][len('ExecStart='):].split()
+    # A credential wrapper runs `python3 <wrapper> <binary>` and execs the binary.
+    return words[2] if words[0].endswith('python3') else words[0]
 
 command = args[0]
 if command == 'restart':
@@ -118,7 +120,7 @@ class Fleet:
         directory = self.releases / ('build-' + sha[:12])
         directory.mkdir(parents=True)
         archives = {asset: {asset: EXECUTABLE + '# ' + sha + '\n', 'revision': sha + '\n'}
-                    for asset in ('pir-publisher', 'pir-query-server')}
+                    for asset in ('pir-publisher', 'pir-query-server', 'pir-apm')}
         if probe:
             archives['pir-probe'] = {'pir-probe': PROBE}
         for marker in markers:
@@ -190,6 +192,18 @@ class PirctlTest(unittest.TestCase):
         result = self.deploy(SHA_A)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('no pir-probe; readiness only', result.stdout)
+
+    def test_a_service_without_config_or_ready_field_deploys_on_a_healthy_answer(self):
+        units = self.host / 'etc/systemd/system'
+        (units / 'apm.service').write_text('[Service]\nExecStart=/opt/wallet-pir/apm/current/pir-apm\n')
+        (self.host / 'health').mkdir(exist_ok=True)
+        (self.host / 'health/apm.txt').write_text('ok\n')
+        with open(self.host / 'etc/wallet-pir/pirctl.conf', 'a') as conf:
+            conf.write('apm unit=apm.service asset=pir-apm health=file://%s/health/apm.txt\n' % self.host)
+        self.fleet.release(SHA_A, markers=['BAD_CONFIG'])
+        result = self.fleet.pirctl(self.host, 'deploy', 'apm', SHA_A)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.fleet.current(self.host, 'apm'), SHA_A[:12])
 
     def test_deploy_switches_restarts_and_probes_the_new_release(self):
         self.fleet.release(SHA_A)
@@ -337,17 +351,26 @@ class PirctlTest(unittest.TestCase):
         adopted = self.host / 'opt/wallet-pir/query/current/pir-query-server'
         self.assertIn('# 9b89', adopted.read_text())
 
-    def test_adopt_refuses_a_drop_in_mixing_the_command_with_other_settings(self):
-        units = self.unit_with_release_drop_in(
-            '[Service]\nExecStart=\nExecStart=/opt/old/releases/9b89/pir-query-server --config /etc/query.json\n'
-            'Nice=5\n')
-        before = (units / 'query.service').read_text()
+    def test_adopt_keeps_the_other_settings_of_a_drop_in_that_also_sets_the_command(self):
+        drop_in = ('[Service]\nExecStart=\nExecStart=/opt/old/releases/9b89/pir-query-server --config /etc/query.json\n'
+                   'Nice=5\n')
+        units = self.unit_with_release_drop_in(drop_in)
         result = self.fleet.pirctl(self.host, 'adopt', 'query')
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn('mixes ExecStart with other settings', result.stderr)
-        self.assertEqual((units / 'query.service').read_text(), before)
-        self.assertTrue((units / 'query.service.d/zz-release.conf').exists())
-        self.assertIsNone(self.fleet.current(self.host, 'query'))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((units / 'query.service.d/zz-release.conf').read_text(), '[Service]\nNice=5\n')
+        self.assertEqual((self.host / 'etc/wallet-pir/adopted/query.service/zz-release.conf').read_text(), drop_in)
+        self.assertIn('ExecStart=/opt/wallet-pir/query/current/pir-query-server --config /etc/query.json',
+                      (units / 'query.service').read_text())
+
+    def test_adopt_keeps_a_credential_wrapper_in_front_of_the_binary(self):
+        units = self.unit_with_release_drop_in(
+            '[Service]\nExecStart=\nExecStart=/usr/bin/python3 /opt/old/credential-exec.py '
+            '/opt/old/releases/9b89/pir-query-server\n')
+        result = self.fleet.pirctl(self.host, 'adopt', 'query')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('ExecStart=/usr/bin/python3 /opt/old/credential-exec.py '
+                      '/opt/wallet-pir/query/current/pir-query-server\n', (units / 'query.service').read_text())
+        self.assertIn('# 9b89', (self.host / 'opt/wallet-pir/query/current/pir-query-server').read_text())
 
 
 class DriverTest(unittest.TestCase):
@@ -376,7 +399,7 @@ PIRCTL_ROOT=%(hosts)s/$host PIRCTL_PROC=%(hosts)s/$host/proc exec %(pirctl)s "$@
         discovery.write_text(json.dumps({'service': 'pir-publisher', 'version': '1.0.0'}))
         self.env = dict(self.fleet.env(self.fleet.hosts), PIR_INVENTORY=str(self.inventory),
                         PIR_SSH=str(ssh), PIR_DISCOVERY='file://%s' % discovery,
-                        PIR_RELEASES='file://%s' % self.fleet.releases)
+                        PIR_RELEASES='file://%s' % self.fleet.releases, PIR_PUBLIC='')
         del self.env['PIRCTL_ROOT'], self.env['PIRCTL_PROC']
 
     def tearDown(self):
@@ -394,6 +417,17 @@ PIRCTL_ROOT=%(hosts)s/$host PIRCTL_PROC=%(hosts)s/$host/proc exec %(pirctl)s "$@
             self.assertEqual(self.fleet.current(root, component), SHA_A[:12])
         self.assertIn('== done', result.stdout)
         self.assertFalse((self.coordinator / 'run/wallet-pir/deploy.lease').exists())
+
+    def test_a_deploy_ends_with_the_build_probing_each_public_origin(self):
+        self.fleet.release(SHA_A)
+        self.env['PIR_PUBLIC'] = 'https://one.example=enhance,status https://two.example=receiver'
+        result = self.run_driver('product', 'enhance', SHA_A)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('== public probes passed', result.stdout)
+        probes = (self.fleet.hosts / 'probes.log').read_text()
+        self.assertIn('--server https://one.example --products enhance,status', probes)
+        self.assertIn('--server https://two.example --products receiver', probes)
+        self.assertTrue((self.coordinator / 'opt/wallet-pir/pir-probe/releases' / SHA_A[:12] / 'probe/pir-probe').exists())
 
     def test_product_touches_only_that_product(self):
         self.fleet.release(SHA_A)

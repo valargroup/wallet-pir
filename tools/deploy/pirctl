@@ -4,9 +4,12 @@
 # Every production host keeps this script at /usr/local/sbin/pirctl and a list of
 # the components it runs in /etc/wallet-pir/pirctl.conf, one per line:
 #
-#   <component> unit=<systemd unit> asset=<pir-publisher|pir-query-server>
-#               config=<file> health=<management /health URL>
-#               [probe=<public URL> products=<p1,p2,...>]
+#   <component> unit=<systemd unit> asset=<pir-publisher|pir-query-server|pir-apm|pir-monitor>
+#               health=<URL> [config=<file>] [probe=<public URL> products=<p1,p2,...>]
+#
+# A component is ready when its health URL answers 2xx and, if the answer is JSON
+# with a "ready" field, that field is true. With config, prepare also runs the new
+# binary's --check against it.
 #
 # A release is the GitHub release build-<sha12> made by .github/workflows/release.yml.
 # Its files are unpacked once per host into /opt/wallet-pir/<asset>/releases/<sha12>/.
@@ -23,9 +26,12 @@
 #   pirctl verify   <component> [--cold]  wait for the new process to be ready, then probe it
 #   pirctl rollback <component>           swap current and previous, restart, verify
 #   pirctl status                         one line per component
+#   pirctl public   <origin> <products> [<sha>]
+#                                         run a release's probe (default: the newest one on
+#                                         this host) through a public origin
 #   pirctl adopt    <component>           move a running unit onto this layout (no restart)
 #   pirctl lease    take <owner> <seconds> | drop <owner>     fleet-wide deploy lease
-#   pirctl alerts   begin <id> <names...> | finish <id> [--failed]
+#   pirctl alerts   begin <id> [--seconds N] <names...> | finish <id> [--failed]
 #   pirctl self-update <sha>
 set -euo pipefail
 
@@ -61,8 +67,8 @@ load() {
       *) die "unknown setting $key for $1" ;;
     esac
   done
-  [ -n "$C_UNIT" ] && [ -n "$C_ASSET" ] && [ -n "$C_CONFIG" ] && [ -n "$C_HEALTH" ] ||
-    die "$1 needs unit, asset, config and health"
+  [ -n "$C_UNIT" ] && [ -n "$C_ASSET" ] && [ -n "$C_HEALTH" ] ||
+    die "$1 needs unit, asset and health"
   C_DIR=$OPT/$C_NAME
 }
 
@@ -94,19 +100,26 @@ prepare() {
   fi
   # Components that serve wallets also get the probe their verification runs, even
   # when another component on this host unpacked the release first.
-  if [ -n "$C_PRODUCTS" ] && [ ! -x "$dir/probe/pir-probe" ]; then
-    tmp=$(mktemp -d "$OPT/.download.XXXXXX")
-    curl -fsSL --retry 3 --max-time 30 -o "$tmp/SHA256SUMS" "$RELEASES/build-$sha/SHA256SUMS"
-    if grep -q ' pir-probe.tar.gz$' "$tmp/SHA256SUMS"; then
-      fetch "$sha" pir-probe.tar.gz "$tmp"
-      mkdir "$tmp/probe"
-      tar -C "$tmp/probe" -xzf "$tmp/pir-probe.tar.gz"
-      mv "$tmp/probe" "$dir/probe"
-    fi
-    rm -rf "$tmp"
-  fi
-  "$dir/$C_ASSET" --config "$C_CONFIG" --check >/dev/null || die "$C_ASSET from build-$sha refuses $C_CONFIG"
+  [ -z "$C_PRODUCTS" ] || fetch_probe "$sha" "$dir"
+  [ -z "$C_CONFIG" ] || "$dir/$C_ASSET" --config "$C_CONFIG" --check >/dev/null ||
+    die "$C_ASSET from build-$sha refuses $C_CONFIG"
   say "$C_NAME: prepared build-$sha"
+}
+
+# Unpacks a release's probe into <dir>/probe unless it is there or the release has none.
+fetch_probe() {
+  local sha=$1 dir=$2 tmp
+  [ ! -x "$dir/probe/pir-probe" ] || return 0
+  mkdir -p "$dir"
+  tmp=$(mktemp -d "$OPT/.download.XXXXXX")
+  curl -fsSL --retry 3 --max-time 30 -o "$tmp/SHA256SUMS" "$RELEASES/build-$sha/SHA256SUMS"
+  if grep -q ' pir-probe.tar.gz$' "$tmp/SHA256SUMS"; then
+    fetch "$sha" pir-probe.tar.gz "$tmp"
+    mkdir "$tmp/probe"
+    tar -C "$tmp/probe" -xzf "$tmp/pir-probe.tar.gz"
+    mv "$tmp/probe" "$dir/probe"
+  fi
+  rm -rf "$tmp"
 }
 
 # Points current at a release directory and restarts the unit.
@@ -118,7 +131,12 @@ switch() {
 
 ready() {
   curl -fsS --max-time 2 "$C_HEALTH" 2>/dev/null |
-    python3 -c 'import json, sys; sys.exit(0 if json.load(sys.stdin).get("ready") is True else 1)' 2>/dev/null
+    python3 -c 'import json, sys
+try:
+    body = json.load(sys.stdin)
+except ValueError:
+    sys.exit(0)
+sys.exit(0 if not isinstance(body, dict) or body.get("ready", True) is True else 1)' 2>/dev/null
 }
 
 verify() {
@@ -207,6 +225,25 @@ rollback() {
   verify
 }
 
+# Runs a probe through a public origin, the route wallets use.
+public() {
+  local origin=$1 products=$2 sha probe start
+  if [ -n "${3:-}" ]; then
+    sha=$(short "$3")
+    mkdir -p "$OPT/pir-probe/releases"
+    fetch_probe "$sha" "$OPT/pir-probe/releases/$sha"
+    probe=$OPT/pir-probe/releases/$sha/probe/pir-probe
+    ls -1dt "$OPT/pir-probe/releases"/*/ | tail -n +4 | xargs rm -rf
+  else
+    probe=$(ls -t "$OPT"/*/current/probe/pir-probe 2>/dev/null | head -1)
+  fi
+  [ -x "$probe" ] || die "no probe on this host${sha:+ for build-$sha}"
+  start=$(now)
+  timeout "$PROBE_SECONDS" "$probe" --server "$origin" --products "$products" ||
+    die "public probe failed at $origin for $products"
+  say "public probe passed at $origin for $products after $(($(now) - start))s"
+}
+
 status() {
   local name state health
   awk '!/^[[:space:]]*(#|$)/ {print $1}' "$CONF" | while read -r name; do
@@ -217,10 +254,11 @@ status() {
   done
 }
 
-# Moves a unit that runs a release by absolute path onto current/. Drop-ins that
-# only repeat ExecStart are set aside; any other ExecStart override is refused.
+# Moves a unit that runs a release by absolute path, directly or as the argument of
+# a wrapper, onto current/. Drop-ins that only repeat ExecStart are set aside; drop-ins
+# that also set other things lose their ExecStart lines. Both are saved first.
 adopt() {
-  local pid exe path hash dir unit_file effective dropin saved new aside
+  local pid exe path hash dir unit_file effective dropin saved new aside mixed
   pid=$(systemctl show -p MainPID --value "$C_UNIT")
   exe=$(readlink "$PROC/$pid/exe" 2>/dev/null || true)
   [ -n "$exe" ] && [ -f "$exe" ] || die "$C_UNIT is not running a binary that still exists (${exe:-none})"
@@ -229,11 +267,11 @@ adopt() {
   # The command systemd runs: the last non-empty ExecStart across the unit and drop-ins.
   effective=$(systemctl cat "$C_UNIT" | grep '^ExecStart=.' | tail -1)
   path=${exe#"$ROOT"}
-  [[ "$effective " == *"=$path "* ]] || die "$C_UNIT's ExecStart does not name $path"
-  aside=()
+  [[ "$effective " == *[=\ ]"$path "* ]] || die "$C_UNIT's ExecStart does not name $path"
+  aside=() mixed=()
   for dropin in $(systemctl show -p DropInPaths --value "$C_UNIT"); do
     if grep -qv -e '^ExecStart=' -e '^\[Service\]' -e '^#' -e '^[[:space:]]*$' "$ROOT$dropin"; then
-      grep -q '^ExecStart=' "$ROOT$dropin" && die "$dropin mixes ExecStart with other settings"
+      grep -q '^ExecStart=' "$ROOT$dropin" && mixed+=("$ROOT$dropin")
     else
       aside+=("$ROOT$dropin")
     fi
@@ -241,6 +279,11 @@ adopt() {
   saved=$ROOT/etc/wallet-pir/adopted/$C_UNIT
   mkdir -p "$saved"
   cp -p "$ROOT$unit_file" "$saved/"
+  for dropin in ${mixed[@]+"${mixed[@]}"}; do
+    cp -p "$dropin" "$saved/"
+    grep -v '^ExecStart=' "$dropin" >"$dropin.pirctl"
+    mv "$dropin.pirctl" "$dropin"
+  done
   [ ${#aside[@]} -eq 0 ] || mv "${aside[@]}" "$saved/"
   hash=$(sha256sum "$exe" | cut -c1-12)
   dir=$OPT/$C_ASSET/releases/adopted-$hash
@@ -248,7 +291,9 @@ adopt() {
   [ -x "$dir/$C_ASSET" ] || cp -p "$exe" "$dir/$C_ASSET"
   ln -sfn "$dir" "$C_DIR/current"
   # The unit file now holds the running command itself, through current/.
-  new=${effective/"=$path"/=/opt/wallet-pir/$C_NAME/current/$C_ASSET}
+  new="$effective "
+  new=${new/"$path "//opt/wallet-pir/$C_NAME/current/$C_ASSET }
+  new=${new% }
   awk -v line="$new" '/^ExecStart=/ {if (!done) print line; done = 1; next} {print}' "$ROOT$unit_file" >"$ROOT$unit_file.pirctl"
   mv "$ROOT$unit_file.pirctl" "$ROOT$unit_file"
   systemctl daemon-reload
@@ -279,7 +324,7 @@ lease() {
 }
 
 # Opens or closes APM's notification window through the running pir-apm, using its
-# own state path; APM caps the window at one hour if finish never arrives.
+# own state path; the window closes by itself after the seconds begin names.
 alerts() {
   local pid state mode
   pid=$(systemctl show -p MainPID --value pir-apm.service)
@@ -309,7 +354,7 @@ shift
 mkdir -p "$(dirname "$LOCK")"
 exec 9>"$LOCK"
 case $command in
-  status|lease|alerts) ;;
+  status|lease|alerts|public) ;;
   *) flock -n 9 || die "another pirctl command is running on this host" ;;
 esac
 case $command in
@@ -320,6 +365,7 @@ case $command in
   rollback) load "$1"; rollback ;;
   adopt) load "$1"; adopt ;;
   status) status ;;
+  public) public "$1" "$2" "${3:-}" ;;
   lease) lease "$@" ;;
   alerts) alerts "$@" ;;
   self-update) self_update "$1" ;;

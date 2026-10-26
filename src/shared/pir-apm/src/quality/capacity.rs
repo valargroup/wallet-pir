@@ -481,6 +481,7 @@ pub fn conditions(view: &View, now: u64, p: &Policy) -> Vec<Condition> {
                 observed: format!("{} until {floor}", days_text(days)),
                 threshold: format!("fewer than {limit} days until {floor} (14- or 30-day trend)"),
                 hold_seconds: 1800,
+                window_seconds: 0,
                 sample: row.sample,
             });
         }
@@ -506,6 +507,7 @@ pub fn conditions(view: &View, now: u64, p: &Policy) -> Vec<Condition> {
                     p.unit_memory_hold_seconds
                 ),
                 hold_seconds: p.unit_memory_hold_seconds,
+                window_seconds: 0,
                 sample: row.live_at,
             });
         }

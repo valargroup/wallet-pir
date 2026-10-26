@@ -38,7 +38,7 @@ the components on that host.
 [`pir-deploy`](../tools/deploy/pir-deploy) runs `pirctl` over SSH, from a workstation
 now and from CI later. It reads an inventory kept outside the repository. Before it
 starts it takes a lease on the publisher host, so two deploys never overlap, and it
-opens APM's deployment window:
+opens APM's deployment window (see below):
 
 | Mode | Command | What restarts |
 |---|---|---|
@@ -47,6 +47,7 @@ opens APM's deployment window:
 | Breaking product change | `pir-deploy product <group> <sha> --breaking` | Publisher, then unified nodes and that product |
 | Unified nodes | `pir-deploy unified <sha>` | Unified query nodes |
 | Everything | `pir-deploy all <sha>` | Publisher, then every query role |
+| Monitoring | `pir-deploy product monitoring <sha>` | `pir-apm` on the coordinator and `pir-monitor` on the monitor host |
 
 Every host is prepared before anything restarts. If any component in a wave fails, the
 deploy stops: the components of that wave that had already moved are rolled back, and
@@ -54,8 +55,11 @@ later waves never start. A partial mode refuses a release whose contract major d
 from the live publisher's. `pir-deploy --dry-run <mode> ...` takes no lease and restarts
 nothing. On every selected host it unpacks the build, has the new binary accept the
 host's config, and runs that build's `pir-probe` against the service running now. Then
-it prints the waves that would restart. Components that share a host deploy one after
-another. `pir-deploy rollback <group|host>` swaps components back to
+it prints the waves that would restart. Every deploy and dry run ends with one probe
+per product through the public origins wallets use (Enhance and Status through
+`enhance-pir`, Transparent history and transaction details through `transparent-pir`,
+Receiver through `receiver-pir`), run from the publisher host with the deployed build's
+`pir-probe`. Components that share a host deploy one after another. `pir-deploy rollback <group|host>` swaps components back to
 their previous release, and `pir-deploy status` prints what each host runs. A
 component's previous release must still read what the publisher now sends: query
 servers built before `e9848f1e4157` refuse the Receiver distribution of later
@@ -345,22 +349,19 @@ it, the managed files' digests, the latest transaction and the next command.
 
 ## Fleet configuration and lifecycle
 
-Deploy, restart, rollback and deployment-verification commands pause normal Slack
-notifications through the running `pir-apm` sidecar. A single fleet-wide window
-starts under the production lock; APM sends the service names and keeps collecting
-metrics and evaluating incidents. Existing readiness and exact-answer validation
-run once as before. Success sends “Deployment finished”; failure sends “Deployment
-failed” and restores normal notifications before automatic rollback. Events that
-recover inside the window are not replayed; fresh, still-failing observations are
-announced after it ends.
+`pir-deploy` pauses normal Slack notifications through the running `pir-apm` for
+10 minutes (an hour with `--cold`), or until the deploy ends. APM keeps collecting
+metrics and evaluating incidents meanwhile, and `pir-monitor` reads the window from
+APM's monitor status and pauses its own canary notifications with it. Only a failed
+deploy posts to Slack; a start or a successful finish posts nothing. After the window:
 
-The deadline is fixed at one hour and survives runner or monitor restarts. APM
-expires it itself and sends an expiry warning; retries never extend it. The
-running sidecar must support `pir-apm deployment` and have active alerting with
-`PIR_APM_STATE_PATH`. Failure to open the window refuses the deployment before
-service changes. Read-only inspection and preparation commands do not pause alerts.
-The sidecar update that first introduces this feature uses the previously
-installed deploy tool, before adopting the updated operations package.
+- an incident already announced before the deploy is not announced again;
+- an incident that fired during the window and still fails is announced once;
+- a five-minute rate or latency alert waits until its whole window was sampled after
+  the deploy ended, so restart errors inside the deploy never fire it.
+
+APM expires a window that is never finished and posts an expiry warning. If APM refuses
+the window, the deploy goes ahead with alerts armed.
 
 The inventory owns operator choices: hosts, units, connection settings and artifact
 variants. Descriptors own role order, templates and readiness checks. Dynamic

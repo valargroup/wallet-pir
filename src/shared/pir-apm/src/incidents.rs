@@ -25,6 +25,11 @@ pub struct Condition {
     pub observed: String,
     pub threshold: String,
     pub hold_seconds: u64,
+    /// How far back one observation reaches, such as a five-minute error
+    /// rate. After a deployment it is judged only once it covers no time
+    /// from before the deployment finished.
+    #[serde(default)]
+    pub window_seconds: u64,
     /// Timestamp of the observation, not the evaluator tick.
     pub sample: u64,
 }
@@ -197,10 +202,10 @@ impl Store {
             i.condition = Some(c.clone());
             // A deployment never clears incident history. Reannounce a still-failing
             // incident only after its source supplies a new post-validation sample.
-            if muted && i.active {
+            if muted && i.active && !i.notified {
                 i.announce_pending = true;
             }
-            if resumed_at > 0 && c.sample <= resumed_at {
+            if resumed_at > 0 && c.sample <= resumed_at.saturating_add(c.window_seconds) {
                 continue;
             }
             let fresh = c.sample > previous_sample;
@@ -377,7 +382,7 @@ impl Store {
         Ok(())
     }
 
-    fn next(&mut self, now: u64) -> Result<Option<(i64, String, u32)>> {
+    pub(crate) fn next(&mut self, now: u64) -> Result<Option<(i64, String, u32)>> {
         let tx = self
             .db
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
@@ -394,9 +399,14 @@ impl Store {
         Ok(next)
     }
 
-    fn delivered(&mut self, id: i64, now: u64) -> Result<()> {
+    /// Row ids can be reused once a deployment drops queued rows, so an
+    /// acknowledgement names the message it sent as well as its row.
+    pub(crate) fn delivered(&mut self, id: i64, body: &str, now: u64) -> Result<()> {
         let tx = self.db.transaction()?;
-        tx.execute("DELETE FROM outbox WHERE id=?", [id])?;
+        tx.execute(
+            "DELETE FROM outbox WHERE id=? AND body=?",
+            params![id, body],
+        )?;
         for (key, value) in [
             ("last_success", now.to_string()),
             ("failure", String::new()),
@@ -407,10 +417,17 @@ impl Store {
         Ok(())
     }
 
-    fn retry(&self, id: i64, now: u64, delay: u64, reason: &str) -> Result<()> {
+    pub(crate) fn retry(
+        &self,
+        id: i64,
+        body: &str,
+        now: u64,
+        delay: u64,
+        reason: &str,
+    ) -> Result<()> {
         self.db.execute(
-            "UPDATE outbox SET attempts=attempts+1,due=? WHERE id=?",
-            params![now.saturating_add(delay), id],
+            "UPDATE outbox SET attempts=attempts+1,due=? WHERE id=? AND body=?",
+            params![now.saturating_add(delay), id, body],
         )?;
         self.metadata("failure", reason)
     }
@@ -438,7 +455,7 @@ pub async fn deliver(path: std::path::PathBuf, webhook: Option<String>) -> Resul
                 .min(300);
                 match result {
                     Ok(response) if response.status().is_success() => {
-                        store.delivered(id, unix_time())?
+                        store.delivered(id, &body, unix_time())?
                     }
                     Ok(response) => {
                         let status = response.status();
@@ -454,6 +471,7 @@ pub async fn deliver(path: std::path::PathBuf, webhook: Option<String>) -> Resul
                         };
                         store.retry(
                             id,
+                            &body,
                             unix_time(),
                             retry_after.unwrap_or(delay).max(1),
                             &format!("Slack HTTP {}", status.as_u16()),
@@ -461,6 +479,7 @@ pub async fn deliver(path: std::path::PathBuf, webhook: Option<String>) -> Resul
                     }
                     Err(_) => store.retry(
                         id,
+                        &body,
                         unix_time(),
                         backoff,
                         "Slack request failed or timed out",
@@ -487,6 +506,7 @@ mod tests {
             observed: "10/20".into(),
             threshold: ">5%".into(),
             hold_seconds: 10,
+            window_seconds: 0,
             sample,
         }
     }
@@ -547,10 +567,10 @@ mod tests {
             .unwrap();
         assert_eq!(s.health(true, 140).unwrap().pending, 2);
         assert!(!s.incidents().unwrap()[0].active);
-        let first = s.next(140).unwrap().unwrap().0;
-        s.retry(first, 140, 300, "timeout").unwrap();
+        let (first, body, _) = s.next(140).unwrap().unwrap();
+        s.retry(first, &body, 140, 300, "timeout").unwrap();
         assert!(s.next(141).unwrap().is_none());
-        s.delivered(first, 150).unwrap();
+        s.delivered(first, &body, 150).unwrap();
         assert!(s.next(150).unwrap().is_some());
     }
     #[test]
@@ -746,6 +766,7 @@ mod delivery_tests {
             observed: "test".into(),
             threshold: "test".into(),
             hold_seconds: 0,
+            window_seconds: 0,
             sample: now,
         };
         s.evaluate(&[c.clone()], now, false, "test", "").unwrap();
@@ -783,6 +804,7 @@ mod delivery_tests {
             observed: "none".into(),
             threshold: "one".into(),
             hold_seconds: 0,
+            window_seconds: 0,
             sample: 100,
         };
         s.evaluate(&[c.clone()], 100, true, "test", "").unwrap();

@@ -79,6 +79,7 @@ fn condition(
         }
         .into(),
         hold_seconds: hold,
+        window_seconds: 0,
         sample,
     }
 }
@@ -356,7 +357,19 @@ async fn main() -> Result<()> {
                 ));
             }
             let probe_snapshot = probes.read().await.clone();
+            // Pause and resume with APM's deployment window; an unreachable APM
+            // leaves the window as it is, and it still expires on its own.
+            let owner = body.map(|v| {
+                serde_json::from_value::<Option<pir_apm::deployment::Deployment>>(
+                    v["deployment"].clone(),
+                )
+                .ok()
+                .flatten()
+            });
             let result = (|| -> Result<_> {
+                if let Some(owner) = &owner {
+                    store.mirror_deployment(owner.as_ref(), now)?;
+                }
                 evaluate_services(
                     &mut service_store,
                     &probe_snapshot,
