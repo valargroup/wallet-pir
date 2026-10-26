@@ -21,6 +21,9 @@ pub struct View {
     pub shadow: bool,
     pub storage_error: bool,
     pub incidents: Vec<Incident>,
+    /// The deployment window, so the external monitor pauses with APM.
+    #[serde(default)]
+    pub deployment: Option<pir_apm::deployment::Deployment>,
     pub delivery: DeliveryHealth,
     pub chain: Chain,
     pub peer: Peer,
@@ -298,7 +301,11 @@ pub fn start(dashboard: SharedDashboard, config: Config) -> Result<()> {
                     }
                 }
             }
-            let result = (|| -> Result<(Vec<Incident>, DeliveryHealth)> {
+            let result = (|| -> Result<(
+                Vec<Incident>,
+                DeliveryHealth,
+                Option<pir_apm::deployment::Deployment>,
+            )> {
                 store.evaluate(&conditions, now, shadow, &config.environment, &url)?;
                 let mut quality =
                     crate::quality::conditions(&snapshot.quality, now, &policy.quality);
@@ -357,7 +364,11 @@ pub fn start(dashboard: SharedDashboard, config: Config) -> Result<()> {
                         &transparent_url,
                     )?;
                 }
-                Ok((store.incidents()?, store.health(configured, now)?))
+                Ok((
+                    store.incidents()?,
+                    store.health(configured, now)?,
+                    store.deployment(now)?,
+                ))
             })();
             let mut view = eval_dashboard.write().await;
             view.monitoring.publication = snapshot.monitoring.publication;
@@ -365,9 +376,10 @@ pub fn start(dashboard: SharedDashboard, config: Config) -> Result<()> {
             view.monitoring.shadow = shadow;
             view.monitoring.evaluated_at = now;
             view.monitoring.storage_error = result.is_err();
-            if let Ok((incidents, delivery)) = result {
+            if let Ok((incidents, delivery, deployment)) = result {
                 view.monitoring.incidents = incidents;
                 view.monitoring.delivery = delivery;
+                view.monitoring.deployment = deployment;
             }
         }
     });
@@ -465,6 +477,9 @@ impl Policy {
     }
 }
 
+/// Error-rate and latency conditions summarize this much traffic.
+const ROLLING_WINDOW_SECONDS: u64 = 300;
+
 pub fn conditions(d: &DashboardData, now: u64, p: &Policy) -> Vec<Condition> {
     let mut out = Vec::new();
     let mut add = |key: String,
@@ -475,6 +490,7 @@ pub fn conditions(d: &DashboardData, now: u64, p: &Policy) -> Vec<Condition> {
                    threshold: String,
                    hold: u64,
                    sample: u64| {
+        let rolling = key.ends_with("_5xx") || key.ends_with("_latency");
         out.push(Condition {
             retired: false,
             key,
@@ -484,6 +500,7 @@ pub fn conditions(d: &DashboardData, now: u64, p: &Policy) -> Vec<Condition> {
             observed,
             threshold,
             hold_seconds: hold,
+            window_seconds: if rolling { ROLLING_WINDOW_SECONDS } else { 0 },
             sample,
         });
     };
@@ -1161,7 +1178,7 @@ pub async fn status(State(d): State<SharedDashboard>) -> Json<serde_json::Value>
         }).collect::<Vec<_>>(),
     });
     Json(
-        serde_json::json!({"progress_ok":progress,"evaluated_at":d.monitoring.evaluated_at,"shadow":d.monitoring.shadow,"delivery":d.monitoring.delivery,"incidents":d.monitoring.incidents,"chain":d.monitoring.chain,"peer":d.monitoring.peer,"publication":d.monitoring.publication,"serving":serving,"quality":{"enabled":d.quality.enabled,"collected_at":d.quality.collected_at,"persisted_at":d.quality.persisted_at,"storage_error":d.quality.storage_error,"dropped_batches":d.quality.dropped_batches,"inventory_error":d.quality.inventory_error}}),
+        serde_json::json!({"progress_ok":progress,"evaluated_at":d.monitoring.evaluated_at,"shadow":d.monitoring.shadow,"delivery":d.monitoring.delivery,"incidents":d.monitoring.incidents,"deployment":d.monitoring.deployment,"chain":d.monitoring.chain,"peer":d.monitoring.peer,"publication":d.monitoring.publication,"serving":serving,"quality":{"enabled":d.quality.enabled,"collected_at":d.quality.collected_at,"persisted_at":d.quality.persisted_at,"storage_error":d.quality.storage_error,"dropped_batches":d.quality.dropped_batches,"inventory_error":d.quality.inventory_error}}),
     )
 }
 pub async fn readyz(State(d): State<SharedDashboard>) -> (StatusCode, Json<serde_json::Value>) {
