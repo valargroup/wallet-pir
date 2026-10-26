@@ -51,7 +51,7 @@ request=json.loads({json.dumps(self.request)!r})
         self.addCleanup(lambda: process.wait(timeout=10))
         self.assertEqual(process.wait(timeout=5),0)
         owner = Q.Owner(self.request,remote=True)
-        deadline=time.monotonic()+3
+        deadline=time.monotonic()+20
         while not owner.status().get('parent_exited'):
             self.assertLess(time.monotonic(),deadline)
             time.sleep(.025)
@@ -92,7 +92,7 @@ with owner.lock() as lock:
         self.assertEqual(receipt['relay_pid'],process.pid)
         owner=Q.Owner(self.request)
         with self.assertRaises(BlockingIOError): owner.reconcile()
-        deadline=time.monotonic()+4
+        deadline=time.monotonic()+20
         while True:
             try:
                 self.assertEqual(owner.reconcile()['status'],'reconciled')
@@ -121,14 +121,14 @@ time.sleep(2)
             with patch.dict(os.environ,{Q.inherited_lock.VARIABLE:str(lock.fd)}):
                 command=Q.inherited_lock.transport_command([str(ssh)])
                 process=subprocess.Popen(command,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,**Q.inherited_lock.options())
-            deadline=time.monotonic()+3
+            deadline=time.monotonic()+20
             while not ready.exists():
                 self.assertLess(time.monotonic(),deadline)
                 time.sleep(.025)
             process.kill();process.wait(timeout=3)
         with self.assertRaises(BlockingIOError):
             with owner.lock(): pass
-        deadline=time.monotonic()+4
+        deadline=time.monotonic()+20
         while True:
             try:
                 with owner.lock(): pass

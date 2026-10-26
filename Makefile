@@ -70,6 +70,11 @@ check-ops-deploy:
 check-ops-contracts:
 	tools/scripts/check-shell-scripts.sh
 	python3 -B tools/transparent/tests/test_activity_candidate.py
+	python3 -B tools/transparent/tests/test_alert_activation.py
+	python3 -B tools/transparent/tests/test_binary_upgrade.py
+	python3 -B tools/transparent/tests/test_history_provider_role.py
+	python3 -B tools/transparent/tests/test_load_repair.py
+	python3 -B tools/transparent/tests/test_provider_maintenance.py
 
 check-ops-parents:
 	python3 tools/transparent/tests/test_transparent_parents.py
@@ -77,11 +82,23 @@ check-ops-parents:
 check-ops-fleet:
 	python3 tools/txid/tests/test_txid_display_router.py
 	python3 tools/transparent/tests/test_public_router.py
+	python3 -B tools/transparent/tests/test_activity_bootstrap_fleet.py
+	python3 -B tools/transparent/tests/test_activity_journal_snapshot.py
+	python3 -B tools/transparent/tests/test_activity_lock_qualification.py
 
 check-ops-publication:
 	python3 tools/transparent/tests/test_transparent_publication.py
 	python3 tools/transparent/tests/test_activity_schema_operation.py
 	python3 tools/transparent/tests/test_activity_schema_baseline.py
+	python3 -B tools/transparent/tests/test_activity_input_preparation.py
+	python3 -B tools/transparent/tests/test_activity_input_stage.py
+	python3 -B tools/transparent/tests/test_activity_publication_job.py
+	python3 -B tools/transparent/tests/test_activity_recovery_proof.py
+	python3 -B tools/transparent/tests/test_activity_schema_host.py
+	python3 -B tools/transparent/tests/test_activity_schema_product.py
+	python3 -B tools/transparent/tests/test_activity_schema_reconcile.py
+	python3 -B tools/transparent/tests/test_activity_schema_routing.py
+	python3 -B tools/transparent/tests/test_activity_source_refusal.py
 
 check-ops-burst:
 	python3 tools/transparent/tests/test_transparent_burst.py

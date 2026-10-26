@@ -411,6 +411,7 @@ class ProductionFleet(unittest.TestCase):
         self.assertEqual(calls, [])
 
 
+@unittest.skipUnless(sys.platform.startswith('linux'), 'reads /proc, as on the Linux hosts')
 class Fixture(unittest.TestCase):
     bounds = {'precopy_seconds':30, 'stop_seconds':5, 'copy_seconds':30, 'restart_seconds':5, 'restart_attempts':2,
               'total_seconds':200}
