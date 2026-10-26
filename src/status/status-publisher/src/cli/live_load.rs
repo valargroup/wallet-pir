@@ -131,6 +131,10 @@ async fn live_load(
         .build()?;
     let network = rpc.block_hash(0).await?;
     let permits = Arc::new(tokio::sync::Semaphore::new(16));
+    // A public origin sees this load generator as one wallet client. Keep
+    // encrypted requests within its two-query admission limit; preparation
+    // still overlaps, and this wait counts against the original deadline.
+    let query_permits = Arc::new(tokio::sync::Semaphore::new(2));
     let cache = Arc::new(tokio::sync::Mutex::new(std::collections::BTreeMap::<
         Hash,
         Hash,
@@ -160,8 +164,13 @@ async fn live_load(
                 )?;
             }
             Ok(permit) => {
-                let (http, rpc, origin, cache) =
-                    (http.clone(), rpc.clone(), origin.clone(), cache.clone());
+                let (http, rpc, origin, cache, query_permits) = (
+                    http.clone(),
+                    rpc.clone(),
+                    origin.clone(),
+                    cache.clone(),
+                    query_permits.clone(),
+                );
                 jobs.spawn(async move {
                     // Blocking wallet work keeps the admission permit even if the
                     // async deadline expires, bounding outstanding CPU jobs too.
@@ -205,10 +214,14 @@ async fn live_load(
                                 Ok::<_, AnyError>((client, query))
                             }).await??;
                             record_stage(&mut stage_completions, start, "prepare", retry, Some(&manifest), None);
-                            let response = http.post(format!("{origin}/v1/status/query")).body(query.body.clone()).send().await?;
-                            session_status = Some(response.status().as_u16());
-                            record_stage(&mut stage_completions, start, "query", retry, Some(&manifest), Some(response.status().as_u16()));
-                            let bytes = response.error_for_status()?.bytes().await?;
+                            let bytes = {
+                                let _query_permit = query_permits.acquire().await?;
+                                record_stage(&mut stage_completions, start, "query_admission", retry, Some(&manifest), None);
+                                let response = http.post(format!("{origin}/v1/status/query")).body(query.body.clone()).send().await?;
+                                session_status = Some(response.status().as_u16());
+                                record_stage(&mut stage_completions, start, "query", retry, Some(&manifest), Some(response.status().as_u16()));
+                                response.error_for_status()?.bytes().await?
+                            };
                             let cpu_permit = permit.clone();
                             let observed = tokio::task::spawn_blocking(move || {
                                 let _permit = cpu_permit;

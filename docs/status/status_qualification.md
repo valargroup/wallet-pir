@@ -117,6 +117,16 @@ publication capture. The `probe-live-load` command supplies a canonical-mined
 request oracle and arrival records only. Neither output alone can pass this
 assessor; independent publication and resource evidence is mandatory.
 
+Run the live-load probe directly against the selected wallet HTTPS origin. One
+probe process is one public client, so it permits at most two encrypted queries
+in flight, matching the service's per-client admission limit. Initialization,
+oracle checks and client preparation still overlap across sixteen lookups, and
+the open-loop arrival rate remains twenty lookups per second. Query-slot waiting
+appears in the `query_admission` stage and counts against the original lookup
+deadline and scheduled-to-completed latency. HTTP 429, missed arrivals, timeouts
+and the one-second p99 limit retain their existing failure behavior. No forwarded
+client-address simulation or workstation traffic relay is required.
+
 The live-load probe permits one session refresh when its selected observation
 expires during a lookup. A session or query HTTP 503 permits this refresh only
 when that exact observation has expired locally; a 503 on a fresh observation,

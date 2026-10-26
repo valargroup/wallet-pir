@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[derive(Clone, Copy)]
 enum Behavior {
+    ClientLimited,
     Expiring,
     FreshUnavailable,
     AlwaysUnavailable,
@@ -26,6 +27,7 @@ struct Server {
     behavior: Behavior,
     init_count: Arc<AtomicUsize>,
     query_count: Arc<AtomicUsize>,
+    client_queries: Arc<tokio::sync::Semaphore>,
 }
 
 impl Server {
@@ -54,6 +56,15 @@ async fn session(State(server): State<Server>) -> Vec<u8> {
 
 async fn query(State(server): State<Server>, body: Bytes) -> Response {
     server.query_count.fetch_add(1, Ordering::SeqCst);
+    let _client_query = if matches!(server.behavior, Behavior::ClientLimited) {
+        let Ok(permit) = server.client_queries.clone().try_acquire_owned() else {
+            return StatusCode::TOO_MANY_REQUESTS.into_response();
+        };
+        tokio::time::sleep(Duration::from_millis(110)).await;
+        Some(permit)
+    } else {
+        None
+    };
     let old = body.get(4..36) == Some(server.old.manifest().id().as_slice());
     if old {
         let remaining =
@@ -113,6 +124,56 @@ fn rows(path: &std::path::Path) -> Vec<serde_json::Value> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn public_client_load_respects_query_admission_without_dropping_arrivals() {
+    let (rpc, rpc_job, mempool) = crate::source::tests::controlled_fixture(false, false).await;
+    *mempool.write().unwrap() = "77".repeat(32);
+    let observed = crate::source::observe(&rpc, [1; 32], 1).await.unwrap();
+    let prepared = tokio::task::spawn_blocking(move || {
+        Generation::prepare(&observed.snapshot, 7, 0, status::now_ms(), None)
+            .unwrap()
+            .0
+    })
+    .await
+    .unwrap();
+    let server = Server {
+        old: Arc::new(prepared.reobserved(status::now_ms() - MAX_AGE_MS - 1)),
+        new: Arc::new(prepared),
+        behavior: Behavior::ClientLimited,
+        init_count: Arc::new(AtomicUsize::new(0)),
+        query_count: Arc::new(AtomicUsize::new(0)),
+        client_queries: Arc::new(tokio::sync::Semaphore::new(2)),
+    };
+    let (origin, job) = serve(server.clone()).await;
+    let dir = tempfile::tempdir().unwrap();
+    let result = live_load(origin, rpc, 1, dir.path().to_owned()).await;
+    let summary = rows(&dir.path().join("summary.jsonl")).remove(0);
+    assert!(result.is_ok(), "{summary}");
+    assert_eq!(summary["offered"], 20);
+    assert_eq!(summary["correct"], 20);
+    assert_eq!(summary["failed"], 0);
+    assert_eq!(summary["unstarted"], 0);
+    assert_eq!(server.query_count.load(Ordering::SeqCst), 20);
+    let requests = rows(&dir.path().join("requests.jsonl"));
+    assert!(
+        requests.iter().any(|row| {
+            let stages = row["stage_completions"].as_array().unwrap();
+            let prepared = stages.iter().find(|s| s["stage"] == "prepare").unwrap();
+            let admitted = stages
+                .iter()
+                .find(|s| s["stage"] == "query_admission")
+                .unwrap();
+            let waiting =
+                admitted["elapsed_ms"].as_f64().unwrap() - prepared["elapsed_ms"].as_f64().unwrap();
+            row["duration_ms"].as_f64().unwrap() >= admitted["elapsed_ms"].as_f64().unwrap()
+                && waiting >= 5.
+        }),
+        "query admission waiting must remain in the measured lookup latency"
+    );
+    job.abort();
+    rpc_job.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn expiry_refresh_keeps_offered_queries_and_exposes_failed_attempts() {
     let (rpc, rpc_job, mempool) = crate::source::tests::controlled_fixture(false, false).await;
     *mempool.write().unwrap() = "77".repeat(32);
@@ -139,6 +200,7 @@ async fn expiry_refresh_keeps_offered_queries_and_exposes_failed_attempts() {
             behavior,
             init_count: Arc::new(AtomicUsize::new(0)),
             query_count: Arc::new(AtomicUsize::new(0)),
+            client_queries: Arc::new(tokio::sync::Semaphore::new(2)),
         };
         let (origin, job) = serve(server.clone()).await;
         let dir = tempfile::tempdir().unwrap();
@@ -190,6 +252,7 @@ async fn expiry_refresh_keeps_offered_queries_and_exposes_failed_attempts() {
         behavior: Behavior::Expiring,
         init_count: Arc::new(AtomicUsize::new(0)),
         query_count: Arc::new(AtomicUsize::new(0)),
+        client_queries: Arc::new(tokio::sync::Semaphore::new(2)),
     };
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let rpc_origin = format!("http://{}", listener.local_addr().unwrap());
@@ -249,6 +312,7 @@ async fn expiry_refresh_keeps_offered_queries_and_exposes_failed_attempts() {
             behavior: Behavior::FreshUnavailable,
             init_count: Arc::new(AtomicUsize::new(0)),
             query_count: Arc::new(AtomicUsize::new(0)),
+            client_queries: Arc::new(tokio::sync::Semaphore::new(2)),
         };
         let (origin, job) = serve(server.clone()).await;
         let result = next_manifest(
@@ -276,6 +340,7 @@ async fn expiry_refresh_keeps_offered_queries_and_exposes_failed_attempts() {
         behavior: Behavior::Unchanged,
         init_count: Arc::new(AtomicUsize::new(0)),
         query_count: Arc::new(AtomicUsize::new(0)),
+        client_queries: Arc::new(tokio::sync::Semaphore::new(2)),
     };
     let (origin, job) = serve(server.clone()).await;
     let http = reqwest::Client::new();
