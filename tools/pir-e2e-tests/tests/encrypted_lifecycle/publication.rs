@@ -1033,7 +1033,10 @@ async fn complete_publication_crosses_tls_without_consumers_and_source_loss_cann
         current.remaining_at(observed_at(&current, 0)).unwrap();
         current.remaining_at(observed_at(&current, 5000)).unwrap();
         assert!(current.remaining_at(observed_at(&current, 5001)).is_err());
-        assert!(current.remaining_at(observed_at(&current, -1)).is_err());
+        // Small clock differences shorten authority just like elapsed time.
+        assert_eq!(current.remaining_at(observed_at(&current, -1)).unwrap(), Duration::from_millis(4999));
+        assert_eq!(current.remaining_at(observed_at(&current, -1000)).unwrap(), Duration::from_millis(4000));
+        assert!(current.remaining_at(observed_at(&current, -1001)).is_err());
         let mut replay = current.current.clone();
         replay.revision -= 1;
         assert!(!replay.succeeds(&current.current));
