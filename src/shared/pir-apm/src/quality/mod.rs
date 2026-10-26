@@ -535,14 +535,16 @@ pub fn start(dashboard: SharedDashboard, config: &Config) -> Result<()> {
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             // The last two distinct published maps; an origin serving the
             // older one is lagging rather than disagreeing.
-            let (mut last, mut before) = (None, None);
+            let (mut last, mut before, mut seen_at) = (None, None, None);
             loop {
                 tick.tick().await;
                 let mut result = publication::check(&client, &service).await;
                 if result.map_sha256.is_some() && result.map_sha256 != last {
                     before = std::mem::replace(&mut last, result.map_sha256.clone());
+                    seen_at = Some(result.sampled_at);
                 }
                 result.previous_map = before.clone();
+                result.map_seen_at = seen_at;
                 if let Some(s) = dashboard
                     .write()
                     .await

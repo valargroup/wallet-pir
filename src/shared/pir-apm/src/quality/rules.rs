@@ -36,9 +36,10 @@ pub struct Policy {
     pub unit_forecast_ratio: f64,
     pub unit_memory_ratio: f64,
     pub unit_memory_hold_seconds: u64,
-    /// How long a public origin may keep serving the previous map after a
-    /// publication before the origin check fires (see
-    /// [`Finding::LaggingOrigin`]). Other disagreement keeps 30 s.
+    /// How long after a publication a public origin may keep serving the
+    /// previous map before the origin check fires (see
+    /// [`Finding::LaggingOrigin`]). Counted from the publication, not from the
+    /// disagreement, so unknown samples cannot extend it. Otherwise 30 s.
     pub origin_lag_hold_seconds: u64,
 }
 impl Default for Policy {
@@ -472,7 +473,11 @@ fn service_rules(a: &mut Adder, svc: &ServiceView, view: &View, now: u64, p: &Po
                 match key {
                     "canonical" => 0,
                     // Origins pick up a new publication within about a minute.
-                    _ if publication.finding() == Some(Finding::LaggingOrigin) => {
+                    _ if publication.finding() == Some(Finding::LaggingOrigin)
+                        && publication.map_seen_at.is_some_and(|seen| {
+                            now.saturating_sub(seen) < p.origin_lag_hold_seconds
+                        }) =>
+                    {
                         p.origin_lag_hold_seconds
                     }
                     _ => 30,
@@ -1385,6 +1390,7 @@ mod tests {
             map_sha256: Some("aa".repeat(32)),
             map_after: Some("aa".repeat(32)),
             previous_map: Some("bb".repeat(32)),
+            map_seen_at: Some(90),
             origins: vec![
                 publication::Origin {
                     origin: "https://a.example".into(),
@@ -1421,6 +1427,20 @@ mod tests {
             "https://b.example at 99: HTTP 200, map {}",
             "bb".repeat(32)
         )));
+        // Past the window the origin is stuck, not propagating, so failed reads
+        // that reset the pending dwell cannot keep postponing the alert.
+        let mut v = v;
+        v.services[0].publication.sampled_at = 270;
+        let f = conditions(&v, 275, &Policy::default());
+        let origins = f.services["transparent"]
+            .iter()
+            .find(|c| c.key == "quality.transparent.publication_origins")
+            .unwrap();
+        assert_eq!(
+            (origins.firing, origins.hold_seconds),
+            (Some(true), 30),
+            "the window counts from publication"
+        );
     }
 
     #[test]

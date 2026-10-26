@@ -16,6 +16,9 @@ pub struct View {
     /// The map published before the current one, set by the sampling loop,
     /// to recognise an origin still serving it.
     pub previous_map: Option<String>,
+    /// When the sampling loop first saw the current map, which bounds how long
+    /// an origin serving `previous_map` counts as propagation.
+    pub map_seen_at: Option<u64>,
     /// One entry per configured origin (at most two), in configuration order.
     pub origins: Vec<Origin>,
 }

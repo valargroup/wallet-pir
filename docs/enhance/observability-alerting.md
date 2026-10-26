@@ -631,7 +631,7 @@ txid display controller.
 | --- | --- | --- | --- | --- |
 | `inventory` | both | warning | roster or worker list invalid | 45 s |
 | `publication_canonical` | both | critical | published block hash differs from the node's | – |
-| `publication_origins` | both | critical | a public origin serves another map (only with origins) | 30 s; 180 s (`origin_lag_hold_seconds`) while every differing origin still serves the previous map |
+| `publication_origins` | both | critical | a public origin serves another map (only with origins) | 30 s; 180 s (`origin_lag_hold_seconds`) while every differing origin still serves the previous map, for that long after the publication |
 | `publication_*_coverage` | both | warning | that check unavailable | 45 s |
 | `publication_warning` | history | warning | oldest unpublished block > 30 s | – |
 | `publication_critical` | history | critical | oldest unpublished block > 60 s | 60 s |
