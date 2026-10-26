@@ -122,7 +122,7 @@ To release, push a `query-server-v<version>` tag. The
 CPU native binary, renders the unit and configuration from `install-node.json`
 with this page's role renderer, checks them with the binary and publishes the
 archive and `SHA256SUMS` as a GitHub release. Then pin its tag and archive
-checksum in `install.sh`; until then the one-liner needs `--version`.
+checksum in `install.sh`, which the plain one-liner then installs.
 
 ## Provisioning from a branch
 
