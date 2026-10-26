@@ -1357,11 +1357,7 @@ mod collection_tests {
             std::fs::write(&path, body).unwrap();
             path
         };
-        let (map, rows, later) = (
-            object('a', b"map"),
-            object('b', b"rows"),
-            object('c', b"more"),
-        );
+        let (map, rows) = (object('a', b"map"), object('b', b"rows"));
         let attempt = |revision: u64, linked: &[&Path]| {
             let tree = root.path().join(format!("staging-{revision}-100"));
             std::fs::create_dir(&tree).unwrap();
@@ -1380,6 +1376,8 @@ mod collection_tests {
             map.exists() && rows.exists(),
             "the first attempt's downloads survive"
         );
+        // The next attempt re-links both and downloads only what is new.
+        let later = object('c', b"more");
         attempt(1, &[&map, &rows, &later]);
         collect_saved(root.path()).unwrap();
         assert!(map.exists() && rows.exists() && later.exists());
