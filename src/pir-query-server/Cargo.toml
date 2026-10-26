@@ -199,7 +199,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # publisher library depends on this host only through its fixture and
 # qualification features; a default edge would link the same libraries into the
 # publisher test binary.
-pir-query-server = { path = ".", features = ["test-support"] }
+# A different dependency name keeps `pir-query-server/status` and other
+# package-qualified build features aimed at the host, rather than this dev edge.
+query-test-support = { package = "pir-query-server", path = ".", features = ["test-support"] }
 # Paused clocks drive the synchronization cadence regressions.
 tokio = { version = "1", features = ["full", "test-util"] }
 tempfile = "3"
