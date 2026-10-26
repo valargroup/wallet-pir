@@ -868,10 +868,15 @@ pub fn conditions(d: &DashboardData, now: u64, p: &Policy) -> Vec<Condition> {
             "receiver_payout_audit_stale".into(),
             "receiver".into(),
             "warning",
-            sampled.then(|| {
-                now.saturating_sub(receiver.last_read.unwrap_or(receiver.since))
-                    >= p.receiver_audit_stale_seconds
-            }),
+            // Before any read the grace is unknown, not healthy, so an APM
+            // restart cannot recover an incident that is still failing.
+            sampled
+                .then(|| match receiver.last_read {
+                    Some(read) => Some(now.saturating_sub(read) >= p.receiver_audit_stale_seconds),
+                    None => (now.saturating_sub(receiver.since) >= p.receiver_audit_stale_seconds)
+                        .then_some(true),
+                })
+                .flatten(),
             receiver
                 .last_read
                 .map_or("no payout audit read".into(), |read| {
@@ -1419,13 +1424,11 @@ mod tests {
             Some(true)
         );
         // Without any reported read, staleness counts from the first sample, so
-        // a publisher that has not read yet gets the full threshold.
+        // a publisher that has not read yet gets the full threshold, and the
+        // grace leaves an incident from before an APM restart open.
         d.monitoring.receiver.last_read = None;
         d.monitoring.receiver.since = now - 60;
-        assert_eq!(
-            check(&d, now, "receiver_payout_audit_stale").firing,
-            Some(false)
-        );
+        assert_eq!(check(&d, now, "receiver_payout_audit_stale").firing, None);
         d.monitoring.receiver.since = now - 1800;
         assert_eq!(
             check(&d, now, "receiver_payout_audit_stale").firing,
