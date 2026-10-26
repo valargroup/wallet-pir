@@ -396,14 +396,7 @@ impl Controller {
         let root = &std::fs::canonicalize(root)?;
         let layout = DisplayRoot::load(root)?;
         layout.validate()?;
-        let lock = std::fs::OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .open(root.join("controller.lock"))?;
-        lock.try_lock()
-            .map_err(|e| format!("another display controller owns this root: {e}"))?;
+        let lock = own_root(root)?;
         validate_storage_layout(root)?;
         super::activation::recover(root)?;
         if store.genesis_hash() != layout.genesis_hash {
@@ -800,6 +793,20 @@ fn seal_event(job: &SealJob) -> Value {
         "digest_s": shard.timings.digest_s, "write_s": shard.timings.write_s,
         "digest": shard.digest,
     })
+}
+
+/// Takes the root's exclusive controller lock, refusing a root another process
+/// owns. Whatever changes the root's records holds it for as long as it runs.
+pub(crate) fn own_root(root: &Path) -> Result<std::fs::File, BoxError> {
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(root.join("controller.lock"))?;
+    lock.try_lock()
+        .map_err(|e| format!("another display controller owns this root: {e}"))?;
+    Ok(lock)
 }
 
 /// Unchanged controller status and metrics routes, mounted by the application host.

@@ -114,6 +114,14 @@ enum Command {
         #[arg(long, default_value_t = 1)]
         seed: u64,
     },
+    /// Prepare the active publication as a restarted publisher does and
+    /// report each pass; later passes reuse earlier passes' evidence.
+    BenchRestore {
+        #[arg(long)]
+        root: PathBuf,
+        #[arg(long, default_value_t = 2)]
+        passes: u32,
+    },
     /// Build recent shards of synthetic records and report shape and time.
     BenchRecent {
         #[arg(
@@ -220,6 +228,11 @@ pub async fn run(args: Vec<std::ffi::OsString>) -> Result<(), BoxError> {
                 "journal": out, "start": start, "blocks": blocks, "records": records,
                 "genesis": offline::SYNTHETIC_GENESIS,
             }));
+        }
+        Command::BenchRestore { root, passes } => {
+            for line in offline::bench_restore(&root, passes).await? {
+                print(&line);
+            }
         }
         Command::BenchRecent {
             records,
