@@ -30,7 +30,7 @@ HOST = coordinator_edge.UNIFIED_HOST
 # host must refuse: legacy aliases stay on the product hosts, operator routes
 # are never public.
 SERVED = ('/enhance/v1/init', '/status/v1/init', '/transparent/v1/shards',
-          '/transparent/v1/filters/shards', '/receiver/v1/inventory')
+          '/transparent/v1/filters/shards', '/receiver/v1/inventory', '/apm/')
 REFUSED = ('/metrics', '/v1/enhance/init', '/v1/status/init', '/v2/shards', '/v1/receiver/inventory',
            '/receiver/v1/health')
 # The installer route redirects to the script kept in this repository.

@@ -43,7 +43,7 @@ See the [dated measurement record](https://github.com/valargroup/wallet-pir/blob
 for commands, raw reports and limitations. The
 [older reported result](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/evidence/enhance/reported-performance/README.md)
 remains available for historical context. The
-[APM dashboard](https://enhance-pir.valargroup.dev/apm/) shows live fleet performance.
+[APM dashboard](https://wallet-pir.valargroup.dev/apm/) shows live fleet performance.
 
 ## Repository layout
 
@@ -80,6 +80,6 @@ versioned operations bundle, role configuration and lifecycle interfaces.
 
 Use the [Enhance runbook](docs/enhance/deployment.md) or
 [transparent runbook](docs/transparent/deployment.md) for deployment.
-The [APM dashboard](https://enhance-pir.valargroup.dev/apm/) exposes observed
+The [APM dashboard](https://wallet-pir.valargroup.dev/apm/) exposes observed
 Enhance fleet health and performance. Dated evidence describes only its recorded
 revision, workload and coverage; it does not establish present capacity.

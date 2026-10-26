@@ -106,7 +106,7 @@ async fn main() -> Result<()> {
     if cli.enqueue_test_alert {
         let path = std::env::var("PIR_APM_STATE_PATH").context("PIR_APM_STATE_PATH required")?;
         let url = std::env::var("PIR_APM_PUBLIC_URL")
-            .unwrap_or_else(|_| "https://enhance-pir.valargroup.dev/apm/".into());
+            .unwrap_or_else(|_| "https://wallet-pir.valargroup.dev/apm/".into());
         pir_apm::incidents::Store::open(std::path::Path::new(&path))?.enqueue_test(
             pir_apm::incidents::unix_time(),
             &config.environment,
