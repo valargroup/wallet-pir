@@ -1,5 +1,6 @@
 """Fleet release planning over distributed, unified and mixed topologies."""
 import copy
+from dataclasses import replace
 import json
 from pathlib import Path
 import sys
@@ -87,6 +88,56 @@ ALL = [PUBLISHER, UNIFIED, STATUS, GPU, ROUTER]
 
 
 class FleetReleasePlanTests(unittest.TestCase):
+    def multiple_publishers(self):
+        document = inventory_document()
+        document['hosts']['pub-02'] = {'address': '10.0.0.6'}
+        document['services']['publisher-secondary'] = {'roles': {'server': [{'host': 'pub-02',
+            'vars': {'management_listen': '127.0.0.1:18080'}}]}}
+        registry = {**REGISTRY, 'publisher-secondary': replace(REGISTRY['publisher'], name='publisher-secondary',
+                                                              root='/opt/pir-publisher-secondary')}
+        second = 'pub-02/pir-publisher.service'
+        origin = 'https://publisher-secondary.example:443'
+        return document, registry, second, origin
+
+    def test_shared_process_validates_an_unchanged_second_publisher(self):
+        document, registry, second, origin = self.multiple_publishers()
+        document['services']['query-server']['roles']['combined'][0]['settings']['status']['publisher'] = origin
+        inventory = load(document)
+        observed = observations([*ALL, second])
+        observed['publishers'][origin] = {'major': 1}
+        proposed = request(list(ALL), major=2, publishers={ORIGIN: PUBLISHER, origin: second})
+        planned = fleet_release.plan(registry, inventory, 'e' * 64, proposed, observed)
+        self.assertTrue(any(origin in problem and 'would not match publisher' in problem
+                            for problem in planned['problems']), planned['problems'])
+        proposed['select'].append(second)
+        self.assertEqual(fleet_release.plan(registry, inventory, 'e' * 64, proposed, observed)['problems'], [])
+
+    def test_dependency_changes_validate_final_publishers_and_retain_predecessor_dependencies(self):
+        document, registry, second, origin = self.multiple_publishers()
+        inventory = load(document)
+        observed = observations([*ALL, second])
+        observed['processes'][second]['contract_major'] = 2
+        observed['publishers'][origin] = {'major': 2}
+        observed['processes'][UNIFIED].update(reads=[ORIGIN], final_reads=[origin])
+        proposed = request([UNIFIED], major=2, publishers={ORIGIN: PUBLISHER, origin: second})
+        planned = fleet_release.plan(registry, inventory, 'e' * 64, proposed, observed)
+        self.assertEqual(planned['problems'], [])
+        process = next(p for p in planned['processes'] if p['key'] == UNIFIED)
+        self.assertEqual(process['reads'], [origin])
+        self.assertEqual(process['previous_reads'], [ORIGIN])
+
+    def test_breaking_release_cannot_omit_a_standby_worker(self):
+        document = inventory_document()
+        document['hosts']['standby-01'] = {'address': '10.0.0.7'}
+        worker = copy.deepcopy(document['services']['enhance']['roles']['worker'][0])
+        worker['host'] = 'standby-01'
+        document['services']['enhance']['roles']['worker'].append(worker)
+        standby = 'standby-01/enhance-pir-worker.service'
+        observed = observations([*ALL, standby])
+        planned = self.plan(ALL, document, observed, major=2)
+        self.assertTrue(any(standby in problem and 'not part of the release' in problem
+                            for problem in planned['problems']), planned['problems'])
+
     def plan(self, select, document=None, observed=None, **overrides):
         inventory = load(document or inventory_document())
         return fleet_release.plan(REGISTRY, inventory, 'e' * 64, request(select, **overrides),

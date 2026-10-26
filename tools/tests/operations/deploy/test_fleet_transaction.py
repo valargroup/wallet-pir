@@ -351,6 +351,9 @@ class FleetTransactions(unittest.TestCase):
         # settings; CUDA selection does not change the process sandbox.
         self.inventory.services['query-server']['roles']['combined'][0]['settings']['enhance']['matvec'] = \
             document['enhance']['settings']['matvec']
+        self.inventory.services['query-server']['roles']['combined'][0]['artifact_kind'] = 'pir-query-server-cuda'
+        self.request['executables']['pir-query-server-cuda'] = copy.deepcopy(self.request['executables']['pir-query-server'])
+        self.binaries['pir-query-server-cuda'] = self.binaries['pir-query-server']
         def unavailable(host, argv, timeout):
             if 'check-backend' in argv:
                 return 1, 'device unavailable'

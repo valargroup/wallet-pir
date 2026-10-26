@@ -102,6 +102,8 @@ class TargetPlan:
 
 
 class Deployer:
+    coordinated = False
+
     def __init__(self, service, inventory, executor, state_dir, baseline_path=None, lock=None,
                  out=print, sleep=time.sleep, clock=time.monotonic, poll_seconds=2.0, only=None,
                  hold_on_failure=False):

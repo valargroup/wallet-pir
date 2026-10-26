@@ -424,6 +424,7 @@ class FleetTransaction:
                 settings = desired_document.get('enhance', {}).get('settings', {}).get('matvec', {})
                 backend = settings.get('matvec_backend', 'cpu')
                 if backend == 'cuda' or 'cuda' in process['variant']:
+                    require('cuda' in process['variant'], key + ': configured CUDA requires a CUDA artifact variant')
                     require('cuda' in actual.backends, key + ': configured CUDA backend is not compiled')
                     effective = units.effective([state.get('fragment_text') or '',
                         *(d['text'] for d in state.get('drop_ins', []))])
@@ -475,6 +476,8 @@ class FleetTransaction:
                     desired[key] = json.loads(change['new'])
         fresh['dependencies'] = dependencies(changing, desired)
         fresh['previous_dependencies'] = dependencies(changing, documents)
+        fresh['services'] = {name: service_document(self.registry[name])
+                             for name in {process['service'] for process in found.values()}}
         fresh['timing_path'] = {
             'preparation_allocation_seconds': 120, 'total_target_seconds': 180, 'interruption_target_seconds': 60,
             'startup_dependencies': fresh['dependencies'],
@@ -567,7 +570,7 @@ class FleetTransaction:
                      'preparation': fresh['preparation'],
                      'operations': {'root': str(paths.ROOT), 'source_revision': self.request['source']['revision'],
                                     'manifest_sha256': file_sha256(manifest) if manifest.exists() else None},
-                     'services': {name: service_document(service) for name, service in self.registry.items()}}
+                     'services': fresh['services']}
         for key, record in fresh['activation'].items():
             self.data['children'][key] = {'id': self.data['id'], 'service': processes[key]['service'],
                 'status': 'preparing', 'hosts': [copy.deepcopy(record)], 'events': [], 'source': self.request['source']}
@@ -1076,6 +1079,8 @@ class FleetTransaction:
         accepted = self.data.get('accepted_unix')
         checks_for_gap = (self.data.get('acceptance_checks', self.data['checks']) if self.data['phase'] == 'committed'
                           else self.data['checks'])
+        if self.data['phase'] == 'rolled-back':
+            checks_for_gap = {name: check for name, check in checks_for_gap.items() if check['restored']}
         gap_end = max((c['unix'] for c in checks_for_gap.values()), default=None) \
             if self.data['phase'] in ('committed', 'rolled-back') else None
         total = accepted - self.request['source']['submitted_unix'] if accepted is not None else None
@@ -1101,6 +1106,8 @@ class FleetTransaction:
                 'evidence': 'recorded transaction; use verify for current encrypted acceptance',
                 'operations': self.data['operations'],
                 'source': self.request['source'], 'timing': {'source_to_accepted': total,
+                    'source_to_outcome': ((accepted if self.data['phase'] == 'committed' else last or self.now())
+                                          - self.request['source']['submitted_unix']),
                     'interruption': interruption, 'product_gaps': products, 'operation_seconds': durations,
                     'preparation_seconds': preparation.get('seconds'),
                     'unmeasured_phases': [name for name in ('build', 'qualification') if name not in reported],
