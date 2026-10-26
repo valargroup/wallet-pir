@@ -414,7 +414,7 @@ on the destination before preflight. The plan compares its digest without
 reading credential values into requests or journals.
 
 The transaction stops and disables the old Receiver owner, verifies its state
-lock, transfers its complete stopped directory with a checked file manifest and
+lock, streams its complete stopped directory through gzip with a checked file manifest and
 starts Receiver inside the shared process. It adds the exact writable path and
 increases the shared service's memory ceiling from 40 to 47 GiB. Receiver's
 hostname keeps its wallet upstream and forwards provider requests and discovery

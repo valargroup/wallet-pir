@@ -6,6 +6,7 @@ rollback. This module is also sent verbatim to hosts; it uses the standard
 library only and never transfers credentials.
 """
 import fcntl
+import gzip
 import hashlib
 import io
 import json
@@ -48,7 +49,8 @@ def pack(root, transaction):
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         files = inventory(root)
         receipt = json.dumps({'transaction': transaction, 'files': files}, sort_keys=True).encode()
-        with tarfile.open(fileobj=sys.stdout.buffer, mode='w|') as archive:
+        with gzip.GzipFile(fileobj=sys.stdout.buffer, mode='wb', compresslevel=1) as compressed, \
+                tarfile.open(fileobj=compressed, mode='w|') as archive:
             for path in sorted(root.iterdir()):
                 if path.name not in (MANIFEST, OWNER):
                     archive.add(path, arcname=path.name)
@@ -67,13 +69,17 @@ def unpack(root, transaction, user):
     root.mkdir(mode=0o700, parents=False, exist_ok=False)
     try:
         (root / OWNER).write_text(transaction)
-        with tarfile.open(fileobj=sys.stdin.buffer, mode='r|') as archive:
+        with tarfile.open(fileobj=sys.stdin.buffer, mode='r|gz') as archive:
             for entry in archive:
                 name = PurePosixPath(entry.name)
                 if name.is_absolute() or '..' in name.parts or not (
                         entry.isfile() or entry.isdir() or entry.islnk()):
                     raise ValueError('unsafe Receiver state archive member')
                 archive.extract(entry, root, filter='data')
+        # Consume the sender's remaining trailer before it can close its SSH
+        # connection. Installation still waits for the complete manifest check.
+        for _chunk in iter(lambda: sys.stdin.buffer.read(1 << 20), b''):
+            pass
         receipt = json.loads((root / MANIFEST).read_text())
         if receipt['transaction'] != transaction or receipt['files'] != inventory(root):
             raise ValueError('Receiver state transfer differs from its manifest')

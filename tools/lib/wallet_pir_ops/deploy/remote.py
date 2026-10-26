@@ -202,8 +202,9 @@ class SSHExecutor(Executor):
     def receiver_copy_state(self, source, destination, root, staged, transaction, user='root'):
         """Copy stopped Receiver state through the runner, without host-to-host keys.
 
-        A private temporary archive bounds runner memory; the destination checks
-        its embedded content manifest before returning a transfer receipt.
+        Stream the compressed archive through a pipe, keeping memory bounded and
+        avoiding a second full transfer after downloading to the runner. The
+        destination checks its manifest before returning a transfer receipt.
         """
         from . import receiver_state
         program = Path(receiver_state.__file__).read_text()
@@ -211,14 +212,22 @@ class SSHExecutor(Executor):
             prefix = ['sudo', '-n', '--'] if self.inventory.hosts[host].get('sudo') else []
             return self.multiplexed(self.transport(host)) + [shlex.join(
                 [*prefix, 'python3', '-c', program, operation, path, transaction, *arguments])]
-        with tempfile.TemporaryFile() as archive:
-            packed = subprocess.run(command(source, 'pack', root), stdout=archive,
-                                    stderr=subprocess.PIPE, timeout=900, **inherited_lock.options())
-            if packed.returncode:
-                raise RemoteError('Receiver state export failed: ' + packed.stderr.decode(errors='replace')[-1500:])
-            archive.seek(0)
-            installed = subprocess.run(command(destination, 'unpack', staged, user), stdin=archive,
-                                       capture_output=True, timeout=900, **inherited_lock.options())
+        with tempfile.TemporaryFile() as errors:
+            sender = subprocess.Popen(command(source, 'pack', root), stdout=subprocess.PIPE,
+                                      stderr=errors, **inherited_lock.options())
+            try:
+                installed = subprocess.run(command(destination, 'unpack', staged, user), stdin=sender.stdout,
+                                           capture_output=True, timeout=900, **inherited_lock.options())
+                sender.stdout.close()
+                code = sender.wait(timeout=30)
+                if code:
+                    errors.seek(0)
+                    raise RemoteError('Receiver state export failed: ' + errors.read().decode(errors='replace')[-1500:])
+            finally:
+                sender.stdout.close()
+                if sender.poll() is None:
+                    sender.terminate()
+                    sender.wait(timeout=30)
             if installed.returncode:
                 raise RemoteError('Receiver state import failed: ' + installed.stderr.decode(errors='replace')[-1500:])
             return json.loads(installed.stdout)
