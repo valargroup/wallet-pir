@@ -13,13 +13,25 @@ executable alone does not establish what is running.
 
 Every main commit publishes the GitHub release `build-<sha12>` from
 `.github/workflows/release.yml`. It contains `pir-publisher`, `pir-query-server` (every
-query role runs this one executable), `contract.json`, `pirctl` and `SHA256SUMS`.
+query role runs this one executable), `pir-probe` with its clients and pinned answers,
+`contract.json`, `pirctl` and `SHA256SUMS`.
 
 Each host runs [`pirctl`](../tools/deploy/pirctl). It downloads its asset from the
 release, checks it with `--check`, points the unit's `current` link at it and restarts
-the unit. Verification is the process running the new file and `/health` ready. Once
-the query release carries `pir-probe`, it also requires one known answer per product
-within 15 s. If verification fails,
+the unit. Verification is the process running the new file, `/health` ready, and
+[`pir-probe`](../tools/deploy/pir-probe) passing within 15 s on components that serve
+wallets. `pir-probe` sends one encrypted query per product to the local listener, all at
+once, and needs no chain node:
+
+- Enhance, Transparent history and transaction details must return the answers pinned
+  in [`tools/deploy/probe/`](../tools/deploy/probe).
+- Receiver must return the payment built into `receiver-probe`.
+- Status covers only recent blocks, so it has no fixed answer: a random txid must decode
+  as not found under the service's own fresh manifest.
+
+The pinned Transparent rows come from the oldest archive shards. A declared re-cut
+replaces their revisions, so refresh that fixture from the monitor's current one when
+you deploy a re-cut. If verification fails,
 `pirctl` restores the previous release on its own. `/etc/wallet-pir/pirctl.conf` lists
 the components on that host.
 

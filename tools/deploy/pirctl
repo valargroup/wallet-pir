@@ -87,6 +87,12 @@ prepare() {
     mkdir "$tmp/unpacked"
     tar -C "$tmp/unpacked" -xzf "$tmp/$C_ASSET.tar.gz"
     [ -x "$tmp/unpacked/$C_ASSET" ] || die "build-$sha has no $C_ASSET executable"
+    # Components that serve wallets also get the probe their verification runs.
+    if [ -n "$C_PRODUCTS" ] && grep -q ' pir-probe.tar.gz$' "$tmp/SHA256SUMS"; then
+      fetch "$sha" pir-probe.tar.gz "$tmp"
+      mkdir "$tmp/unpacked/probe"
+      tar -C "$tmp/unpacked/probe" -xzf "$tmp/pir-probe.tar.gz"
+    fi
     mv "$tmp/unpacked" "$dir"
     rm -rf "$tmp"
   fi
@@ -120,12 +126,12 @@ verify() {
   done
   say "$C_NAME: ready after $(($(now) - start))s"
   [ -n "$C_PRODUCTS" ] || return 0
-  if [ ! -x "$C_DIR/current/pir-probe" ]; then
+  if [ ! -x "$C_DIR/current/probe/pir-probe" ]; then
     say "$C_NAME: this release has no pir-probe; readiness only"
     return 0
   fi
   start=$(now)
-  timeout "$PROBE_SECONDS" "$C_DIR/current/pir-probe" --server "$C_PROBE" --products "$C_PRODUCTS" ||
+  timeout "$PROBE_SECONDS" "$C_DIR/current/probe/pir-probe" --server "$C_PROBE" --products "$C_PRODUCTS" ||
     die "$C_NAME: probe failed for $C_PRODUCTS"
   say "$C_NAME: probe passed after $(($(now) - start))s"
 }

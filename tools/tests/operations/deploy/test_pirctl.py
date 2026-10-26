@@ -117,15 +117,16 @@ class Fleet:
     def release(self, sha, *, markers=(), probe=True, major=1):
         directory = self.releases / ('build-' + sha[:12])
         directory.mkdir(parents=True)
+        archives = {asset: {asset: EXECUTABLE + '# ' + sha + '\n', 'revision': sha + '\n'}
+                    for asset in ('pir-publisher', 'pir-query-server')}
+        if probe:
+            archives['pir-probe'] = {'pir-probe': PROBE}
+        for marker in markers:
+            archives['pir-probe' if marker == 'PROBE_FAILS' else 'pir-query-server'][marker] = ''
         sums = []
-        for asset in ('pir-publisher', 'pir-query-server'):
+        for asset, members in archives.items():
             data = io.BytesIO()
             with tarfile.open(fileobj=data, mode='w:gz') as archive:
-                members = {asset: EXECUTABLE + '# ' + sha + '\n', 'revision': sha + '\n'}
-                if probe and asset == 'pir-query-server':
-                    members['pir-probe'] = PROBE
-                for marker in markers:
-                    members[marker] = ''
                 for name, text in members.items():
                     info = tarfile.TarInfo(name)
                     info.size = len(text.encode())
@@ -183,6 +184,12 @@ class PirctlTest(unittest.TestCase):
 
     def deploy(self, sha):
         return self.fleet.pirctl(self.host, 'deploy', 'query', sha)
+
+    def test_a_release_without_a_probe_is_verified_by_readiness_alone(self):
+        self.fleet.release(SHA_A, probe=False)
+        result = self.deploy(SHA_A)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('no pir-probe; readiness only', result.stdout)
 
     def test_deploy_switches_restarts_and_probes_the_new_release(self):
         self.fleet.release(SHA_A)

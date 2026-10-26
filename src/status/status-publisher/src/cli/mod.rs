@@ -1,7 +1,8 @@
 //! The `pir-publisher status` subcommands. The binary only parses arguments and calls one
 //! function here per subcommand.
 //!
-//! Production diagnostics use `probe-live` and `probe-live-load`.
+//! Production diagnostics use `probe-live` and `probe-live-load`; deploy verification on
+//! query hosts runs `probe-local` from a Status-only `pir-publisher`.
 //! Query roles run in `pir-query-server`; this binary never serves wallets.
 pub mod http_client;
 mod live;
@@ -9,7 +10,7 @@ mod live_load;
 mod production;
 pub use live::observe_live;
 pub use live_load::probe_live_load;
-pub use production::probe_live;
+pub use production::{probe_live, probe_local};
 
 pub type AnyError = Box<dyn std::error::Error + Send + Sync>;
 fn require(ok: bool, message: &str) -> Result<(), AnyError> {

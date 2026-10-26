@@ -46,10 +46,14 @@ pub struct Args {
     /// An independent node's RPC endpoint. Repeat it for fallbacks: the nodes that
     /// reached the publication check it one at a time, ranked as
     /// [`NodeClient::ranked`] does, until one completes the checks.
-    #[arg(long, required = true)]
+    #[arg(long, required_unless_present = "fixture_only")]
     rpc_url: Vec<String>,
-    #[arg(long, required_unless_present = "no_auth", conflicts_with = "no_auth")]
+    #[arg(long, required_unless_present_any = ["no_auth", "fixture_only"], conflicts_with = "no_auth")]
     cookie: Option<PathBuf>,
+    /// Check only that the pinned payment decrypts as the fixture says, without a node:
+    /// no lag, anchor, witness or filter checks. Deploy probes on query hosts use this.
+    #[arg(long)]
+    fixture_only: bool,
     #[arg(long)]
     no_auth: bool,
     /// Blocks the publication may trail the freshest node's tip. It must cover the
@@ -199,22 +203,27 @@ async fn probe(
             json!({"fixture": "after coverage"}),
         )));
     }
-    let nodes = args
-        .rpc_url
-        .iter()
-        .map(|url| NodeClient::new(url.clone(), args.cookie.as_deref()))
-        .collect::<std::result::Result<Vec<_>, _>>()?;
-    let pinned = (fixture.height, block_hash);
-    // An inventory displaced during a slow ranking fails this run; the next starts from
-    // its head.
-    let shard = u16::try_from(fixture.position >> 16)?;
-    let (rpc, root, tip) = match oracle(&nodes, &head, pinned, shard).await {
-        Ok(found) => found,
-        Err(failure) => return Ok(Some(failure)),
+    let chain = if args.fixture_only {
+        None
+    } else {
+        let nodes = args
+            .rpc_url
+            .iter()
+            .map(|url| NodeClient::new(url.clone(), args.cookie.as_deref()))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let pinned = (fixture.height, block_hash);
+        // An inventory displaced during a slow ranking fails this run; the next starts
+        // from its head.
+        let shard = u16::try_from(fixture.position >> 16)?;
+        let (rpc, root, tip) = match oracle(&nodes, &head, pinned, shard).await {
+            Ok(found) => found,
+            Err(failure) => return Ok(Some(failure)),
+        };
+        if let Some(failure) = check_lag(tip, &head, args.max_lag) {
+            return Ok(Some(failure));
+        }
+        Some((rpc, root))
     };
-    if let Some(failure) = check_lag(tip, &head, args.max_lag) {
-        return Ok(Some(failure));
-    }
     let inventory = match capture(&http, origin, head.clone()).await? {
         Ok(inventory) => inventory,
         Err(failure) => return Ok(Some(failure)),
@@ -317,6 +326,9 @@ async fn probe(
                 json!({"lookup": found, "queries": queries}),
             )));
         }
+    };
+    let Some((rpc, root)) = chain else {
+        return Ok(None);
     };
     // The segment's own end and its companion's construction block must be the node's,
     // with the tree sizes their manifests claim, before its payload is trusted.

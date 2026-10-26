@@ -67,9 +67,46 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  probe:
+    name: Build pir-probe
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/rust-setup
+        with:
+          lane: release
+          scope: probe
+      # One known-answer client per product; tools/deploy/pir-probe runs them together. The
+      # Status client is the publisher's `status probe-local`, built with Status alone.
+      - name: Build
+        run: |
+          cargo build --locked --profile release-fast \
+            -p enhance-pir-client --bin enhance-pir-cli --features enhance-pir-client/native-reinspiring \
+            -p pir-publisher --bin pir-publisher --features pir-publisher/status,pir-publisher/native-reinspiring \
+            -p transparent-tools --bin quality-canary --bin txid-quality-canary \
+            -p receiver-indexer --bin receiver-probe
+      - name: Package
+        run: |
+          out="$RUNNER_TEMP/pir-probe"
+          mkdir -p "$out/fixtures"
+          cp tools/deploy/pir-probe "$out/"
+          cp tools/deploy/probe/*.json "$out/fixtures/"
+          for bin in enhance-pir-cli pir-publisher quality-canary txid-quality-canary receiver-probe; do
+            cp "$CARGO_TARGET_DIR/release-fast/$bin" "$out/"
+          done
+          tar -C "$out" -czf "$RUNNER_TEMP/pir-probe.tar.gz" .
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: pir-probe
+          path: ${{ runner.temp }}/pir-probe.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
   publish:
     name: Publish build release
-    needs: build
+    needs: [build, probe]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
@@ -90,7 +127,7 @@ jobs:
           # major with the live discovery document before a partial deploy.
           jq -s '{publisher: .[0], query_server: .[1]}' \
             pir-publisher.contract.json pir-query-server.contract.json > contract.json
-          files=(pir-publisher.tar.gz pir-query-server.tar.gz contract.json pirctl)
+          files=(pir-publisher.tar.gz pir-query-server.tar.gz pir-probe.tar.gz contract.json pirctl)
           sha256sum "${files[@]}" > SHA256SUMS
           tag="build-${GITHUB_SHA:0:12}"
           gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
