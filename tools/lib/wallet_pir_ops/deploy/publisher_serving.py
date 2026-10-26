@@ -108,7 +108,7 @@ class Serving:
         edge = stable_unit(owner.ex.probe_unit(owner.host, 'caddy.service'))
         require(edge['active_state'] == 'active' and not edge['need_daemon_reload']
                 and '--config /etc/caddy/Caddyfile' in edge['fragment_text'], 'Caddy is not active on the installed configuration')
-        after = candidate(before)
+        after = owner.receiver.edge(candidate(before))
         self.validate_edge(after)
         # Snapshot pinning (History restore preparation, HTTPS staging) runs
         # only this reviewed helper.

@@ -386,8 +386,9 @@ product-specific rollout; it refuses shared contract-major changes.
 Production publishing runs through `pir-publisher --config FILE`; wallet routes
 belong to query ingress. Use `publisher-cutover-*` in
 `tools/scripts/wallet-pir-deploy.py` from a clean pinned checkout or a matching
-verified operations bundle. New plans require the running four-product publisher,
-its current product settings, and already-installed wallet routes. Only the current four-product deployment request is supported; historical
+verified operations bundle. New plans require the running shared publisher,
+its current product settings, and already-installed wallet routes. Four-product
+updates and five-product updates including Receiver use the same request; historical
 ownership and HTTPS migrations have no recovery entry points in this tooling.
 
 Prepare a private `publisher-cutover/3` request with the coordinator `host` and
@@ -399,9 +400,37 @@ Transparent settings preserve their installed distribution mode. The inventory u
 all four products, with no standalone publisher roles. Its `exact_check.products`
 matches the request checks. Credentials stay in their existing files.
 
+To adopt Receiver into that process, add its enabled `receiver` configuration,
+independent `checks.receiver`, and `receiver` managed product. Keep the Receiver
+service entry with no `server` role and retain its routing ancillary entry.
+The optional `receiver_adoption` object has exactly `host`, `machine_id`,
+`config_path` (`/etc/receiver-pir-publisher.json`), `data_dir`
+(`/srv/receiver-pir/index`) and `publisher_origin` (the main publisher's existing
+HTTPS origin). It is accepted only when the installed shared configuration has
+no Receiver. Preserve all Receiver settings except changing `bind` to
+`127.0.0.1:18380`; the shared chain connection replaces its separate node.
+Provision the source unit's existing Infisical environment file at the same path
+on the destination before preflight. The plan compares its digest without
+reading credential values into requests or journals.
+
+The transaction stops and disables the old Receiver owner, verifies its state
+lock, transfers its complete stopped directory with a checked file manifest and
+starts Receiver inside the shared process. It adds the exact writable path and
+increases the shared service's memory ceiling from 40 to 47 GiB. Receiver's
+hostname keeps its wallet upstream and forwards provider requests and discovery
+over verified HTTPS to the shared publisher. Query replicas keep their existing
+Receiver origin. Verify fresh synchronization and an encrypted Receiver lookup
+on both replicas; a cached inventory is not evidence of a successful move.
+Rollback returns the latest Receiver state before restarting the old owner, so
+publication authority does not return to pre-cutover counters. Interrupted
+adoption uses `reconcile` or `rollback`, followed by a fresh plan; ordinary
+four-product installation recovery remains unchanged. Later publisher requests
+retain Receiver but omit `receiver_adoption`.
+
 Publisher updates preserve the installed product settings exactly. Retired
 transport, replay and trust settings must already be absent from the installed
-configuration. Planning never silently converts settings or moves storage roots.
+configuration. Planning never silently converts settings or moves storage roots
+without the explicit Receiver adoption above.
 The transaction retains its predecessor's configuration, unit and executable
 identities for drift checks and rollback.
 
@@ -463,6 +492,47 @@ status and rollback commands. This preserves its unit arguments, credential
 files and durable incident/delivery state. Acceptance requires fresh monitoring
 coverage; a stale sidecar can report missing init coverage despite correct
 wallet answers.
+
+## Fast branch builds over SSH
+
+Branch-built artifacts can use the existing deployment transactions directly;
+they do not need to be downloaded from CI. Check SSH reachability and use a clean,
+visible build checkout. Fetch the selected branch once, pin its full SHA, and
+reuse the host's existing target directory, toolchain and native build flags.
+Do not change a live checkout or delete its build cache. Build the two hosts
+sequentially within one target lane, preserving all enabled product features:
+
+```sh
+deploy_sha=$(git rev-parse HEAD)
+bounded-run --name publisher-branch-build --limit 30 --max 1800 -- \
+  cargo build --locked --release -p pir-publisher \
+  --features enhance,status,transparent-history,transparent-detail,receiver,native-reinspiring
+python3 tools/ci/release.py assemble --sha "$deploy_sha" --kind pir-publisher \
+  --target "$CARGO_TARGET_DIR" --output .local-pir/publisher-branch-artifact
+bounded-run --name query-branch-build --limit 30 --max 1800 -- \
+  cargo build --locked --release -p pir-query-server \
+  --features enhance,status,transparent-history,transparent-detail,receiver,native-reinspiring
+python3 tools/ci/release.py assemble --sha "$deploy_sha" --kind pir-query-server \
+  --target "$CARGO_TARGET_DIR" --output .local-pir/query-branch-artifact
+```
+
+If a bounded build is still running, finish it with the printed `--wait` command
+before assembling or starting another Cargo writer. Choose fresh output paths
+for subsequent revisions. Preserve any additional feature required by the
+installed query variant; CPU artifacts do not replace CUDA artifacts.
+
+Run `publisher-cutover-plan` and `publisher-cutover-preflight` with the pinned
+request and publisher archive. After production confirmation, use
+`publisher-cutover-deploy` with that plan digest. For a publisher-only update,
+pin the installed Enhance serving binary and set `preserve_serving: true`.
+Then update each combined query host sequentially using the existing
+`plan query-server`, `preflight query-server` and `deploy query-server` commands,
+its inventory and the query archive. Each Receiver-enabled combined host must
+have a separate `receiver` encrypted-answer check in `exact_check.products`.
+Keep `status` and `rollback` inputs alongside each transaction. These are
+unqualified branch artifacts: focused offline checks, readiness and the existing
+encrypted probes remain required; a full integration campaign is not part of
+this SSH iteration.
 
 ## Product libraries and commands
 

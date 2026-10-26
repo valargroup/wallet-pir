@@ -31,6 +31,18 @@ def settings():
 
 
 class QueryRole(unittest.TestCase):
+    def test_receiver_enabled_query_requires_its_own_encrypted_probe(self):
+        from types import SimpleNamespace
+        from wallet_pir_ops.query_role import PRODUCTS
+        service = descriptors.load_descriptors(ROOT / 'tools/deploy/services.toml')['query-server']
+        checks = {name: {'host': 'probe', 'argv': ['/bin/probe'], 'timeout': 20} for name in PRODUCTS}
+        spec = {'roles': {'combined': [{'settings': {'receiver': {}}}]}, 'exact_check': {'products': checks}}
+        inventory = SimpleNamespace(services={'query-server': spec}, hosts={'probe': {}}, retired_hosts={})
+        with self.assertRaisesRegex(ValueError, 'every configured product'):
+            descriptors.exact_check(service, inventory)
+        checks['receiver'] = {'host': 'probe', 'argv': ['/bin/receiver-probe'], 'timeout': 20}
+        self.assertEqual(set(descriptors.exact_check(service, inventory)['products']), {*PRODUCTS, 'receiver'})
+
     @classmethod
     def setUpClass(cls):
         cls.role = descriptors.load_descriptors(ROOT / 'tools/deploy/services.toml')['query-server'].roles['combined']

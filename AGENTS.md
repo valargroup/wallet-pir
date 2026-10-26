@@ -104,6 +104,10 @@ subcommands, and product features are selected independently.
 
 ## Branches and production changes
 
+- Run Receiver publishing inside the same `pir-publisher` process as the other
+  products; keep exactly one Receiver publisher in the fleet. Query replicas
+  remain independently deployable.
+
 - Follow the [PR management and labeling guide](docs/pr-management.md) when
   creating or updating a PR. Prioritize migrations, API breaks, and security;
   keep up to three primary labels and always retain an area label, using a fourth

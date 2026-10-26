@@ -67,7 +67,8 @@ def load_request(path, expected):
     require(set(request) == ({'schema', 'host', 'machine_id', 'release', 'configuration', 'inventory', 'checks', 'serving'}
                 | ({'resume_load'} if 'resume_load' in request else set())
                 | ({'expected_disk_latch_sha256'} if 'expected_disk_latch_sha256' in request else set())
-                | ({'preserve_serving'} if 'preserve_serving' in request else set())),
+                | ({'preserve_serving'} if 'preserve_serving' in request else set())
+                | ({'receiver_adoption'} if 'receiver_adoption' in request else set())),
             'publisher request has unknown or missing fields')
     if 'expected_disk_latch_sha256' in request:
         require(request['schema'] == SERVING_SCHEMA and request.get('resume_load') is False
@@ -88,8 +89,8 @@ def load_request(path, expected):
             and re.fullmatch('[a-f0-9]{40}', version['git_sha']) and re.fullmatch('[a-f0-9]{64}', version['binary_sha256']),
             'release requires full source and executable digests')
     require(type(version['binary_bytes']) is int and version['binary_bytes'] > 0, 'invalid executable size')
-    products = PRODUCTS
     config = request['configuration']
+    products = PRODUCTS + (['receiver'] if isinstance(config, dict) and 'receiver' in config else [])
     require(isinstance(config, dict) and set(config) - {'chain'} == {'management_listen', *products}
             and config['management_listen'] == '127.0.0.1:18080',
             'cutover products must match the schema, with loopback management on 18080')
@@ -121,8 +122,13 @@ def load_request(path, expected):
     descriptors.exact_check(descriptors.load_descriptors(ROOT / 'tools/deploy/publisher/services.toml')['publisher'], inventory)
     require(publisher.get('roles', {}).get('server') == [{'host': request['host'], 'vars': {'management_listen': '127.0.0.1:18080'}}],
             'publisher must run once on the pinned coordinator')
+    from .publisher_receiver import validate as validate_receiver
+    validate_receiver(request, inventory)
     registry = ROOT / 'tools/deploy/publisher/all-services.toml'
-    problems = Fleet(inventory, descriptors.load_descriptors(registry)).problems(complete=True)
+    registered = descriptors.load_descriptors(registry)
+    if 'receiver' not in products:
+        registered.pop('receiver', None)
+    problems = Fleet(inventory, registered).problems(complete=True)
     require(not problems, 'candidate inventory is incomplete or has conflicting owners: ' + '; '.join(problems))
     from .publisher_serving import validate_request
     validate_request(request, inventory)
@@ -166,7 +172,7 @@ def stable_unit(state):
             'need_daemon_reload', 'fragment_path', 'fragment_text', 'drop_ins', 'exe_sha256', 'unit_file_state')}
 
 
-def configuration_preserves_products(candidate, installed):
+def configuration_preserves_products(candidate, installed, receiver_adoption=None):
     """Allow only the root chain conversion, retaining every other setting.
 
     All four previous node sources must agree. The shared follower retains the
@@ -176,6 +182,10 @@ def configuration_preserves_products(candidate, installed):
     """
     if candidate == installed:
         return True
+    if receiver_adoption is not None and 'receiver' not in installed:
+        candidate = {key: value for key, value in candidate.items() if key != 'receiver'}
+        if candidate == installed:
+            return True
     if 'chain' in installed or not isinstance(candidate.get('chain'), dict):
         return False
     converted = copy.deepcopy(installed)
@@ -214,6 +224,8 @@ class Cutover:
         self.lock = None
         from .publisher_serving import Serving
         self.serving = Serving(self)
+        from .publisher_receiver import Receiver
+        self.receiver = Receiver(self)
 
     def read(self, path):
         return self.ex.read(self.host, path)
@@ -266,8 +278,11 @@ class Cutover:
         override = status_https_override(unified, unified['exe_sha256'])
         config = self.request['configuration']
         installed = json.loads(self.read(CONFIG))
-        require(configuration_preserves_products(config, installed),
+        require(configuration_preserves_products(config, installed, self.request.get('receiver_adoption')),
                 'publisher updates must preserve every product setting')
+        require(not self.request.get('receiver_adoption') or 'receiver' not in installed,
+                'Receiver is already adopted; ordinary updates must omit receiver_adoption')
+        receiver = self.receiver.capture()
         executables = {}
         for name, state in states.items():
             if state['active_state'] == 'active':
@@ -299,7 +314,7 @@ class Cutover:
         desired = {
             CONFIG: json.dumps(config, indent=2) + '\n',
             INVENTORY: json.dumps(self.request['inventory'], indent=2) + '\n',
-            UNIT_PATH: render(config, binary, states),
+            UNIT_PATH: render(config, binary, states, receiver_environments=(receiver or {}).get('environments', [])),
             SAMPLER: json.dumps(sampler, indent=2) + '\n',
             LOAD_DROP: '[Service]\nExecStart=\nExecStart=' + load_command + '\n',
         }
@@ -309,7 +324,8 @@ class Cutover:
             desired[STATUS_HTTPS_DROP] = exec_override(units.exec_start(units.effective([desired[UNIT_PATH]])))
         before = {path: {'text': self.read(path), 'mode': (resource['files'][path] or {}).get('mode', 0o600)} for path in desired}
         serving = self.serving.capture()
-        return {'serving': serving, 'request_sha256': durable.digest(self.request), 'before': before, 'units': states,
+        return {'serving': serving, **({'receiver': receiver} if receiver is not None else {}),
+                'request_sha256': durable.digest(self.request), 'before': before, 'units': states,
                 'desired': desired, 'binary': binary, 'executables': executables,
                 'previous_transaction': previous and previous['id']}
 
@@ -452,6 +468,7 @@ class Cutover:
         require(all(stable_unit(self.ex.probe_unit(self.host, name)) == before
                     for name, before in plan['units'].items()), 'publisher fleet changed during staging')
         self.serving.unchanged_during_staging(plan['serving'])
+        self.receiver.guard(plan.get('receiver'), staging=True)
 
     def deploy(self, binary, expected_plan, serving_binary=None):
         require(file_sha256(binary) == self.request['release']['binary_sha256'] and
@@ -478,6 +495,7 @@ class Cutover:
                 self.effect(journal, 'pause continuous load', lambda: self.stop(LOAD))
             else:
                 self.require_stopped_load()
+            self.receiver.adopt(journal)
             self.effect(journal, 'stop ' + UNIT, lambda: self.stop(UNIT))
             self.unlocked()
             from .publisher_restore import HistoryRestore
@@ -493,6 +511,7 @@ class Cutover:
             self.ready()
             self.serving.verify(journal)
             self.serving.route(journal)
+            self.receiver.route(journal)
             self.exact(journal)
             if self.resume_load:
                 self.effect(journal, 'resume continuous load', lambda: self.ex.systemctl(self.host, 'start', LOAD))
@@ -505,6 +524,8 @@ class Cutover:
         """Resume only a lost connection after the recorded predecessor stop."""
         require(self.request['schema'] == SERVING_SCHEMA and not self.resume_load,
                 'installation recovery requires publisher-cutover/3 with its checker stopped')
+        require(not self.request.get('receiver_adoption'),
+                'interrupted Receiver adoption must use reconcile or rollback before a fresh deployment')
         with production_lock(self.inventory, self.ex) as self.lock:
             journal = self.latest()
             from .publisher_restore import staged_effects
@@ -575,6 +596,7 @@ class Cutover:
             else:
                 self.effect(journal, 'verify reload wallet edge',
                             lambda: self.ex.systemctl(self.host, 'reload', 'caddy.service'))
+            self.receiver.route(journal)
             self.exact(journal)
             require(unchanged() == invocation, 'publisher invocation changed during verification recovery')
             if self.resume_load:
@@ -692,6 +714,7 @@ class Cutover:
             require(all(observed[key] == plan['units'][name][key] for key in ('fragment_text', 'drop_ins')),
                     'predecessor service configuration changed: ' + name)
         self.serving.restore_guard(journal)
+        self.receiver.guard(plan.get('receiver'))
         from .publisher_restore import HistoryRestore
         history_restore = HistoryRestore(self)
         history_restore.guard(journal)
@@ -707,6 +730,7 @@ class Cutover:
                 self.effect(journal, 'restore stop ' + name,
                             lambda name=name: self.stop_candidate_for_restore(journal) if name == UNIT else self.stop(name))
         self.unlocked()
+        self.receiver.restore_state(journal)
         self.serving.restore(journal)
         history_restore.rollback(journal)
         if self.ex.probe_unit(self.host, UNIT)['load_state'] != 'not-found':
@@ -728,6 +752,7 @@ class Cutover:
                         lambda name=name, enabled=enabled: self.ex.systemctl(self.host, 'enable' if enabled else 'disable', name))
             if before['active_state'] == 'active':
                 self.effect(journal, 'restore start ' + name, lambda name=name: self.ex.systemctl(self.host, 'start', name))
+        self.receiver.restore_service(journal)
         self.ready()
         self.serving.verify(journal, restored=True)
         self.exact(journal)
@@ -779,6 +804,10 @@ def dispatch(args, executor=None, **_options):
         result['serving_units'] = {t.key: stable_unit(executor.probe_unit(t.host, t.unit))
                                    for t in target.serving.deployer.targets}
         result['wallet_edge_sha256'] = sha(target.read('/etc/caddy/Caddyfile'))
+        if target.receiver.request:
+            source = target.receiver.request['host']
+            result['receiver_source'] = stable_unit(executor.probe_unit(source, 'receiver-pir.service'))
+            result['receiver_edge_sha256'] = sha(executor.read(source, '/etc/caddy/Caddyfile'))
         return result
     if operation == 'plan':
         return target.plan()

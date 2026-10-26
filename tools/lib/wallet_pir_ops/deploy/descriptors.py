@@ -407,7 +407,10 @@ def targets(service, inventory):
                     '%s.%s@%s: install is a boolean, true only for a role-mode role' % (service.name, role_name, host))
             result.append(Target(role, host, unit, values, expected, kind, tuple(duties),
                                  settings=settings, install=install))
-    require(result, 'inventory lists no %s hosts' % service.name)
+    managed = inventory.services.get('publisher', {}).get('managed_products', [])
+    unified = {PUBLISHER_PRODUCTS[name] for name in managed}
+    required = {(service.name, role.name) for role in service.roles.values() if not role.optional}
+    require(result or (required and required <= unified), 'inventory lists no %s hosts' % service.name)
     repeated = {(t.role.name, t.host) for t in result
                 if sum((u.role.name, u.host) == (t.role.name, t.host) for u in result) > 1}
     return [dataclasses.replace(t, qualified=True) if (t.role.name, t.host) in repeated else t for t in result]
@@ -436,7 +439,11 @@ def exact_check(service, inventory):
     if service.name in ('publisher', 'query-server') and isinstance(check, dict) and 'products' in check:
         if service.name == 'query-server':
             from ..query_role import PRODUCTS
-            products = PRODUCTS
+            products = set(PRODUCTS)
+            roles = inventory.services['query-server'].get('roles', {})
+            if any('receiver' in entry.get('settings', {})
+                   for entries in roles.values() for entry in entries):
+                products.add('receiver')
         else:
             products = inventory.services['publisher']['managed_products']
         require(set(check) == {'products'} and isinstance(check['products'], dict)
