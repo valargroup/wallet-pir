@@ -59,7 +59,11 @@ it prints the waves that would restart. Every deploy and dry run ends with one p
 per product through the public origins wallets use (Enhance and Status through
 `enhance-pir`, Transparent history and transaction details through `transparent-pir`,
 Receiver through `receiver-pir`), run from the publisher host with the deployed build's
-`pir-probe`; a failed probe is retried within its 15 s budget while query roles catch up. Components that share a host deploy one after another. `pir-deploy rollback <group|host>` swaps components back to
+`pir-probe`; a failed probe is retried within its 15 s budget while query roles catch up.
+A publisher restart stops Enhance and Receiver work at the next shard, and the new
+process serves Receiver's last publication again once it has read the chain. Query
+roles poll a restarting publisher every second, and Enhance and Status `init` wait up
+to 15 s for its authority, so wallets see a slower answer rather than an error. Components that share a host deploy one after another. `pir-deploy rollback <group|host>` swaps components back to
 their previous release, and `pir-deploy status` prints what each host runs. A
 component's previous release must still read what the publisher now sends: query
 servers built before `e9848f1e4157` refuse the Receiver distribution of later
