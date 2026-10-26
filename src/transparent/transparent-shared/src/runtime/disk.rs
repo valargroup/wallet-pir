@@ -982,15 +982,17 @@ mod tests {
     #[test]
     fn a_restored_entry_must_publish_the_masks_it_stored() {
         let dir = tempfile::tempdir().unwrap();
-        let shared = SharedParams::build(&DECOUPLED_2K_8K, Table::Directory).unwrap();
-        let rows = vec![3u8; (DECOUPLED_2K_8K.directory_rows * 4_096) as usize];
-        let key = ("ef".repeat(32), Table::Directory, 0);
+        use super::super::tests::{fixture_params, fixture_shape, prepared_fixture, recovery_rows};
+        let (geometry, table) = fixture_shape(&DECOUPLED_2K_8K, Table::Directory);
+        let shared = fixture_params(geometry, table, false);
+        let rows = recovery_rows(&shared, false);
+        let key = ("ef".repeat(32), table, 0);
         let disk = DiskCache::new(dir.path().into(), shared.reserved_bytes() * 2).unwrap();
-        let cold = TableRuntime::build(&shared, &rows).unwrap();
+        let cold = prepared_fixture(&shared, &rows).unwrap();
         disk.save(&key, &shared, "source", &cold).unwrap();
         let path = disk.path(&key, &shared, "source");
         let mut bytes = fs::read(&path).unwrap();
-        let public_at = (DiskCache::fixed_bytes(&shared) as usize) - 14_848;
+        let public_at = DiskCache::fixed_bytes(&shared) as usize - shared.scheme().public_bytes;
         bytes[public_at] ^= 1;
         // Recompute the checksum so only the mask binding can catch it.
         let checksum = Sha256::digest(&bytes[64..]);
