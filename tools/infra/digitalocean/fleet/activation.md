@@ -107,8 +107,8 @@ unrelated drift separately. A mock rehearsal does not replace this live gate.
 
 Request production confirmation only after the source SHA, artifact digest,
 reviewed mappings, live plans, variable-file preservation and health receipts
-are concrete and reviewable. Production installation must use the existing
-`ops/scripts/wallet-pir-deploy.py` plan/preflight and locked operations path.
+are concrete and reviewable. Production installation must use the locked
+`wallet-pir-deploy.py ops-package-*` install of the operations bundle.
 The manual Terraform writer remains `ops/scripts/wallet-pir-terraform.sh`,
 which holds `/run/lock/wallet-pir-production.lock`; no direct remote apply or
 manual host mutation is permitted.

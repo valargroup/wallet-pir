@@ -294,9 +294,9 @@ publisher has no dependency on reaching a consumer control endpoint.
 ### 6. Qualify and prepare direct cutover
 
 Retain focused correctness evidence, then run hardware and deployed-size
-qualification separately. Prepare a locked plan/preflight/deploy/status/rollback
-path through `tools/scripts/wallet-pir-deploy.py`, pinning exact artifacts,
-configuration and baseline service identities. Verify the actual live topology
+qualification separately. Roll the build release with `pir-deploy` (dry run first),
+which pins the release's checksums and keeps each host's previous release for
+rollback. Verify the actual live topology
 at execution time; source examples do not establish production readiness.
 
 Use existing hosts and one direct cutover. Keep the previous executable/config

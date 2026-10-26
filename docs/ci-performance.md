@@ -7,7 +7,7 @@ acceptance**, with **under 60 seconds of interruption**. These targets remain
 unproven until representative measurements establish them. Cold builds count
 against the deployment clock and an overrun is a miss.
 
-## Fleet release clocks and evidence
+## Deployment clocks and evidence
 
 Capture `source.submitted_unix` when selecting the source commit, before any queue
 or build wait. The total clock includes compilation with production `--release`,
@@ -17,15 +17,10 @@ clock runs from the first affected stop through verified encrypted answers for
 every affected product. A node with several products reports each product's gap
 from its first affected stop; process readiness alone does not end a gap.
 
-Fleet journals record timed operations and preparation receipts and expose total,
-interruption, per-product gaps, recovery duration and the three largest recorded
-contributors directly in status. Work durations may overlap; their sum is not the
-total clock. Missing build/qualification phase measurements are explicitly unknown.
-Caller-reported preparation timings are distinguished from measured transaction
-operations. A target miss is reported without restarting healthy services or
-aborting safe recovery. Correctness fixtures always report
-`performance_qualified: false`; timing numbers from small fixtures are not fleet
-performance evidence.
+`pir-deploy` records neither clock; measure them from the source selection time,
+the release workflow's run timings and the deploy's own output. A target miss is
+reported without restarting healthy services or aborting safe recovery. Timing
+numbers from small fixtures are not fleet performance evidence.
 
 Start preparation with a 120-second allocation, overlapping independent lanes,
 qualification and distribution as soon as each candidate is ready. Reuse persistent

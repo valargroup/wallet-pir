@@ -5,7 +5,7 @@ when the inventory's `publisher.managed_products` names the product,
 `pir-publisher.service` is the controller authority, its product settings in
 the installed publisher configuration are the controller settings, and the
 product's own status listener reports authority. The publisher's executable
-changes through `publisher-cutover-*`. History workers are autonomous HTTPS
+changes through `pir-deploy publisher`. History workers are autonomous HTTPS
 providers there.
 
 The release identity is the request's Git revision and binary digest; the
@@ -88,7 +88,7 @@ APM_LISTEN = '127.0.0.1:3002'
 APM_SERVICE = {'transparent-history': 'transparent', 'transparent-display': 'txid'}
 REQUEST_KEYS = {'schema', 'service', 'component', 'release', 'publication', 'controller', 'workers', 'load'}
 COMPONENTS = ('workers', 'controller')
-# The unified owner, as installed by `publisher-cutover-*`.
+# The unified owner of both products' controller duties.
 PUBLISHER_UNIT = 'pir-publisher.service'
 PUBLISHER_CONFIG = '/etc/wallet-pir/publisher.json'
 # Autonomous HTTPS History providers, the only History workers of the unified
@@ -324,7 +324,7 @@ class Upgrade:
             selected = self.request.get('selected_workers')
             return [t for t in workers if selected is None or t.key in selected], self.service
         if self.unified:
-            raise DeployError('%s owns the %s controller; change its executable with publisher-cutover-* '
+            raise DeployError('%s owns the %s controller; change its executable with pir-deploy publisher '
                               '(docs/publisher.md), not transparent-binary-*' % (PUBLISHER_UNIT, self.request['service']))
         state = ex.probe_unit(self.controller.host, self.controller.unit)
         try:

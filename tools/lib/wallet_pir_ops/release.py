@@ -35,11 +35,10 @@ BINARIES = {
     'transparent-txid-display': ['pir-query-server', 'txid-inventory', 'pir-publisher',
                                  'txid-quality-canary'],
     # Status publisher and the query server its roles run, from the native target
-    # like `enhance-pir-native`; tools/scripts/wallet-pir-deploy.py renders its units.
+    # like `enhance-pir-native`.
     'status-pir': ['pir-publisher', 'pir-query-server'],
-    # The receiver directory's indexer and server, which
-    # tools/scripts/wallet-pir-deploy.py deploys and whose `probe` is the deploy's
-    # exact check, and the standalone probe pir-monitor runs.
+    # The receiver directory's publisher and server, and the standalone probe
+    # pir-monitor runs.
     'receiver-pir': ['pir-publisher', 'pir-query-server', 'receiver-probe'],
 }
 FILES = {
