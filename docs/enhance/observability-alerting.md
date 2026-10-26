@@ -130,7 +130,9 @@ samples it every 30 seconds and adds `receiver_payout_audit_stale` (warning, no
 successful NEAR payout audit read for `receiver_audit_stale_seconds`, default
 30 minutes) and `receiver_health` (warning, route unavailable for 120 s). The
 audit's read time is the newer of the in-memory read and the stored feed
-cursor, so a publisher restart does not fire it. Missing payouts are checked by
+cursor, and APM keeps the last one it saw, so a publisher restart does not fire
+it. With no read reported yet, the threshold counts from APM's first sample, so
+a disabled audit fires after it. Missing payouts are checked by
 the external monitor's Receiver canary, which reads the same route.
 
 Optional `PIR_APM_ALERT_POLICY` names a JSON file. Fields and defaults:

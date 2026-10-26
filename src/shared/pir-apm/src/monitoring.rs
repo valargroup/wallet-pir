@@ -92,8 +92,13 @@ pub struct Chain {
 pub struct ReceiverAudit {
     pub sampled_at: u64,
     /// The newer of the last successful NEAR read and the stored feed cursor, so
-    /// a publisher restart does not look like a stalled audit.
+    /// a publisher restart does not look like a stalled audit. Kept across
+    /// reports that carry neither, such as before a restarted publisher's first
+    /// read.
     pub last_read: Option<u64>,
+    /// When this monitor first read the health route. Staleness counts from
+    /// here until the route reports a read.
+    pub since: u64,
     pub error: bool,
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -864,9 +869,8 @@ pub fn conditions(d: &DashboardData, now: u64, p: &Policy) -> Vec<Condition> {
             "receiver".into(),
             "warning",
             sampled.then(|| {
-                receiver
-                    .last_read
-                    .is_none_or(|read| now.saturating_sub(read) >= p.receiver_audit_stale_seconds)
+                now.saturating_sub(receiver.last_read.unwrap_or(receiver.since))
+                    >= p.receiver_audit_stale_seconds
             }),
             receiver
                 .last_read
@@ -1065,6 +1069,7 @@ async fn receiver_loop(d: SharedDashboard, url: String) {
         .timeout(Duration::from_secs(4))
         .build()
         .expect("receiver health client");
+    let mut audit = ReceiverAudit::default();
     loop {
         let result = async {
             client
@@ -1077,18 +1082,15 @@ async fn receiver_loop(d: SharedDashboard, url: String) {
         }
         .await;
         let now = incidents::unix_time();
-        d.write().await.monitoring.receiver = match result {
-            Ok(body) => ReceiverAudit {
-                sampled_at: now,
-                last_read: audit_read(&body),
-                error: false,
-            },
-            Err(_) => ReceiverAudit {
-                sampled_at: now,
-                last_read: None,
-                error: true,
-            },
-        };
+        audit.sampled_at = now;
+        audit.error = result.is_err();
+        if let Ok(body) = result {
+            if audit.since == 0 {
+                audit.since = now;
+            }
+            audit.last_read = audit.last_read.max(audit_read(&body));
+        }
+        d.write().await.monitoring.receiver = audit.clone();
         tokio::time::sleep(Duration::from_secs(30)).await;
     }
 }
@@ -1403,6 +1405,7 @@ mod tests {
         d.monitoring.receiver = ReceiverAudit {
             sampled_at: now,
             last_read: Some(now - 60),
+            since: now - 3600,
             error: false,
         };
         assert_eq!(
@@ -1415,7 +1418,15 @@ mod tests {
             check(&d, now, "receiver_payout_audit_stale").firing,
             Some(true)
         );
+        // Without any reported read, staleness counts from the first sample, so
+        // a publisher that has not read yet gets the full threshold.
         d.monitoring.receiver.last_read = None;
+        d.monitoring.receiver.since = now - 60;
+        assert_eq!(
+            check(&d, now, "receiver_payout_audit_stale").firing,
+            Some(false)
+        );
+        d.monitoring.receiver.since = now - 1800;
         assert_eq!(
             check(&d, now, "receiver_payout_audit_stale").firing,
             Some(true)
@@ -1424,6 +1435,7 @@ mod tests {
         d.monitoring.receiver = ReceiverAudit {
             sampled_at: now,
             last_read: None,
+            since: 0,
             error: true,
         };
         assert_eq!(check(&d, now, "receiver_payout_audit_stale").firing, None);
@@ -1432,6 +1444,7 @@ mod tests {
         d.monitoring.receiver = ReceiverAudit {
             sampled_at: now - 100,
             last_read: Some(now - 60),
+            since: now - 3600,
             error: false,
         };
         assert_eq!(check(&d, now, "receiver_health").firing, Some(true));
