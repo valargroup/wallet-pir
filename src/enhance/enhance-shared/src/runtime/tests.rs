@@ -261,7 +261,9 @@ fn round_trip_and_restart(backend: MatvecConfig) {
     assert_ne!(old_plan, plan);
     assert!(old_plan.validate().is_err());
     let client = crate::client::QuerySession::new(&manifest, pack.session(&manifest, 0)).unwrap();
-    for position in [32, 33, 66] {
+    // The last slot of a full row and the final partial-row record cover
+    // both extraction boundaries without repeating the first slot between them.
+    for position in [32, 66] {
         let (query, slot) = client.prepare_position(position).unwrap();
         let binding = QueryBinding::decode(query.body()).unwrap();
         let rows = client.query_rows();
@@ -305,6 +307,8 @@ fn round_trip_and_restart(backend: MatvecConfig) {
     assert!(Arc::ptr_eq(&eval.units[0], &again.units[0]));
     assert_eq!(outcome.reused, again.units.len());
     drop(again);
+    let query = vec![modulus() - 1; 4096];
+    let expected = eval.evaluate(&query).unwrap();
     drop(eval);
     let mut restarted = Engine::with_backend(dir.path(), backend);
     let (restored, outcome) = restarted
@@ -323,14 +327,12 @@ fn round_trip_and_restart(backend: MatvecConfig) {
             .unwrap()
             .0
     };
-    let query = vec![modulus() - 1; 4096];
     if backend.matvec_backend != crate::matvec::Backend::Cpu {
         assert_eq!(
             cpu_eval.evaluate(&query).unwrap(),
             selected_eval.evaluate(&query).unwrap()
         );
     }
-    let expected = cpu_eval.evaluate(&query).unwrap();
     std::thread::scope(|scope| {
         for _ in 0..2 {
             let eval = &selected_eval;
