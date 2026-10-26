@@ -41,6 +41,7 @@ pub(super) fn synchronization(
             owner,
             publications,
             views: Arc::default(),
+            tables: None,
             #[cfg(test)]
             loads: 0,
         },
@@ -59,6 +60,8 @@ pub(super) struct Receiver {
     owner: Arc<std::fs::File>,
     publications: Publications,
     views: Arc<Mutex<Views>>,
+    /// The tables last loaded, reused while publications name the same files.
+    tables: Option<super::material::Tables>,
     #[cfg(test)]
     loads: usize,
 }
@@ -91,6 +94,7 @@ impl Receiver {
             owner: self.owner.clone(),
             publications: self.publications.clone(),
             views: self.views.clone(),
+            tables: self.tables.clone(),
             loads: self.loads,
         };
         let before = self.views.lock().unwrap().views.len();
@@ -246,18 +250,22 @@ impl PublicationAdapter for Receiver {
         candidate: Candidate,
         artifacts: pir_publication::VerifiedObjects,
     ) -> Result<Loaded, Error> {
-        #[cfg(test)]
-        {
-            self.loads += 1;
-        }
         // Metadata/public setup is small relative to rows; lazy row loaders
         // rebuild evaluators only under the existing shared table budget.
         let inventory = candidate.inventory.clone();
         let owner = self.owner.clone();
-        let (directory, filters) = tokio::task::spawn_blocking(move || {
-            super::material::load(&inventory, &artifacts, owner)
+        let previous = self.tables.clone();
+        let (directory, filters, tables) = tokio::task::spawn_blocking(move || {
+            super::material::load(&inventory, &artifacts, owner, previous)
         })
         .await??;
+        #[cfg(test)]
+        if tables.as_ref().map(|t| &t.key) != self.tables.as_ref().map(|t| &t.key) {
+            self.loads += 1;
+        }
+        if tables.is_some() {
+            self.tables = tables;
+        }
         Ok(Loaded {
             candidate,
             epoch: self.publications.epoch(),
@@ -425,9 +433,25 @@ impl PublicationAdapter for Receiver {
         pir_pipeline::consumer::reservations::NoPeers.complete()
     }
     async fn pass_finished(&mut self, result: &Result<ConsumerPass<Self::Report>, Error>) {
-        if let Err(error) = result {
-            tracing::warn!(%error, "Receiver publication synchronization failed");
+        match result {
+            Err(error) => tracing::warn!(%error, "Receiver publication synchronization failed"),
+            Ok(ConsumerPass::Deferred { report }) => {
+                tracing::debug!(serving = ?report, "Receiver publication pass deferred")
+            }
+            Ok(ConsumerPass::Committed { report, .. }) => {
+                tracing::debug!(serving = ?report, "Receiver publication committed")
+            }
         }
+    }
+    fn phase_finished(&mut self, phase: &'static str, elapsed: std::time::Duration) {
+        tracing::debug!(
+            phase,
+            elapsed_ms = elapsed.as_millis() as u64,
+            "Receiver publication phase"
+        );
+    }
+    async fn deferred(&mut self, reason: pir_pipeline::consumer::DeferralReason) {
+        tracing::debug!(?reason, "Receiver publication deferred");
     }
     async fn serving_report(&mut self) -> Self::Report {
         if self.publications.current_anchor().is_none()

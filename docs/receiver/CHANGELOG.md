@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- A restarted publisher no longer replaces the Receiver publication it restored
+  with one that has block filters but no tables while it rebuilds them, and query
+  servers reuse the tables they already loaded when a publication names the same
+  files. A publisher restart now interrupts Receiver for about one query-server
+  poll instead of until the rebuild finishes.
+
 - A restarted publisher serves its previous Receiver publication again as soon as
   it has read the chain, under its new recovery epoch, while it rebuilds the tables.
   Only a publication of the same history revision whose files are all still kept
