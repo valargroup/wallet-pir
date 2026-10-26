@@ -154,10 +154,16 @@ probe() {
 # A dry run: the release is unpacked and accepts this host's config, and its probe
 # passes against the service running now. Nothing is switched or restarted.
 check() {
-  local sha
+  local sha start limit=$((READY_SECONDS < 30 ? READY_SECONDS : 30))
   sha=$(short "$1")
   prepare "$sha"
-  ready || die "$C_NAME is not ready now"
+  # Readiness can dip for a moment, for example while a product renews its view;
+  # a deploy waits for it too, so a dry run does not fail on one sample.
+  start=$(now)
+  until ready; do
+    [ $(($(now) - start)) -lt "$limit" ] || die "$C_NAME has not been ready for ${limit}s"
+    sleep 0.25
+  done
   probe "$(release_dir "$sha")"
   say "$C_NAME: build-$sha would replace $(basename "$(link_target "$C_DIR/current")")"
 }
