@@ -61,6 +61,13 @@ class QueryRole(unittest.TestCase):
         self.assertEqual(units.split_exec(units.exec_start(units.effective([result.unit])))[1],
                          RELEASE + '/pir-query-server')
 
+    def test_installer_settings_serve_all_five_products(self):
+        value = json.loads((ROOT / 'tools/deploy/query-server/install-node.json').read_text())
+        config = json.loads(self.render(value).files[CONFIG])
+        self.assertEqual(set(config) - {'public_listen', 'management_listen'},
+                         {'enhance', 'status', 'transparent_history', 'transaction_details', 'receiver'})
+        self.assertEqual(config['receiver']['settings']['publisher'], 'https://receiver-pir.valargroup.dev')
+
     def test_invalid_compositions_are_refused_before_deployment(self):
         baseline = settings()
         baseline['enhance']['data_dir'] = '/srv/wallet-pir-query/enhance'

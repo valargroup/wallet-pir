@@ -4,8 +4,8 @@
 #   curl -fsSL https://wallet-pir.valargroup.dev/install | sudo bash
 #   curl -fsSL https://wallet-pir.valargroup.dev/install | sudo bash -s -- --domain pir.example.org
 #
-# One configuration: Enhance, Status, Transparent history and transaction
-# details in one pir-query-server process, synchronizing publisher-prepared
+# One configuration: Enhance, Status, Transparent history, transaction details
+# and Receiver in one pir-query-server process, synchronizing publisher-prepared
 # material over HTTPS. Nothing is prompted. Every run ends with one
 # `wallet-pir-install:` line on stdout; see docs/query-server.md.
 set -euo pipefail
@@ -16,6 +16,7 @@ ARCHIVE_SHA256="196e7608bcdb02b7ddf25248b0d6a07fbb6722b18ce7d661749df1f1a224c3e0
 
 REPOSITORY="valargroup/wallet-pir"
 PUBLISHER="https://enhance-pir.valargroup.dev"
+RECEIVER_PUBLISHER="https://receiver-pir.valargroup.dev"
 ENHANCE_INIT="https://wallet-pir.valargroup.dev/enhance/v1/init"
 MIN_CPUS=16
 MIN_MEMORY_BYTES=$((92 * 1024 * 1024 * 1024))
@@ -247,7 +248,9 @@ check_sources() {
   init="$(fetch 30 "$ENHANCE_INIT")" || die prerequisite 4 "cannot read the Enhance shard list from $ENHANCE_INIT"
   SHARDS="$(jq -ce '[.coverage.shards[].id] | select(length > 0)' <<<"$init")" ||
     die prerequisite 4 "$ENHANCE_INIT lists no Enhance shards"
-  say "publisher ok; Enhance shards $SHARDS"
+  fetch 15 "$RECEIVER_PUBLISHER/.well-known/pir-service-discovery" >/dev/null ||
+    die prerequisite 4 "Receiver publisher $RECEIVER_PUBLISHER is unreachable"
+  say "publishers ok; Enhance shards $SHARDS"
 }
 
 resolve_release() {
@@ -343,11 +346,12 @@ install_caddy() {
     ! grep -q '^# The Caddyfile is an easy way' "$caddyfile"; then
     die prerequisite 4 "$caddyfile was not written by this installer; add the wallet routes yourself"
   fi
-  # Wallet routes as on fleet query nodes (tools/infra/digitalocean/query-serving/cloud-init.yaml.tftpl).
+  # Wallet routes as on fleet query nodes (tools/infra/digitalocean/query-serving/cloud-init.yaml.tftpl),
+  # plus Receiver, which fleet nodes serve through a separate edge.
   write_file "$caddyfile" 0644 <<EOF
 $CADDY_MARKER
 $DOMAIN {
-	@wallet path /enhance/v1/* /status/v1/* /transparent/v1/* /v1/enhance/* /v1/status/* /v2/*
+	@wallet path /enhance/v1/* /status/v1/* /transparent/v1/* /receiver/v1/* /v1/enhance/* /v1/status/* /v1/receiver/* /v2/*
 	handle @wallet {
 		reverse_proxy $PUBLIC
 	}

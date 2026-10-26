@@ -595,7 +595,7 @@ jobs:
       - name: Check query deployment and provisioning refusals
         run: python3 -B -m unittest tools.tests.operations.test_query_role tools.tests.operations.test_query_infra tools.tests.operations.test_query_terraform
       - name: Build all supported query products together
-        run: cargo build --locked --release -p pir-query-server --features enhance,status,transparent-history,transparent-detail,native-reinspiring
+        run: cargo build --locked --release -p pir-query-server --features enhance,status,transparent-history,transparent-detail,receiver,native-reinspiring
       - name: Check the rendered deployment through the actual binary
         run: |
           python3 tools/scripts/wallet-pir-roles.py --service query-server --role combined --settings tools/deploy/query-server/query-node.example.json --release "$CARGO_TARGET_DIR/release" > "$RUNNER_TEMP/rendered-query.json"
