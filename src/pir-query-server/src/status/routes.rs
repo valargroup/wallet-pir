@@ -203,10 +203,19 @@ async fn router_init(State(service): State<Service>) -> Result<Json<Manifest>, S
     if !service.role.answers_wallets() {
         return Err(StatusCode::NOT_FOUND);
     }
-    let controller = service.serving().await?;
-    let generation = controller.current();
-    controller.check(&generation)?;
-    Ok(Json(generation.manifest().clone()))
+    // A publisher restart withdraws authority for seconds; wait it out.
+    let manifest = crate::hold::until(
+        crate::hold::WINDOW,
+        |status: &StatusCode| *status == StatusCode::SERVICE_UNAVAILABLE,
+        || async {
+            let controller = service.serving().await?;
+            let generation = controller.current();
+            controller.check(&generation)?;
+            Ok(generation.manifest().clone())
+        },
+    )
+    .await?;
+    Ok(Json(manifest))
 }
 async fn router_session(
     State(service): State<Service>,

@@ -242,7 +242,7 @@ async fn run<E: PublisherExecutor + IngestionExecutor>(
         tip,
         providers,
         publications: publications.clone(),
-        state: application::State::default(),
+        state: application::State::stopping_with(stop.clone()),
         distribution,
         executor: executor.clone(),
     };

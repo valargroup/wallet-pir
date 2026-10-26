@@ -24,6 +24,21 @@ impl DiscoveryError {
     pub fn origin(&self) -> &str {
         &self.origin
     }
+    /// Whether the publisher is down or restarting behind its proxy: it did not
+    /// answer, or the proxy answered 502, 503 or 504. Clears within seconds when
+    /// a deploy restarts the publisher.
+    pub fn unavailable(&self) -> bool {
+        match &self.reason {
+            Reason::Unreachable(_) => true,
+            Reason::Status(status) => matches!(
+                *status,
+                reqwest::StatusCode::BAD_GATEWAY
+                    | reqwest::StatusCode::SERVICE_UNAVAILABLE
+                    | reqwest::StatusCode::GATEWAY_TIMEOUT
+            ),
+            _ => false,
+        }
+    }
     /// The confirmed contract version mismatch, if this is one.
     pub fn incompatible(&self) -> Option<&discovery::Incompatible> {
         match &self.reason {

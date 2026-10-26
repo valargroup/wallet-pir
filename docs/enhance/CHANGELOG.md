@@ -2,6 +2,12 @@
 
 ## 0.0.1 — Unreleased
 
+- Wallet `init` and Status `init` requests wait up to 15 s for a restarting
+  publisher's authority instead of answering 503 at once, re-checking authority on
+  every attempt. Query servers treat a publisher that does not answer, or whose
+  proxy answers 502–504, as restarting and re-poll it every second instead of
+  backing off for 10–40 s.
+
 - Load autonomous ingress router assignments from host JSON and enforce publisher
   compatibility before opening state or listeners. A confirmed major-version
   mismatch during synchronization stops the host with the discovery error;
