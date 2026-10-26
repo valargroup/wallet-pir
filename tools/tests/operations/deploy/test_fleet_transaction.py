@@ -218,6 +218,14 @@ class FleetTransactions(unittest.TestCase):
             self.prepare()
         self.assertFalse([event for _, op, event in self.ex.log if op == 'systemctl'])
 
+    def test_invalid_machine_identity_refuses_before_staging(self):
+        self.fixture()
+        resources = self.ex.publisher_resources
+        self.ex.publisher_resources = lambda host, paths: {**resources(host, paths), 'machine_id': ''}
+        with self.assertRaisesRegex(DeployError, 'invalid machine identity'):
+            self.prepare()
+        self.assertFalse(self.ex.log)
+
     def test_colocated_roles_transfer_the_query_executable_once(self):
         self.fixture(colocated=True)
         plan = self.prepare()

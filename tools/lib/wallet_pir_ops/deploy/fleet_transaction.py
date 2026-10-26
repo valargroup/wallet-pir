@@ -229,6 +229,15 @@ class FleetTransaction:
         if failures:
             raise failures[0]
 
+    def identify(self, host):
+        """Bind an SSH identity to the machine, including probe/checker hosts."""
+        self.ex.check_identity(host)
+        machine = self.ex.publisher_resources(host, [])['machine_id']
+        require(isinstance(machine, str) and re.fullmatch('[a-f0-9]{32}', machine), host + ': invalid machine identity')
+        expected = self.inventory.hosts[host].get('machine_id')
+        require(expected is None or expected == machine, host + ': machine identity differs from inventory')
+        return machine
+
     def adapter(self, process, *, recovery=False):
         key = process['key']
         service = self.registry[process['service']]
@@ -277,11 +286,7 @@ class FleetTransaction:
         found, conflicts = fleet_release.processes(self.registry, self.inventory)
         machines = {}
         for host in sorted({p['host'] for p in found.values()}):
-            self.ex.check_identity(host)
-            identity = self.ex.publisher_resources(host, [])
-            machines[host] = identity['machine_id']
-            expected = self.inventory.hosts[host].get('machine_id')
-            require(expected is None or expected == machines[host], host + ': machine identity differs from inventory')
+            machines[host] = self.identify(host)
         seen = set()
         activation, problems, loads, documents = {}, list(conflicts), {}, {}
         for load in self.request.get('loads', []):
@@ -289,6 +294,8 @@ class FleetTransaction:
             require(not any(p['host'] == load['host'] and p['unit'] == load['unit'] for p in found.values()),
                     'load must not name a serving process')
             self.ex.check_identity(load['host'])
+            if load['host'] not in machines:
+                machines[load['host']] = self.identify(load['host'])
             loads[(load['host'], load['unit'])] = {**load, 'state': stable_state(
                 self.ex.probe_unit(load['host'], load['unit']))}
         for key, process in found.items():
@@ -441,12 +448,21 @@ class FleetTransaction:
                 process['action'] = 'keep'
         fresh['machines'] = machines
         fresh['loads'] = list(loads.values())
+        checker_owners = set()
+        for load in fresh['loads']:
+            require(load['host'] in self.inventory.hosts, 'checker host is outside inventory')
+            if load['host'] not in machines:
+                machines[load['host']] = self.identify(load['host'])
+            identity = (machines[load['host']], load['unit'])
+            require(identity not in seen, 'a continuous checker aliases a serving process')
+            require(identity not in checker_owners, 'duplicate continuous checker ownership')
+            checker_owners.add(identity)
         for probe in [*self.request['probes'].values(), *(p for group in self.request.get('process_probes', {}).values()
                                                         for p in group.values())]:
             require(probe['host'] in self.inventory.hosts, 'probe host is outside inventory')
             self.ex.check_identity(probe['host'])
             if probe['host'] not in machines:
-                machines[probe['host']] = self.ex.publisher_resources(probe['host'], [])['machine_id']
+                machines[probe['host']] = self.identify(probe['host'])
             if fresh['kind'] == 'breaking':
                 restore = probe.get('restore_argv')
                 require(isinstance(restore, list) and restore and all(isinstance(a, str) and a for a in restore),
@@ -488,14 +504,16 @@ class FleetTransaction:
         """Upload each variant once per host using the existing immutable staging."""
         found, problems = fleet_release.processes(self.registry, self.inventory)
         require(not problems, '; '.join(problems))
-        by_host = {}
+        by_host, identities = {}, {}
         for key in self.request['select']:
             require(key in found, 'selected process is outside inventory: ' + key)
             process = found[key]
             refusals = fleet_release.candidate_problems(process, self.request['executables'].get(process['variant']))
             require(not refusals, '; '.join(refusals))
-            self.ex.check_identity(process['host'])
-            machine = self.ex.publisher_resources(process['host'], [])['machine_id']
+            host = process['host']
+            if host not in identities:
+                identities[host] = self.identify(host)
+            machine = identities[host]
             by_host.setdefault(machine, []).append(process)
 
         def prepare_host(items):
@@ -1031,7 +1049,7 @@ class FleetTransaction:
             self.ex = SSHExecutor(self.inventory)
         with production_lock(self.inventory, self.ex) as self.lock:
             for host, expected in self.data['machines'].items():
-                require(self.ex.publisher_resources(host, [])['machine_id'] == expected, host + ': recovery machine changed')
+                require(self.identify(host) == expected, host + ': recovery machine changed')
             for key in self.data['children']:
                 self.adapter(self.data['processes'][key], recovery=True)
             mutation_fence(self.inventory, self.ex, self.lock, fleet_id=self.data['id'])
