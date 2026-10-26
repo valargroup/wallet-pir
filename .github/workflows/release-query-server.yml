@@ -52,7 +52,7 @@ jobs:
           "$out/pir-query-server" --config "$out/query-server.json" --check
       - name: Package
         run: |
-          archive="pir-query-server-${GITHUB_REF_NAME}-linux-x86_64.tar.gz"
+          archive="pir-query-server-${GITHUB_REF_NAME#query-server-}-linux-x86_64.tar.gz"
           tar -C .local-pir/query-release -czf "$archive" pir-query-server query-server.json wallet-pir-query.service revision
           sha256sum "$archive" > SHA256SUMS
           cat SHA256SUMS
@@ -63,4 +63,4 @@ jobs:
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag \
             --title "$GITHUB_REF_NAME" \
             --notes "Query node installer release from $GITHUB_SHA. Install: curl -fsSL https://wallet-pir.valargroup.dev/install | sudo bash -s -- --version $GITHUB_REF_NAME" \
-            "pir-query-server-${GITHUB_REF_NAME}-linux-x86_64.tar.gz" SHA256SUMS
+            "pir-query-server-${GITHUB_REF_NAME#query-server-}-linux-x86_64.tar.gz" SHA256SUMS

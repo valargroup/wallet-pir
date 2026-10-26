@@ -253,7 +253,7 @@ check_sources() {
 resolve_release() {
   TAG="${VERSION:-$RELEASE_TAG}"
   [[ -n "$TAG" ]] || die download 5 "no release is pinned yet; pass --version query-server-v<version>"
-  ARCHIVE="pir-query-server-$TAG-linux-x86_64.tar.gz"
+  ARCHIVE="pir-query-server-${TAG#query-server-}-linux-x86_64.tar.gz"
   BASE_URL="https://github.com/$REPOSITORY/releases/download/$TAG"
   if [[ "$TAG" == "$RELEASE_TAG" ]]; then
     EXPECTED_SHA256="$ARCHIVE_SHA256"
