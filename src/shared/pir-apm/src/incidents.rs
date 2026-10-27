@@ -95,6 +95,15 @@ fn footer(id: &str, now: u64, dashboard: &str) -> String {
     )
 }
 
+/// Leads a REMINDER body and no other, so a queued reminder is told apart from
+/// the FIRED notification it follows.
+const REMINDER_ICON: &str = ":bell:";
+
+/// Whether an outbox body is a reminder of an incident Slack already heard about.
+pub(crate) fn is_reminder(body: &str) -> bool {
+    body.starts_with(REMINDER_ICON)
+}
+
 /// Slack mrkdwn body for one incident transition; stored verbatim in the outbox.
 fn slack_message(
     event: &str,
@@ -108,7 +117,7 @@ fn slack_message(
     let icon = match (event, c.severity.as_str()) {
         ("RECOVERED", _) => ":large_green_circle:",
         ("RETIRED", _) => ":white_circle:",
-        ("REMINDER", _) => ":bell:",
+        ("REMINDER", _) => REMINDER_ICON,
         (_, "critical") => ":red_circle:",
         _ => ":large_orange_circle:",
     };
