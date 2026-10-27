@@ -20,13 +20,15 @@
 #   pir-deploy all <sha>                          publisher, then every query role
 #   pir-deploy rollback <group|destination>       swap back to each component's previous release
 #   pir-deploy status
+#   pir-deploy self-update <sha>                  install that build's pirctl on every host
+#                                                 (run before deploying it; restarts nothing)
 #
 # Options (before the mode): --cold allows a first start of up to an hour.
 # --dry-run checks the mode without taking the lease or restarting anything: every
 # selected host unpacks the build, its binary accepts the host's config, and the
 # build's probe passes against the service running now; then it prints the waves.
 # Environment: PIR_INVENTORY, PIR_SSH_CONFIG, PIR_SSH (default ssh), PIR_DISCOVERY,
-# PIR_RELEASES.
+# PIR_RELEASES, PIR_OWNER (the lease holder's name; default user@host-pid).
 set -euo pipefail
 
 INVENTORY=${PIR_INVENTORY:-$HOME/.config/wallet-pir/inventory}
@@ -35,7 +37,7 @@ RELEASES=${PIR_RELEASES:-https://github.com/valargroup/wallet-pir/releases/downl
 SSH=${PIR_SSH:-ssh}
 SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=10 -o ControlMaster=auto -o "ControlPath=/tmp/pir-%C" -o ControlPersist=120)
 [ -n "${PIR_SSH_CONFIG:-}" ] && SSH_OPTS=(-F "$PIR_SSH_CONFIG" "${SSH_OPTS[@]}")
-OWNER="$(whoami)@$(hostname -s)-$$"
+OWNER=${PIR_OWNER:-"$(whoami)@$(hostname -s)-$$"}
 DEPLOY_ID="deploy-$(date +%s)-$$"
 COLD=
 DRY=
@@ -190,5 +192,18 @@ case $mode in
       remote "$host" status 2>&1 | sed "s|^|[$host] |" &
     done
     wait ;;
+  self-update)
+    [ $# -eq 2 ] || usage
+    hosts=$(awk '{print $1}' <<<"$ENTRIES" | sort -u)
+    [ -z "$DRY" ] || { echo "== would update pirctl on: $(paste -sd' ' - <<<"$hosts")"; exit 0; }
+    failed=$(mktemp)
+    for host in $hosts; do
+      { remote "$host" self-update "$2" </dev/null 2>&1 || echo "$host" >>"$failed"; } | sed "s|^|[$host] |" &
+    done
+    wait
+    bad=$(paste -sd' ' - <"$failed")
+    rm -f "$failed"
+    [ -z "$bad" ] || die "pirctl update failed on: $bad"
+    echo "== pirctl at build-${2:0:12} on $(wc -l <<<"$hosts" | tr -d ' ') hosts in $(($(date +%s) - START))s" ;;
   *) usage ;;
 esac

@@ -33,12 +33,10 @@ check, dry-run or time something does not authorize a restart.
    ```
 
 3. Bring `pirctl` on every host to the same build, so hosts and driver agree. This
-   takes a few seconds:
+   takes a few seconds and restarts nothing:
 
    ```bash
-   for h in $(awk '!/^#/ && NF {print $1}' ~/.config/wallet-pir/inventory | sort -u); do
-     (ssh -F "$PIR_SSH_CONFIG" -o BatchMode=yes "$h" sudo pirctl self-update <sha12> </dev/null 2>&1 | tail -1 | sed "s/^/$h: /") &
-   done; wait
+   tools/deploy/pir-deploy self-update <sha>
    ```
 
 4. Choose the mode (below). Read the changelogs under `docs/<product>/CHANGELOG.md`
@@ -60,6 +58,26 @@ check, dry-run or time something does not authorize a restart.
 Run a real deploy in the background (`run_in_background`) and read its output when
 it finishes. In zsh, a mode kept in a variable must be split (`${=args}`), or the
 driver prints its usage.
+
+### From CI
+
+The Deploy workflow runs the same steps on the coordinator's runner: it updates
+`pirctl`, runs the mode and prints `pir-deploy status`. It is a dry run unless
+`dry_run=false`. Use it when the Mac cannot reach the fleet, or when the run should
+leave a log in GitHub:
+
+```bash
+gh workflow run deploy.yml -R valargroup/wallet-pir -f mode=product -f target=status -f sha=<full sha> -f dry_run=false
+gh run list -R valargroup/wallet-pir --workflow deploy.yml --limit 1 --json databaseId -q '.[0].databaseId'
+ci-run-watch -R valargroup/wallet-pir <run-id>
+```
+
+Watch the run in the background. Its summary has the deploy key's public half, the
+timing lines and each host's status; the full log is the `pir-deploy-<run id>`
+artifact. The workflow's inventory is the `PIR_DEPLOY_INVENTORY` variable of the
+`production` environment: when you add a host or component, update it as well as
+`~/.config/wallet-pir/inventory`, and add the host's pinned key to
+`PIR_DEPLOY_KNOWN_HOSTS`.
 
 ## Modes
 

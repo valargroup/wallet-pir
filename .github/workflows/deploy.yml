@@ -1,0 +1,162 @@
+name: Deploy
+
+# Runs tools/deploy/pir-deploy from the coordinator's runner, the same driver
+# operators run from a workstation: it updates pirctl on every host, then restarts
+# the selected components wave by wave behind the fleet lease and APM's alert window,
+# and each host rolls itself back when its new release fails verification. The
+# inventory, SSH host aliases and pinned host keys come from the production
+# environment's variables (PIR_DEPLOY_INVENTORY, PIR_DEPLOY_SSH_CONFIG,
+# PIR_DEPLOY_KNOWN_HOSTS); the key is the WALLET_PIR_DEPLOY_SSH_KEY secret.
+# Dispatching with dry_run unchecked restarts production.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: What to deploy
+        type: choice
+        options: [status, publisher, unified, product, all, rollback]
+        default: status
+      target:
+        description: The group for product; the group or destination for rollback
+        required: false
+      sha:
+        description: Full main commit SHA whose build-<sha12> release to deploy
+        required: false
+      dry_run:
+        description: Check only; take no lease and restart nothing
+        type: boolean
+        default: true
+      cold:
+        description: Allow up to an hour to become ready (new host or empty state)
+        type: boolean
+        default: false
+      breaking:
+        description: With product, roll the publisher and unified nodes first
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wallet-pir-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: pir-deploy ${{ inputs.mode }} ${{ inputs.target }}
+    runs-on: [self-hosted, Linux, X64, wallet-pir-deploy]
+    environment: production
+    timeout-minutes: ${{ inputs.cold && 75 || 30 }}
+    env:
+      MODE: ${{ inputs.mode }}
+      TARGET: ${{ inputs.target }}
+      SHA: ${{ inputs.sha }}
+      DRY_RUN: ${{ inputs.dry_run }}
+      COLD: ${{ inputs.cold }}
+      BREAKING: ${{ inputs.breaking }}
+      PIR_OWNER: github-${{ github.run_id }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Set paths
+        run: |
+          {
+            echo "PIR_INVENTORY=$RUNNER_TEMP/pir-deploy/inventory"
+            echo "PIR_SSH_CONFIG=$RUNNER_TEMP/pir-deploy/ssh_config"
+            echo "LOG=$RUNNER_TEMP/pir-deploy-$GITHUB_RUN_ID.log"
+          } >>"$GITHUB_ENV"
+      - name: Check the request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          case $MODE in
+            product|rollback) [[ "$TARGET" =~ ^[A-Za-z0-9._@-]+$ ]] || { echo "::error::$MODE needs a target"; exit 1; } ;;
+          esac
+          case $MODE in
+            status|rollback) exit 0 ;;
+          esac
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::sha must be a full 40-character commit"; exit 1; }
+          status=$(gh api "repos/$GITHUB_REPOSITORY/compare/main...$SHA" --jq '.status')
+          [[ "$status" == identical || "$status" == behind ]] || { echo "::error::$SHA is not on main"; exit 1; }
+          gh release view "build-${SHA:0:12}" -R "$GITHUB_REPOSITORY" --json tagName >/dev/null ||
+            { echo "::error::release build-${SHA:0:12} is not published yet"; exit 1; }
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Prepare inventory and SSH identity
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.WALLET_PIR_DEPLOY_SSH_KEY }}
+          INVENTORY: ${{ vars.PIR_DEPLOY_INVENTORY }}
+          SSH_HOSTS: ${{ vars.PIR_DEPLOY_SSH_CONFIG }}
+          KNOWN_HOSTS: ${{ vars.PIR_DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          : "${DEPLOY_SSH_KEY:?deployment SSH key missing}"
+          : "${INVENTORY:?PIR_DEPLOY_INVENTORY missing}"
+          : "${SSH_HOSTS:?PIR_DEPLOY_SSH_CONFIG missing}"
+          : "${KNOWN_HOSTS:?PIR_DEPLOY_KNOWN_HOSTS missing}"
+          dir="$RUNNER_TEMP/pir-deploy"
+          install -m 0700 -d "$dir"
+          printf '%s\n' "$DEPLOY_SSH_KEY" >"$dir/key"
+          printf '%s\n' "$KNOWN_HOSTS" >"$dir/known_hosts"
+          printf '%s\n' "$INVENTORY" >"$PIR_INVENTORY"
+          {
+            printf '%s\n\n' "$SSH_HOSTS"
+            printf 'Host *\n  IdentityFile %s\n  IdentitiesOnly yes\n  UserKnownHostsFile %s\n  StrictHostKeyChecking yes\n' \
+              "$dir/key" "$dir/known_hosts"
+          } >"$PIR_SSH_CONFIG"
+          chmod 0600 "$dir"/*
+          {
+            echo '### Deploy key'
+            echo 'Hosts must authorize this public key for root:'
+            echo '```'
+            ssh-keygen -y -f "$dir/key"
+            echo '```'
+          } >>"$GITHUB_STEP_SUMMARY"
+      - name: Update pirctl on every host
+        if: inputs.mode != 'status' && inputs.mode != 'rollback'
+        run: tools/deploy/pir-deploy self-update "$SHA" 2>&1 | tee -a "$LOG"
+      - name: Run pir-deploy
+        run: |
+          set -euo pipefail
+          args=()
+          [[ "$DRY_RUN" == true ]] && args+=(--dry-run)
+          [[ "$COLD" == true ]] && args+=(--cold)
+          case $MODE in
+            status) args+=(status) ;;
+            publisher|unified|all) args+=("$MODE" "$SHA") ;;
+            product)
+              args+=(product "$TARGET" "$SHA")
+              [[ "$BREAKING" == true ]] && args+=(--breaking) ;;
+            rollback) args+=(rollback "$TARGET") ;;
+          esac
+          echo "pir-deploy ${args[*]}" | tee -a "$LOG"
+          tools/deploy/pir-deploy "${args[@]}" 2>&1 | tee -a "$LOG"
+      - name: Report what each host runs
+        if: always() && inputs.mode != 'status'
+        run: tools/deploy/pir-deploy status 2>&1 | tee -a "$LOG" || true
+      - name: Summarize
+        if: always()
+        run: |
+          [ -f "$LOG" ] || exit 0
+          {
+            echo "### pir-deploy $MODE $TARGET ${SHA:0:12} (dry run: $DRY_RUN)"
+            echo '```'
+            grep -E '^(== |pir-deploy|\[)' "$LOG" | tail -n 80
+            echo '```'
+          } >>"$GITHUB_STEP_SUMMARY"
+      - name: Keep the deploy log
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: pir-deploy-${{ github.run_id }}
+          path: ${{ runner.temp }}/pir-deploy-${{ github.run_id }}.log
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Remove SSH material
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/pir-deploy" "$LOG"

@@ -36,9 +36,9 @@ you deploy a re-cut. If verification fails,
 the components on that host.
 
 [`pir-deploy`](../tools/deploy/pir-deploy) runs `pirctl` over SSH, from a workstation
-now and from CI later. It reads an inventory kept outside the repository. Before it
-starts it takes a lease on the publisher host, so two deploys never overlap, and it
-opens APM's deployment window:
+or from the [Deploy workflow](../.github/workflows/deploy.yml). It reads an inventory
+kept outside the repository. Before it starts it takes a lease on the publisher host,
+so two deploys never overlap, and it opens APM's deployment window:
 
 | Mode | Command | What restarts |
 |---|---|---|
@@ -63,6 +63,16 @@ publishers, so a unified node cannot roll back past it while the publisher runs 
 later build. Deploying the release a component already runs changes nothing.
 `pirctl adopt <component>` moves a unit that names a release path onto the `current`
 link without restarting it. It sets aside drop-ins that only repeat `ExecStart`.
+
+The Deploy workflow is dispatched by hand and runs on the coordinator's self-hosted
+runner, inside the private network. Its inputs mirror the command line (mode, target,
+sha, cold, breaking) and it is a dry run unless `dry_run` is unchecked. It runs
+`pir-deploy self-update <sha>` first, so every host's `pirctl` matches the build, and
+ends with `pir-deploy status`. The inventory, the SSH host aliases and the pinned host
+keys are the `production` environment's `PIR_DEPLOY_INVENTORY`, `PIR_DEPLOY_SSH_CONFIG`
+and `PIR_DEPLOY_KNOWN_HOSTS` variables; the key is the `WALLET_PIR_DEPLOY_SSH_KEY`
+secret, whose public half every inventory host must authorize for root. A workstation
+deploy and a workflow deploy share the lease, so they never overlap.
 
 The older `wallet-pir-deploy.py` rollouts below stay available until each mode has run
 in production with `pir-deploy`.
