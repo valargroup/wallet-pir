@@ -429,6 +429,17 @@ PIRCTL_ROOT=%(hosts)s/$host PIRCTL_PROC=%(hosts)s/$host/proc exec %(pirctl)s "$@
         self.assertIn('--server https://two.example --products receiver', probes)
         self.assertTrue((self.coordinator / 'opt/wallet-pir/pir-probe/releases' / SHA_A[:12] / 'probe/pir-probe').exists())
 
+    def test_a_rollback_on_a_publisher_only_host_probes_with_a_fetched_probe(self):
+        self.fleet.release(SHA_A)
+        self.fleet.release(SHA_B)
+        self.env['PIR_PUBLIC'] = 'https://one.example=enhance'
+        for sha in (SHA_A, SHA_B):
+            self.assertEqual(self.run_driver('publisher', sha).returncode, 0)
+        result = self.run_driver('rollback', 'publisher')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.fleet.current(self.coordinator, 'publisher'), SHA_A[:12])
+        self.assertIn('== public probes passed', result.stdout)
+
     def test_product_touches_only_that_product(self):
         self.fleet.release(SHA_A)
         result = self.run_driver('product', 'enhance', SHA_A)

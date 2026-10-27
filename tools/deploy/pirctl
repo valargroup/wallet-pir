@@ -239,7 +239,9 @@ public() {
     ) 8>"$OPT/pir-probe/.lock"
     probe=$OPT/pir-probe/releases/$sha/probe/pir-probe
   else
-    probe=$(ls -t "$OPT"/*/current/probe/pir-probe 2>/dev/null | head -1)
+    # A rollback names no build; a publisher-only host has only the probes deploys
+    # fetched. `ls` fails when either pattern matches nothing.
+    probe=$(ls -t "$OPT"/*/current/probe/pir-probe "$OPT"/pir-probe/releases/*/probe/pir-probe 2>/dev/null | head -1 || true)
   fi
   [ -x "$probe" ] || die "no probe on this host${sha:+ for build-$sha}"
   # A query role catches up within a second or two of a publisher restart, so a
