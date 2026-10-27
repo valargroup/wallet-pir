@@ -101,6 +101,19 @@ pub fn check_witnesses(
     leaves: &[(u64, Hash, u32)],
     witnesses: &witness::Table,
 ) -> Result<BTreeMap<u64, Hash>, Error> {
+    check_witnesses_until(leaves, witnesses, &|| false)
+}
+
+/// Records checked between asks of a stop. Each record folds up to 16 Sinsemilla
+/// hashes, so a tip segment's check takes seconds.
+const STOP_EVERY: usize = 256;
+
+/// [`check_witnesses`] that ends with [`Error::Stopped`] once `stop` is true.
+pub fn check_witnesses_until(
+    leaves: &[(u64, Hash, u32)],
+    witnesses: &witness::Table,
+    stop: &dyn Fn() -> bool,
+) -> Result<BTreeMap<u64, Hash>, Error> {
     witnesses.validate()?;
     let table = &witnesses.manifest;
     if table.payloads != leaves.len() as u64 {
@@ -108,7 +121,10 @@ pub fn check_witnesses(
     }
     let payloads = witnesses.data.as_chunks::<PAYLOAD_BYTES>().0;
     let mut roots = BTreeMap::new();
-    for &(position, cmx, ordinal) in leaves {
+    for (index, &(position, cmx, ordinal)) in leaves.iter().enumerate() {
+        if index % STOP_EVERY == 0 && stop() {
+            return Err(Error::Stopped);
+        }
         let payload = payloads.get(ordinal as usize).ok_or(Error::Malformed)?;
         if let Some(root) = crate::witness::shard_root(payload, position, &cmx, table.tree_size)? {
             if *roots.entry(position / SHARD_LEAVES).or_insert(root) != root {
@@ -136,8 +152,10 @@ pub fn check_publication_for_serving(
                 Error::MissingPage => zakura_pir_publisher::receiver::Error::MissingPage,
                 Error::Unsupported => zakura_pir_publisher::receiver::Error::Unsupported,
                 Error::Json(error) => zakura_pir_publisher::receiver::Error::Json(error),
-                // A publication check reads no database or file.
-                Error::Sql(_) | Error::Io(_) => zakura_pir_publisher::receiver::Error::Malformed,
+                // A publication check reads no database or file and cannot be stopped.
+                Error::Sql(_) | Error::Io(_) | Error::Stopped => {
+                    zakura_pir_publisher::receiver::Error::Malformed
+                }
             })
         })
 }
