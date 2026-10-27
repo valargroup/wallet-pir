@@ -63,9 +63,12 @@ Receiver through `receiver-pir`), run from the publisher host with the deployed 
 A publisher restart stops Enhance and Receiver work at the next shard, or inside the
 shard being built, and the new process serves Receiver's last publication, tables
 included, until it has rebuilt them; query servers reuse the tables they already
-loaded for it. Enhance is withdrawn until the new process has built and verified a
-publication; its log line `Enhance publication committed` gives each publication's
-build and verify times. Query
+loaded for it. Enhance's last publication is withdrawn at the start, which voids the
+old process's leases, and serves again a few seconds later once its objects hash
+correctly, its anchor is still on the chain and no fence was raised since (log line
+`Enhance serves its previous publication again`, or `stays withdrawn` with the
+reason). `Enhance publication committed` gives each publication's build and verify
+times. Query
 roles poll a restarting publisher every second, and Enhance and Status `init` wait up
 to 15 s for its authority, so wallets see a slower answer rather than an error. Components that share a host deploy one after another. `pir-deploy rollback <group|host>` swaps components back to
 their previous release, and `pir-deploy status` prints what each host runs. A

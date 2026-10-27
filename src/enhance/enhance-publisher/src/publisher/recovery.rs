@@ -7,7 +7,7 @@ use crate::{
 use enhance_shared::artifact;
 use enhance_shared::{
     protocol::{self, MAX_QUERY_SHARDS},
-    publication::Revocation,
+    publication::{Inventory, Revocation},
 };
 use std::fs::{self, OpenOptions};
 use std::{
@@ -116,6 +116,70 @@ impl EnhancePublisher {
             incarnation: format!("{:032x}", publisher_incarnation_id()),
             _owner: Arc::new(owner),
         })
+    }
+    /// Serve again the publication that was current when this publisher last stopped,
+    /// once it is checked as a fresh publication would be. Opening withdrew it, so
+    /// leases from the previous process are already void. It returns to service only
+    /// when no recovery fence was raised and none of its sessions was revoked since it
+    /// was published, its inventory still matches it, every object it names hashes to
+    /// its recorded digest and its anchor block is still canonical; the commit then
+    /// fails if anything changed authority meanwhile. Returns whether it was restored.
+    pub async fn restore<E: pir_pipeline::publisher::PublisherExecutor>(
+        &self,
+        executor: E,
+        shutdown: pir_pipeline::service::Shutdown,
+    ) -> Result<bool, String> {
+        let current = self.distribution.durable_current();
+        let (Some(manifest), Some(object)) = (current.manifest.clone(), current.inventory.clone())
+        else {
+            return Ok(false);
+        };
+        if current.eligible {
+            return Ok(false);
+        }
+        if manifest.recovery_epoch != current.recovery_epoch {
+            return Err("a recovery fence followed the last Enhance publication".into());
+        }
+        let domains = self
+            .state
+            .lock()
+            .unwrap()
+            .durable
+            .recovery
+            .domain_epochs
+            .clone();
+        for shard in &manifest.coverage.shards {
+            if current
+                .revoked
+                .contains(&hex::encode(manifest.session_id(shard.id)?))
+            {
+                return Err("the last Enhance publication's sessions were revoked".into());
+            }
+            if domains.get(&shard.id) != manifest.domain_recovery_epochs.get(&shard.id) {
+                return Err("a domain fence followed the last Enhance publication".into());
+            }
+        }
+        let inventory: Inventory = crate::publication::read_metadata(
+            &self
+                .distribution
+                .root()
+                .join("inventories")
+                .join(format!("{}.json", object.sha256)),
+        )?;
+        if protocol::digest(&inventory) != object.sha256 {
+            return Err("the last Enhance inventory differs from its digest".into());
+        }
+        executor
+            .publish(
+                super::preparation::EnhancePublication::inventory(
+                    &self.distribution,
+                    manifest,
+                    inventory,
+                )?
+                .stopping(shutdown),
+            )
+            .await?;
+        Ok(true)
     }
     pub(super) fn save_state(
         &self,
