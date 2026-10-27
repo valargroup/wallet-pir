@@ -188,10 +188,14 @@ case $mode in
     failed=$(run rollback "$entries")
     [ -z "$failed" ] || die "rollback failed on: $(tr '\n' ' ' <<<"$failed")" ;;
   status)
+    failed=$(mktemp)
     for host in $(awk '{print $1}' <<<"$ENTRIES" | sort -u); do
-      remote "$host" status 2>&1 | sed "s|^|[$host] |" &
+      { remote "$host" status </dev/null 2>&1 || echo "$host" >>"$failed"; } | sed "s|^|[$host] |" &
     done
-    wait ;;
+    wait
+    bad=$(paste -sd' ' - <"$failed")
+    rm -f "$failed"
+    [ -z "$bad" ] || die "status failed on: $bad" ;;
   self-update)
     [ $# -eq 2 ] || usage
     hosts=$(awk '{print $1}' <<<"$ENTRIES" | sort -u)
