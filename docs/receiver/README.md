@@ -285,6 +285,17 @@ material remain in `data_dir`. Optional payout audit credentials stay only on th
 publisher. Its private product listener exposes HTTPS distribution behind the
 edge, rather than wallet query routes.
 
+The optional NEAR audit checks NEAR's own records against the index, so operators
+hear if NEAR stops sending in a way wallets can find (zero OVK, Ironwood). It never
+depends on NEAR's Zcash addresses. A reported payout must be paid in the transaction
+NEAR names. A refunded swap out of ZEC, or a successful one with an excess refund
+(a second origin transaction), must have at least one reported origin transaction
+paying its refund receiver. An unmatched excess refund counts only once 1Click's
+status confirms a refund was made. A found item is rechecked for two hours, then
+retired, so the audit never rechecks history; index completeness is the canary's.
+`/operator/receiver/health` reports the counts that pir-apm alerts on
+([conditions](../enhance/observability-alerting.md)).
+
 Queries run through `pir-query-server --config FILE` with the Receiver feature.
 Use the [Receiver-only examples](../../tools/receiver/deploy/) or add the Receiver
 section to the root query configuration. The query host consumes publisher HTTPS

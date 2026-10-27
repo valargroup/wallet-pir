@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- The NEAR audit also checks refunds: failed swaps out of ZEC and excess refunds on
+  successful ones, about 50 a day. A refund counts as found when any origin
+  transaction NEAR reports pays its refund address, and an unmatched excess refund
+  is confirmed with 1Click before it counts as missing. Health reports refund counts
+  and per-feed progress for pir-apm. Payouts and refunds found in the index retire
+  after two hours, so each publication checks only recent items instead of every
+  payout ever recorded. The audit tables are additive, so a rollback keeps working.
+
 - A restarted publisher republishes the same Receiver tables under a new
   publication. Inventories and descriptors carry the publisher's recovery epoch,
   so query servers no longer refuse the restarted publication as the one they saw

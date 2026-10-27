@@ -212,6 +212,39 @@ fn the_previous_release_reopens_the_audit_store_after_this_one() {
     assert_eq!(previous_reads(&fresh, "near-payouts"), (Some(50), 1));
 }
 
+/// After a rollback, the previous release keeps inserting payouts positionally into a
+/// store that has this release's audit tables, and reopening this release opens them.
+#[test]
+fn reconciliation_opens_payouts_a_rolled_back_release_recorded() {
+    use receiver_store::{PayoutChange, PayoutStore};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("providers.sqlite");
+    let mut store = PayoutStore::open(&path).unwrap();
+    store
+        .record("near-payout-audit", &[(receiver(), [1; 32], 100)], 100, 100)
+        .unwrap();
+    store
+        .settle_payouts(&[(receiver(), [1; 32], PayoutChange::Retire)], 200)
+        .unwrap();
+    drop(store);
+    // The previous release's payout statement, verbatim.
+    rusqlite::Connection::open(&path)
+        .unwrap()
+        .execute(
+            "INSERT INTO payouts VALUES (?1,?2,?3) ON CONFLICT(receiver,txid)
+             DO UPDATE SET seen_at=MIN(seen_at,excluded.seen_at)",
+            rusqlite::params![receiver().as_slice(), [2u8; 32].as_slice(), 300],
+        )
+        .unwrap();
+    let mut store = PayoutStore::open(&path).unwrap();
+    assert!(store.open_payouts().unwrap().is_empty());
+    assert_eq!(store.reconcile().unwrap(), 1);
+    let open = store.open_payouts().unwrap();
+    assert_eq!(open.iter().map(|p| p.txid).collect::<Vec<_>>(), [[2; 32]]);
+    assert_eq!(store.retired_payouts().unwrap(), 1);
+    assert_eq!(store.reconcile().unwrap(), 0);
+}
+
 /// Every query in one view sees the same state, even when a read commits between them.
 #[test]
 fn a_provider_view_reads_one_state() {
