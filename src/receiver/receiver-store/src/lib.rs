@@ -4,7 +4,13 @@
 //!
 //! Records, placement and publications are wallet-libraries' (`zakura-pir-publisher`'s
 //! `receiver` module); this crate only persists them.
+pub mod audit;
 pub mod blocks;
+
+pub use audit::{
+    Confirmation, OpenPayout, OpenRefund, PaymentIndex, PayoutChange, RefundChange, ReportedRefund,
+    RETIRE_AFTER_SECS,
+};
 
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -629,12 +635,17 @@ impl Store {
 
     /// Whether the index holds a payment to `receiver` in transaction `txid`.
     pub fn paid_in(&self, receiver: &ReceiverBytes, txid: &Hash) -> Result<bool, Error> {
-        Ok(self.db.query_row(
-            "SELECT EXISTS(SELECT 1 FROM payments WHERE receiver=?1 AND txid=?2)",
-            params![receiver.as_slice(), txid.as_slice()],
-            |r| r.get(0),
-        )?)
+        paid_in(&self.db, receiver, txid)
     }
+}
+
+/// See [`Store::paid_in`].
+fn paid_in(db: &Connection, receiver: &ReceiverBytes, txid: &Hash) -> Result<bool, Error> {
+    Ok(db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM payments WHERE receiver=?1 AND txid=?2)",
+        params![receiver.as_slice(), txid.as_slice()],
+        |r| r.get(0),
+    )?)
 }
 /// The store's file in a data directory.
 pub const STORE_FILE: &str = "directory-v3.sqlite";
@@ -737,10 +748,12 @@ impl PayoutStore {
                 txid BLOB NOT NULL CHECK(length(txid)=32), seen_at INTEGER NOT NULL,
                 PRIMARY KEY(receiver,txid)) WITHOUT ROWID;",
         )?;
+        db.execute_batch(audit::SCHEMA)?;
         Ok(Self { db })
     }
 
-    /// Commits completed payouts and their cursor atomically, keeping the first observation.
+    /// Commits completed payouts and their cursor atomically, keeping the first
+    /// observation. Each payout is also opened for the audit (see [`audit`]).
     pub fn record(
         &mut self,
         feed: &str,
@@ -749,17 +762,16 @@ impl PayoutStore {
         read_at: i64,
     ) -> Result<(), Error> {
         let tx = self.db.transaction()?;
-        tx.execute(
-            "INSERT INTO feeds (feed,cursor,read_at) VALUES (?1,?2,?3) ON CONFLICT(feed)
-             DO UPDATE SET cursor=excluded.cursor, read_at=excluded.read_at
-             WHERE excluded.cursor>cursor OR (excluded.cursor=cursor AND excluded.read_at>read_at)",
-            params![feed, cursor, read_at],
-        )?;
+        audit::record_feed(&tx, feed, cursor, read_at)?;
         for (receiver, txid, seen_at) in completions {
             tx.execute(
                 "INSERT INTO payouts VALUES (?1,?2,?3) ON CONFLICT(receiver,txid)
                  DO UPDATE SET seen_at=MIN(seen_at,excluded.seen_at)",
                 params![receiver.as_slice(), txid.as_slice(), seen_at],
+            )?;
+            tx.execute(
+                "INSERT OR IGNORE INTO payout_open (receiver,txid) VALUES (?1,?2)",
+                params![receiver.as_slice(), txid.as_slice()],
             )?;
         }
         tx.commit()?;

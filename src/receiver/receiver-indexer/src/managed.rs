@@ -218,10 +218,11 @@ async fn run<E: PublisherExecutor + IngestionExecutor>(
             .near_since
             .unwrap_or_else(|| application::unix_now() - crate::near::AUDIT_LOOKBACK_SECS);
         let poll = std::time::Duration::from_secs(args.near_poll_seconds);
-        let mut explorer = crate::near::Explorer::new(key)?;
+        let index = args.data_dir.join(receiver_store::STORE_FILE);
+        let mut audit = crate::near::Audit::new(key, path, index, since)?;
         let task = tokio::spawn(async move {
             loop {
-                crate::near::poll(&mut explorer, &path, since, &reads).await;
+                crate::near::poll(&mut audit, &reads).await;
                 tokio::time::sleep(poll).await;
             }
         });
