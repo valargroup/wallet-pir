@@ -732,6 +732,7 @@ async fn init(State(r): State<QueryIngress>) -> Response {
             crate::hold::WINDOW,
             |(status, _): &ApiError| *status == StatusCode::SERVICE_UNAVAILABLE,
             || r.active(),
+            || unavailable("authority refresh exceeded the restart window"),
         )
         .await?;
         let bytes = serde_json::to_vec(&view.manifest).map_err(unavailable)?;

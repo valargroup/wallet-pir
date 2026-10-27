@@ -214,6 +214,7 @@ async fn router_init(State(service): State<Service>) -> Result<Json<Manifest>, S
             controller.check(&generation)?;
             Ok(generation.manifest().clone())
         },
+        || StatusCode::SERVICE_UNAVAILABLE,
     )
     .await?;
     Ok(Json(manifest))
