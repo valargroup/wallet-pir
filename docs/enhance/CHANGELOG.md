@@ -2,13 +2,18 @@
 
 ## 0.0.1 — Unreleased
 
+- Wallet `init` waits at most its 15 s window for a publisher restart even when an
+  authority refresh stalls; a stalled retry answers the last refusal when the window
+  ends instead of waiting out the 120 s publisher request timeout.
+
 - A restarted publisher serves its last Enhance publication again after checking it,
   instead of leaving Enhance withdrawn until a new publication is built (up to 45 s
   after a block with new records). The restart still withdraws it first, so leases
   from the previous process stay void. It returns only if no recovery or domain fence
   was raised and none of its sessions was revoked since it was published, its
   inventory matches, every object hashes to its digest and its anchor block is still
-  canonical, and not after a start that adopted a rebuilt journal. Otherwise it stays
+  canonical, and never once a start began adopting a rebuilt journal, even if the
+  publisher stopped before publishing from it. Otherwise it stays
   withdrawn, as before, until the next publication. A restore counts as the
   publisher's last advancement, so publication monitoring keeps reading its metrics.
 

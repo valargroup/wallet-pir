@@ -10,6 +10,12 @@
   after two hours, so each publication checks only recent items instead of every
   payout ever recorded. The audit tables are additive, so a rollback keeps working.
 
+- The wallet inventory and filter head wait up to 15 s instead of answering 503
+  while a query server has no Receiver publication loaded: about 2 s after it
+  starts, or after a publisher restart hands it new files. A query node's Caddy
+  also retries the connection through the server's own restart, so wallets see a
+  slower answer instead of 502 or 503 during deploys.
+
 - A publisher stop also ends the open tip shard's build, which checks every
   witness against its shard root and took about 18 s each pass: the build asks for
   a stop between its steps and every 256 checked records, so a stop during that

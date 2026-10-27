@@ -17,6 +17,9 @@ use std::{
 };
 use tokio::sync::Semaphore;
 
+/// Names the inventory of a publication [`EnhancePublisher::forgo_restore`] refused.
+const FORGONE_RESTORE: &str = "restore-forgone";
+
 impl EnhancePublisher {
     pub(super) fn open_recovered(root: &Path, rpc: ZakuraClient) -> Result<Self, String> {
         fs::create_dir_all(root).map_err(|e| e.to_string())?;
@@ -118,6 +121,20 @@ impl EnhancePublisher {
             _owner: Arc::new(owner),
         })
     }
+    /// Never serve the current publication again, in this process or after a restart,
+    /// as before adopting a rebuilt journal whose records may differ from the ones it
+    /// was built from. A later publication may be restored again.
+    pub fn forgo_restore(&self) -> Result<(), String> {
+        self.state.lock().unwrap().restorable = false;
+        let Some(object) = self.distribution.durable_current().inventory else {
+            return Ok(());
+        };
+        artifact::write_atomic(&self.root, FORGONE_RESTORE, |file| {
+            file.write_all(object.sha256.as_bytes())
+        })
+        .and_then(|_| File::open(&self.root)?.sync_all())
+        .map_err(|e| e.to_string())
+    }
     /// Serve again the publication that was current when this publisher last stopped,
     /// once it is checked as a fresh publication would be. Opening withdrew it, so
     /// leases from the previous process are already void. It returns to service only
@@ -140,6 +157,10 @@ impl EnhancePublisher {
             return Ok(false);
         };
         if current.eligible {
+            return Ok(false);
+        }
+        let forgone = fs::read(self.root.join(FORGONE_RESTORE)).ok();
+        if forgone.as_deref() == Some(object.sha256.as_bytes()) {
             return Ok(false);
         }
         if manifest.recovery_epoch != current.recovery_epoch {

@@ -207,12 +207,21 @@ async fn local_publication_needs_no_consumers_and_never_reuses_prewithdrawal_wor
         .await
         .unwrap());
     drop(publisher);
-    // A start that adopted a rebuilt journal never serves the previous publication.
+    // A start that adopts a rebuilt journal never serves the previous publication,
+    // nor does a later start that stops before its replacement is published.
     let rebuilt = EnhancePublisher::open(&publisher_root, rpc.clone()).unwrap();
-    rebuilt.forgo_restore();
+    rebuilt.forgo_restore().unwrap();
     assert!(!rebuilt.restore(engine(), Default::default()).await.unwrap());
     assert!(!rebuilt.distribution.durable_current().eligible);
     drop(rebuilt);
+    let restarted = EnhancePublisher::open(&publisher_root, rpc.clone()).unwrap();
+    assert!(!restarted
+        .restore(engine(), Default::default())
+        .await
+        .unwrap());
+    assert!(!restarted.distribution.durable_current().eligible);
+    drop(restarted);
+    fs::remove_file(publisher_root.join("restore-forgone")).unwrap();
     // An object whose bytes changed keeps the publication withdrawn.
     let objects = publisher_root.join("https").join("objects");
     let changed = fs::read_dir(&objects)

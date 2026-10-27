@@ -57,22 +57,6 @@ pub async fn run<E: PublisherExecutor + IngestionExecutor>(
         file.write_all(b"canonical-archive")
     })?;
     let mut tasks = Tasks::default();
-    let mut adopted = false;
-    match crate::rebuild::adopt_staged(&config.data_dir)? {
-        crate::rebuild::JournalAdoption::None => {}
-        crate::rebuild::JournalAdoption::Adopted {
-            receipt_id,
-            height,
-            changed_records,
-            previous,
-        } => {
-            tracing::info!(%receipt_id, height, changed_records, previous = %previous.display(), "adopted staged Enhance journal rebuild");
-            adopted = true;
-        }
-        crate::rebuild::JournalAdoption::Rejected { reason, moved_to } => {
-            tracing::error!(%reason, moved_to = %moved_to.display(), "rejected staged Enhance journal rebuild")
-        }
-    }
     let rpc = ZakuraClient::from_cookie_file(
         &chain.rpc_url,
         chain
@@ -81,9 +65,30 @@ pub async fn run<E: PublisherExecutor + IngestionExecutor>(
             .ok_or("Enhance publisher requires a node cookie")?,
     )?;
     let publisher = EnhancePublisher::open(&config.data_dir.join("publication"), rpc.clone())?;
-    // A publication built from a journal this start replaced is not served again.
-    if adopted {
-        publisher.forgo_restore();
+    // A publication built from the journal a staged rebuild replaces is never served
+    // again. It is refused durably before adoption, so a stop in between cannot
+    // restore it from the rebuilt journal.
+    if config
+        .data_dir
+        .join(crate::rebuild::STAGED_DIR)
+        .join(crate::rebuild::RECEIPT_FILE)
+        .exists()
+    {
+        publisher.forgo_restore()?;
+    }
+    match crate::rebuild::adopt_staged(&config.data_dir)? {
+        crate::rebuild::JournalAdoption::None => {}
+        crate::rebuild::JournalAdoption::Adopted {
+            receipt_id,
+            height,
+            changed_records,
+            previous,
+        } => {
+            tracing::info!(%receipt_id, height, changed_records, previous = %previous.display(), "adopted staged Enhance journal rebuild")
+        }
+        crate::rebuild::JournalAdoption::Rejected { reason, moved_to } => {
+            tracing::error!(%reason, moved_to = %moved_to.display(), "rejected staged Enhance journal rebuild")
+        }
     }
     let artifacts =
         tokio::spawn(http.serve(config.artifact_listen, publisher.distribution().router()));

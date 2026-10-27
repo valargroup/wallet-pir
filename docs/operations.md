@@ -70,8 +70,12 @@ adopted no rebuilt journal (log line
 `Enhance serves its previous publication again`, or `stays withdrawn` with the
 reason). `Enhance publication committed` gives each publication's build and verify
 times. Query
-roles poll a restarting publisher every second, and Enhance and Status `init` wait up
-to 15 s for its authority, so wallets see a slower answer rather than an error. Components that share a host deploy one after another. `pir-deploy rollback <group|host>` swaps components back to
+roles poll a restarting publisher every second, and Enhance and Status `init` and
+Receiver's inventory and filter head wait up to 15 s for something to serve, so
+wallets see a slower answer rather than an error. A query node's own restart closes
+its port for a few seconds; its Caddy retries the connection for up to 15 s
+(`lb_try_duration`, written by the installer and the fleet cloud-init) instead of
+answering 502. Components that share a host deploy one after another. `pir-deploy rollback <group|host>` swaps components back to
 their previous release, and `pir-deploy status` prints what each host runs. A
 component's previous release must still read what the publisher now sends: query
 servers built before `e9848f1e4157` refuse the Receiver distribution of later
