@@ -9,8 +9,11 @@
 # group is publisher, unified, a product (enhance, status, transparent, txid,
 # receiver) or monitoring (APM and pir-monitor, deployed with `product monitoring`). Lines with the same wave restart together; waves run in ascending order
 # (default 1), so a product's workers can restart before its router. The publisher's
-# host also holds the deploy lease and the APM alert window, which pauses alerts for
-# 10 minutes (an hour with --cold) or until the deploy ends.
+# host is the coordinator. It holds the deploy lease, the APM alert window, which pauses
+# alerts for 10 minutes (an hour with --cold) or until the deploy ends, and the
+# production lock that tools/scripts/wallet-pir-deploy.py takes: a deploy holds that
+# lock until it ends and refuses to start while a Transparent schema transaction is
+# unfinished, so a binary rollout and a Python operation never run at once.
 #
 # Usage:
 #   pir-deploy publisher <sha>                    the shared publisher only
@@ -31,7 +34,8 @@
 # Every deploy and dry run ends with one probe per product through the public origins
 # wallets use, run from the publisher's host (PIR_PUBLIC: "<origin>=<products> ...").
 # Environment: PIR_INVENTORY, PIR_SSH_CONFIG, PIR_SSH (default ssh), PIR_DISCOVERY,
-# PIR_RELEASES, PIR_PUBLIC, PIR_OWNER (the lease holder's name; default user@host-pid).
+# PIR_RELEASES, PIR_PUBLIC, PIR_OWNER (the lease and lock holder's name; default
+# user@host-pid).
 set -euo pipefail
 
 INVENTORY=${PIR_INVENTORY:-$HOME/.config/wallet-pir/inventory}
@@ -39,12 +43,20 @@ DISCOVERY=${PIR_DISCOVERY:-https://enhance-pir.valargroup.dev/.well-known/pir-se
 RELEASES=${PIR_RELEASES:-https://github.com/valargroup/wallet-pir/releases/download}
 PUBLIC=${PIR_PUBLIC-https://enhance-pir.valargroup.dev=enhance,status https://transparent-pir.valargroup.dev=transparent_history,transaction_details https://receiver-pir.valargroup.dev=receiver}
 SSH=${PIR_SSH:-ssh}
-SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=10 -o ControlMaster=auto -o "ControlPath=/tmp/pir-%C" -o ControlPersist=120)
+SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=10)
 [ -n "${PIR_SSH_CONFIG:-}" ] && SSH_OPTS=(-F "$PIR_SSH_CONFIG" "${SSH_OPTS[@]}")
+# The production lock's session shares no connection, so it ends with this script, and
+# its keepalives end it if the network drops.
+HOLD_OPTS=("${SSH_OPTS[@]}" -o ControlMaster=no -o ControlPath=none -o ServerAliveInterval=15 -o ServerAliveCountMax=4)
+SSH_OPTS+=(-o ControlMaster=auto -o "ControlPath=/tmp/pir-%C" -o ControlPersist=120)
+# The unfinished-schema check wallet-pir-deploy.py makes, run on the coordinator.
+FENCE=$(cd "$(dirname "$0")/.." && pwd)/lib/wallet_pir_ops/schema_fence.py
 OWNER=${PIR_OWNER:-"$(whoami)@$(hostname -s)-$$"}
 DEPLOY_ID="deploy-$(date +%s)-$$"
 COLD=
 DRY=
+HOLD_PID=
+WINDOW=
 START=$(date +%s)
 
 die() { echo "pir-deploy: $*" >&2; exit 1; }
@@ -104,6 +116,7 @@ roll() {
       continue
     fi
     t=$(date +%s)
+    held
     failed=$(run deploy "$members" "$sha $COLD")
     if [ -n "$failed" ]; then
       ok=$(awk 'NR == FNR {bad[$1 " " $2]; next} !(($1 " " $2) in bad)' <(printf '%s' "$failed") <(printf '%s\n' "$members"))
@@ -126,14 +139,60 @@ sys.exit(0 if all(str(part["contract_major"]) == sys.argv[1] for part in release
     die "build-${sha:0:12} changes the contract major (live $live); use 'all' or 'product --breaking'"
 }
 
+# Takes the coordinator's production lock over an SSH session that lasts until this
+# script ends. The session's input stays open while the log file exists and this
+# script runs; release() removes the file, and if this script dies the input ends
+# within a second anyway, so the lock never outlives the deploy.
+hold() {
+  HOLD_LOG=$(mktemp)
+  "$SSH" "${HOLD_OPTS[@]}" "$CONTROL" pirctl hold "$OWNER" \
+    < <(while [ -e "$HOLD_LOG" ] && kill -0 $$; do sleep 0.2; done 2>/dev/null) >"$HOLD_LOG" 2>&1 &
+  HOLD_PID=$!
+  until grep -qx locked "$HOLD_LOG"; do
+    if ! kill -0 "$HOLD_PID" 2>/dev/null; then
+      sed "s|^|[$CONTROL production lock] |" "$HOLD_LOG" >&2
+      die "could not take the production lock on $CONTROL"
+    fi
+    sleep 0.2
+  done
+}
+
+# Stops before the next restart if the lock's session has ended.
+held() {
+  [ -z "$HOLD_PID" ] || kill -0 "$HOLD_PID" 2>/dev/null ||
+    die "lost the production lock on $CONTROL: its SSH session ended"
+}
+
+# Ends the lock's session and waits up to 10 s for the coordinator to release it.
+release() {
+  local i
+  [ -n "$HOLD_PID" ] || return 0
+  rm -f "$HOLD_LOG"
+  for ((i = 0; i < 50; i++)); do kill -0 "$HOLD_PID" 2>/dev/null || break; sleep 0.2; done
+  kill "$HOLD_PID" 2>/dev/null || true
+  wait "$HOLD_PID" 2>/dev/null || true
+}
+
+# Refuses while a Transparent schema transaction, host action or input staging that
+# wallet-pir-deploy.py started is unfinished.
+fence() {
+  [ -f "$FENCE" ] || die "missing $FENCE; run pir-deploy from a wallet-pir checkout"
+  remote "$CONTROL" fence <"$FENCE" 2>&1 | sed "s|^|[$CONTROL] |" >&2 ||
+    die "an unfinished operation fences the fleet; reconcile it with wallet-pir-deploy.py first"
+}
+
 begin() {
   [ -n "$CONTROL" ] || die "the inventory has no publisher line to hold the lease"
   if [ -n "$DRY" ]; then
     trap 'dry_finish $?' EXIT
+    fence
     return
   fi
   remote "$CONTROL" lease take "$OWNER" "$([ -n "$COLD" ] && echo 4200 || echo 1200)" || exit 1
   trap 'finish $?' EXIT
+  hold
+  fence
+  WINDOW=1
   remote "$CONTROL" alerts begin "$DEPLOY_ID" --seconds "$([ -n "$COLD" ] && echo 3600 || echo 600)" "$@" || echo "pir-deploy: alerts stay armed (APM refused the window)" >&2
 }
 
@@ -159,7 +218,8 @@ finish() {
   local code=$1
   local outcome=() result='done'
   [ "$code" = 0 ] || outcome=(--failed) result=FAILED
-  remote "$CONTROL" alerts finish "$DEPLOY_ID" "${outcome[@]}" >/dev/null 2>&1 || true
+  [ -z "$WINDOW" ] || remote "$CONTROL" alerts finish "$DEPLOY_ID" "${outcome[@]}" >/dev/null 2>&1 || true
+  release
   remote "$CONTROL" lease drop "$OWNER" >/dev/null 2>&1 || true
   echo "== $result in $(($(date +%s) - START))s"
 }
@@ -203,6 +263,7 @@ case $mode in
     [ -n "$entries" ] || die "no inventory line matches $2"
     [ -z "$DRY" ] || { echo "== would roll back: $(awk '{printf "%s%s %s", (NR > 1 ? ", " : ""), $1, $2}' <<<"$entries")"; exit 0; }
     begin rollback
+    held
     failed=$(run rollback "$entries")
     [ -z "$failed" ] || die "rollback failed on: $(tr '\n' ' ' <<<"$failed")" ;;
   status)

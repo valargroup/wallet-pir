@@ -146,7 +146,8 @@ local test result or successful process restart alone does not meet this gate.
 ## Deploy CLI
 
 Use `pir-deploy` for deploy, status and rollback; it holds the fleet deploy lease
-while it runs. Do not copy binaries, signal processes or change units by hand. The operator confirms
+and the coordinator's production lock while it runs (see
+[One change at a time](../operations.md#one-change-at-a-time)). Do not copy binaries, signal processes or change units by hand. The operator confirms
 the concrete production plan after exact artifacts, full qualification and a
 watchdog rehearsal are reviewable.
 

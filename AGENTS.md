@@ -125,12 +125,14 @@ subcommands, and product features are selected independently.
   while main's last finished fast CI run failed. Fix or revert that
   failure first; push the fix itself with `WALLET_PIR_PUSH_ON_RED=1`.
 - Production binaries deploy through `tools/deploy/pir-deploy` (`--dry-run`
-  first), which holds the fleet deploy lease; operations packages, Status
-  routing and the coordinator edge still go through
-  `tools/scripts/wallet-pir-deploy.py` (`plan`/`preflight` first), which holds
-  the production lock. Do not mutate production hosts by hand (`systemctl`,
-  signals, `scp` of binaries) or while another session holds the lease or
-  lock, and never during a monitoring-only task.
+  first); operations packages, Status routing and the coordinator edge still
+  go through `tools/scripts/wallet-pir-deploy.py` (`plan`/`preflight` first).
+  One rule covers both: every production change holds the coordinator's
+  production lock for its whole length and refuses while a Transparent schema
+  transaction is unfinished, so a rollout and an operation never run at once
+  (`pir-deploy` also holds the fleet deploy lease). Do not mutate production
+  hosts by hand (`systemctl`, signals, `scp` of binaries) or while another
+  session holds the lease or lock, and never during a monitoring-only task.
   Report `status` and the rollback command after each deploy.
 - The fleet runs but has no users yet: change schemes, formats and protocols with a direct cutover, and never plan dual runtimes, compatibility windows or transitions for older wallets or servers.
 
