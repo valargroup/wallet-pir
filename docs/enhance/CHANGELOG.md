@@ -9,7 +9,8 @@
   was raised and none of its sessions was revoked since it was published, its
   inventory matches, every object hashes to its digest and its anchor block is still
   canonical, and not after a start that adopted a rebuilt journal. Otherwise it stays
-  withdrawn, as before, until the next publication.
+  withdrawn, as before, until the next publication. A restore counts as the
+  publisher's last advancement, so publication monitoring keeps reading its metrics.
 
 - A restarted publisher serves Enhance again sooner. Verification hashes a
   publication's objects on up to four threads instead of one, and preparation
