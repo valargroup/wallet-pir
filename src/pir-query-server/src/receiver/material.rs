@@ -4,9 +4,9 @@ use receiver_pir_server::{
     blocks::BlockWindow,
     distribution::Inventory,
     publication::{Publication, Segment},
-    tables::{FilterSource, Source},
+    tables::{self, FilterSource, Source},
 };
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 use zakura_pir_query_server::receiver::{
     blocks::Batch, inventory, server::Server, session::Error, snapshot::Snapshot, witness,
 };
@@ -17,7 +17,9 @@ fn read(file: &VerifiedObjectFile) -> Result<Vec<u8>, Error> {
 
 /// The table sources built for one directory. A later publication that names
 /// the same files, such as the one a restarted publisher serves again, reuses
-/// them and whatever rows they already hold.
+/// them and whatever rows they already hold. A publication that replaces a
+/// loaded one prepares its new tables in `cache` before it is served, so the
+/// first wallet to query a new shard does not wait for its preparation.
 #[derive(Clone)]
 pub(super) struct Tables {
     pub(super) key: Vec<u8>,
@@ -30,6 +32,7 @@ pub(super) fn load(
     objects: &VerifiedObjects,
     owner: Arc<std::fs::File>,
     previous: Option<Tables>,
+    cache: &tables::Tables,
 ) -> crate::Result<(Option<Publication>, Option<BlockWindow>, Option<Tables>)> {
     let mut built = None;
     let directory = inventory
@@ -38,9 +41,15 @@ pub(super) fn load(
         .map(|directory| -> crate::Result<Publication> {
             let key =
                 serde_json::to_vec(&(inventory.genesis, inventory.history_revision, directory))?;
-            let tables = match previous.filter(|tables| tables.key == key) {
-                Some(tables) => tables,
-                None => build(directory, objects, owner, key)?,
+            let tables = match previous {
+                Some(tables) if tables.key == key => tables,
+                previous => {
+                    let tables = build(directory, objects, owner, key)?;
+                    if let Some(previous) = previous {
+                        tables.prepare_new(&previous, cache);
+                    }
+                    tables
+                }
             };
             let publication = Publication::verified(
                 inventory::Inventory::build(
@@ -56,6 +65,30 @@ pub(super) fn load(
         })
         .transpose()?;
     Ok((directory, load_filters(inventory, objects)?, built))
+}
+
+impl Tables {
+    /// Prepares in `cache` each table these name that `previous` did not, such as
+    /// the shard a new block extended; tables both name stay cached as they are.
+    /// Preparing is best effort: a table that does not fit or fails to load is
+    /// left to the first query that needs it, which reports the failure.
+    fn prepare_new(&self, previous: &Tables, cache: &tables::Tables) {
+        let known: HashSet<_> = previous
+            .segments
+            .iter()
+            .flat_map(|s| [s.payments.id(), s.witnesses.id()])
+            .collect();
+        for source in self
+            .segments
+            .iter()
+            .flat_map(|s| [&s.payments, &s.witnesses])
+            .filter(|source| !known.contains(&source.id()))
+        {
+            if let Err(error) = cache.get(source) {
+                tracing::warn!(%error, "Receiver table not prepared before serving");
+            }
+        }
+    }
 }
 
 fn build(

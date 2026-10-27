@@ -251,12 +251,14 @@ impl PublicationAdapter for Receiver {
         artifacts: pir_publication::VerifiedObjects,
     ) -> Result<Loaded, Error> {
         // Metadata/public setup is small relative to rows; lazy row loaders
-        // rebuild evaluators only under the existing shared table budget.
+        // rebuild evaluators only under the existing shared table budget, and
+        // tables new since the last publication are prepared here, before serving.
         let inventory = candidate.inventory.clone();
         let owner = self.owner.clone();
         let previous = self.tables.clone();
+        let cache = self.publications.tables();
         let (directory, filters, tables) = tokio::task::spawn_blocking(move || {
-            super::material::load(&inventory, &artifacts, owner, previous)
+            super::material::load(&inventory, &artifacts, owner, previous, &cache)
         })
         .await??;
         #[cfg(test)]
