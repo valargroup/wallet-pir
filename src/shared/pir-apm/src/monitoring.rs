@@ -119,23 +119,37 @@ pub struct ReceiverAudit {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Progress {
     pub value: Option<u64>,
+    /// The last available report had the field present and null, such as a
+    /// watermark before its first check, so its first value is progress.
+    #[serde(default)]
+    pub empty: bool,
     /// When this monitor first sampled the feed.
     pub first_sample: u64,
     /// When this monitor last saw the value increase.
     pub progressed_at: Option<u64>,
 }
 impl Progress {
-    /// Records one successful sample. An absent value keeps the baseline and a
-    /// decrease (a reset provider store) rebaselines. Neither is progress.
-    fn observe(&mut self, value: Option<u64>, now: u64) {
+    /// Records one successful sample of a field read by [`reported`]. Unavailable
+    /// data keeps the baseline. A known-empty field is an empty baseline, so its
+    /// first value is progress. A decrease, or a value going back to empty (a
+    /// reset provider store), rebaselines. Only an increase is progress.
+    fn observe(&mut self, value: Option<Option<u64>>, now: u64) {
         if self.first_sample == 0 {
             self.first_sample = now;
         }
-        if let Some(value) = value {
-            if self.value.is_some_and(|old| value > old) {
-                self.progressed_at = Some(now);
+        match value {
+            None => {}
+            Some(None) => {
+                self.value = None;
+                self.empty = true;
             }
-            self.value = Some(value);
+            Some(Some(value)) => {
+                if self.empty || self.value.is_some_and(|old| value > old) {
+                    self.progressed_at = Some(now);
+                }
+                self.value = Some(value);
+                self.empty = false;
+            }
         }
     }
     /// Seconds since the last increase, or since the first sample before one.
@@ -191,7 +205,7 @@ impl ReceiverAudit {
         self.last_read = self.last_read.max(audit_read(body, PAYOUT_FEED));
         let report = &body["indexer"];
         self.payouts
-            .observe(report["payouts_checked"].as_u64(), now);
+            .observe(reported(report, "payouts_checked"), now);
         self.payouts_uncheckable = report["payouts_uncheckable"].as_u64();
         let reads = body["near"]["reads"].as_object();
         self.complete = reads.is_some() && report.is_object();
@@ -206,7 +220,7 @@ impl ReceiverAudit {
             if reads.is_some_and(|reads| reads.contains_key(feed)) {
                 let state = state.get_or_insert_with(RefundFeed::default);
                 state.last_read = state.last_read.max(audit_read(body, feed));
-                state.progress.observe(report[watermark].as_u64(), now);
+                state.progress.observe(reported(report, watermark), now);
             } else if self.complete {
                 *state = None;
             }
@@ -1514,6 +1528,15 @@ async fn receiver_loop(d: SharedDashboard, url: String) {
     }
 }
 
+/// An indexer report field for [`Progress::observe`]: `Some(None)` when it is
+/// present and null, and `None` when the report or field is missing or malformed.
+fn reported(report: &serde_json::Value, field: &str) -> Option<Option<u64>> {
+    match report.get(field)? {
+        serde_json::Value::Null => Some(None),
+        value => value.as_u64().map(Some),
+    }
+}
+
 /// The newer of the health report's in-memory NEAR read and its stored feed
 /// cursor for `feed`, or `None` when neither has one.
 fn audit_read(health: &serde_json::Value, feed: &str) -> Option<u64> {
@@ -1969,29 +1992,29 @@ mod tests {
     #[test]
     fn progress_counts_increases_only_and_stays_unknown_after_a_restart() {
         let mut p = Progress::default();
-        p.observe(Some(10), 1000);
+        p.observe(Some(Some(10)), 1000);
         assert_eq!(
             (p.value, p.first_sample, p.progressed_at),
             (Some(10), 1000, None)
         );
-        p.observe(Some(12), 1030);
+        p.observe(Some(Some(12)), 1030);
         assert_eq!(p.progressed_at, Some(1030));
         // A null report keeps the baseline, and a decrease rebaselines.
         p.observe(None, 1060);
         assert_eq!((p.value, p.progressed_at), (Some(12), Some(1030)));
-        p.observe(Some(3), 1090);
+        p.observe(Some(Some(3)), 1090);
         assert_eq!((p.value, p.progressed_at), (Some(3), Some(1030)));
-        p.observe(Some(4), 1120);
+        p.observe(Some(Some(4)), 1120);
         assert_eq!(p.progressed_at, Some(1120));
         assert_eq!(p.idle(1120 + 99, 100), Some(false));
         assert_eq!(p.idle(1120 + 100, 100), Some(true));
         // A restarted APM knows nothing until a real increase or the threshold.
         let mut p = Progress::default();
-        p.observe(Some(4), 5000);
-        p.observe(Some(4), 5050);
+        p.observe(Some(Some(4)), 5000);
+        p.observe(Some(Some(4)), 5050);
         assert_eq!(p.idle(5099, 100), None);
         assert_eq!(p.idle(5100, 100), Some(true));
-        p.observe(Some(5), 5130);
+        p.observe(Some(Some(5)), 5130);
         assert_eq!(p.idle(5130, 100), Some(false));
     }
     #[test]
@@ -2207,6 +2230,66 @@ mod tests {
             Some(t + 60),
             "only the new due swap is progress, not the expiring row"
         );
+    }
+    #[test]
+    fn a_watermark_leaving_null_is_progress_but_not_after_a_restart() {
+        let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
+        let (start, hour) = (100_000, 3600);
+        let mut d = view(start);
+        let body = |now: u64, through: serde_json::Value| {
+            refund_health(
+                now,
+                serde_json::json!({
+                    "payouts_checked": now,
+                    "refunds_checked_through": through,
+                    "excess_refunds_checked_through": now,
+                }),
+            )
+        };
+        // The feed reports a null watermark for 48 h, so its idle warning fires.
+        let mut now = start;
+        while now <= start + 48 * hour {
+            sample(
+                &mut store,
+                &mut d,
+                Some(&body(now, serde_json::Value::Null)),
+                now,
+            );
+            now += 60;
+        }
+        assert!(active_id(&store, REFUND_IDLE).is_some());
+        // Its first check is an advance from the empty baseline, so the
+        // incident recovers on two fresh samples without a second advance.
+        let through = serde_json::json!(now - 600);
+        for _ in 0..2 {
+            let cs = sample(&mut store, &mut d, Some(&body(now, through.clone())), now);
+            let idle = cs.iter().find(|c| c.key == REFUND_IDLE).unwrap();
+            assert_eq!(idle.firing, Some(false));
+            now += 60;
+        }
+        assert!(active_id(&store, REFUND_IDLE).is_none());
+
+        // Null until a check at hour 47 is not "no new refunds for 48 h" at 48.
+        let mut audit = ReceiverAudit::default();
+        let null = body(start, serde_json::Value::Null);
+        audit.observe(Some(&null), start);
+        let at = start + 47 * hour;
+        audit.observe(Some(&body(at, at.into())), at);
+        let progress = &audit.refunds.as_ref().unwrap().progress;
+        assert_eq!(progress.progressed_at, Some(at));
+        assert_eq!(progress.idle(start + 48 * hour, 48 * hour), Some(false));
+        // A null report is unavailable, not empty, so it keeps the baseline.
+        let mut audit = ReceiverAudit::default();
+        let unavailable = serde_json::json!({
+            "near": {"reads": {"near-payout-audit": start, "near-refund-audit": null}},
+            "indexer": null,
+        });
+        audit.observe(Some(&unavailable), start);
+        // So does a restarted APM's first sample: a value is only a baseline.
+        audit.observe(Some(&body(at, at.into())), at);
+        let progress = &audit.refunds.as_ref().unwrap().progress;
+        assert_eq!(progress.progressed_at, None);
+        assert_eq!(progress.idle(start + 48 * hour, 48 * hour), Some(true));
     }
     #[test]
     fn an_isolated_refund_discrepancy_and_a_later_ovk_change_notify_separately() {
