@@ -147,6 +147,29 @@ fn a_fresh_object_is_hashed_once_per_pass() {
     assert_eq!(first.hashed, once);
 }
 
+/// One pass hashes each distinct object once, however the hashing threads share the
+/// work and however often the inventory names it, and fails when any one is corrupt.
+#[test]
+fn a_pass_hashes_each_distinct_object_once_across_threads() {
+    let root = tempfile::tempdir().unwrap();
+    let objects: Vec<Object> = (0..9u8).map(|i| object(root.path(), &[i; 4096])).collect();
+    let named: Vec<&Object> = objects.iter().chain(&objects[..3]).collect();
+    let mut pass = VerificationPass::default();
+    pass.check_all(root.path(), &named, &BTreeMap::new(), &|| false)
+        .unwrap();
+    let all = VerificationStats {
+        files: 9,
+        bytes: 9 * 4096,
+        reused: 0,
+    };
+    assert_eq!(pass.hashed, all);
+    fs::write(objects[7].path(root.path()).unwrap(), [0xff; 4096]).unwrap();
+    let mut pass = VerificationPass::default();
+    assert!(pass
+        .check_all(root.path(), &named, &BTreeMap::new(), &|| false)
+        .is_err());
+}
+
 #[test]
 fn repeated_digest_with_a_different_length_is_rejected() {
     use enhance_shared::{protocol, RECORD_BYTES};

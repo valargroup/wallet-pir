@@ -1,6 +1,8 @@
 //! Prepare each domain, reusing retained plans and installing immutable objects.
 use super::{
-    object_io::{install_object_bytes, install_packing_object, persist_metadata},
+    object_io::{
+        install_object_bytes, install_object_digest, install_packing_object, persist_metadata,
+    },
     read_metadata,
 };
 use crate::{prepared_packing, runtime, PackingBudget};
@@ -38,10 +40,12 @@ pub(super) fn prepare_domains(
                 return Err(super::STOPPED.into());
             }
             let bytes = runtime::unit_rows(&plan.shard, spec, &mut *read)?;
-            if hex::encode(Sha256::digest(&bytes)) != unit.content_sha256 {
+            // The rows' digest both checks them and names their object.
+            let sha256 = hex::encode(Sha256::digest(&bytes));
+            if sha256 != unit.content_sha256 {
                 return Err("canonical rows changed during publication preparation".into());
             }
-            rows.push(install_object_bytes(objects, &bytes)?);
+            rows.push(install_object_digest(objects, &bytes, sha256)?);
         }
         // A previously verified domain avoids hint and packing preparation.
         let key = digest(&plan);
