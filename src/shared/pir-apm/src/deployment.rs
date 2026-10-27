@@ -122,12 +122,22 @@ pub(crate) fn resumed_at(tx: &Transaction<'_>) -> Result<u64> {
 /// deployment; one Slack already heard about is not announced again.
 fn open_window(tx: &Transaction<'_>, deployment: &Deployment) -> Result<()> {
     save(tx, deployment)?;
+    // A dropped reminder follows a FIRED Slack heard; any other dropped message
+    // means Slack never heard of the incident.
     let unsent = {
-        let mut statement = tx.prepare(
-            "SELECT DISTINCT incident FROM outbox WHERE incident NOT LIKE 'deployment:%'",
-        )?;
-        let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
-        rows.collect::<rusqlite::Result<std::collections::BTreeSet<_>>>()?
+        let mut statement =
+            tx.prepare("SELECT incident,body FROM outbox WHERE incident NOT LIKE 'deployment:%'")?;
+        let rows = statement.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        let mut unsent = std::collections::BTreeSet::new();
+        for row in rows {
+            let (incident, body) = row?;
+            if !crate::incidents::is_reminder(&body) {
+                unsent.insert(incident);
+            }
+        }
+        unsent
     };
     tx.execute(
         "DELETE FROM outbox WHERE incident NOT LIKE 'deployment:%'",
@@ -512,6 +522,24 @@ mod tests {
             })
             .unwrap();
         assert_eq!((attempts, due), (0, 101));
+    }
+
+    #[test]
+    fn a_dropped_reminder_keeps_the_heard_incident_closable() {
+        let mut s = store();
+        evaluate(&mut s, 99, true);
+        let (id, body, _) = s.next(99).unwrap().unwrap();
+        s.delivered(id, &body, 99).unwrap();
+        evaluate(&mut s, 1899, true);
+        assert!(messages(&s)[0].contains("REMINDER"));
+        s.begin_deployment("one", vec!["publisher".into()], MAX_SECONDS, 1900)
+            .unwrap();
+        s.finish_deployment("one", false, 1901).unwrap();
+        evaluate(&mut s, 1902, false);
+        evaluate(&mut s, 1903, false);
+        // Slack heard the FIRED, so it hears the recovery and no second FIRED.
+        assert_eq!(messages(&s).len(), 1);
+        assert!(messages(&s)[0].contains("RECOVERED"));
     }
 
     #[test]

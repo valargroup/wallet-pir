@@ -69,12 +69,6 @@ impl EnhancePublisher {
         self.reserve_work(journal)
     }
 
-    /// Never serve the previous publication again in this process, as after adopting a
-    /// rebuilt journal whose records differ from the ones it was built from.
-    pub fn forgo_restore(&self) {
-        self.state.lock().unwrap().restorable = false;
-    }
-
     pub fn distribution(&self) -> &PublicationDistribution {
         &self.distribution
     }
