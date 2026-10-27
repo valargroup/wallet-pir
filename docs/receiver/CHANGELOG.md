@@ -6,7 +6,9 @@
   health names a newer publication than the one the origin served it, for up to
   15 s. After each new publication, health reports it 6 to 10 s before query nodes
   serve it. The probe used to fail as `report_unavailable` in that window, and
-  bursts of blocks raised the canary's availability alert.
+  bursts of blocks raised the canary's availability alert. It reports the wait as
+  `waited_seconds`, which `pir-monitor` leaves out of the canary's latency, so a
+  burst of blocks no longer raises its latency warning either.
 
 - The NEAR audit also checks refunds: failed swaps out of ZEC and excess refunds on
   successful ones, about 50 a day. A refund counts as found when any transaction
