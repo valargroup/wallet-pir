@@ -542,6 +542,48 @@ async fn a_restarted_publisher_republishing_the_same_tables_is_served_on_the_nex
     server.abort();
 }
 
+/// A publication without tables drops the cached ones, so tables that return
+/// afterwards load from the files fetched for them rather than collected ones.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn tables_returning_after_a_publication_without_them_load_again() {
+    let root = tempfile::tempdir().unwrap();
+    let (origin, tls, server) = origin(root.path()).await;
+    let config = config(root.path(), &tls);
+    let publications = Publications::default();
+    let mut lifecycle = sync::synchronization(&config, publications.clone()).unwrap();
+    lifecycle.synchronize().await.unwrap();
+    origin.publish_filters(103);
+    lifecycle.synchronize().await.unwrap();
+    let served = publications.current().unwrap().id();
+    let loads = lifecycle.context().adapter().directory_loads();
+    let with_tables = {
+        let authority = origin.authority.lock().unwrap();
+        authority.current().publication.clone().unwrap()
+    };
+    let mut inventory: Inventory =
+        serde_json::from_slice(&origin.objects.lock().unwrap()[&with_tables.inventory.sha256])
+            .unwrap();
+    inventory.directory = None;
+    let object = origin.store(&serde_json::to_vec(&inventory).unwrap());
+    origin
+        .authority
+        .lock()
+        .unwrap()
+        .apply(AuthorityTransition::Publish(inventory.reference(object)))
+        .unwrap();
+    lifecycle.synchronize().await.unwrap();
+    origin
+        .authority
+        .lock()
+        .unwrap()
+        .apply(AuthorityTransition::Publish(with_tables))
+        .unwrap();
+    lifecycle.synchronize().await.unwrap();
+    assert_eq!(publications.current().map(|p| p.id()), Ok(served));
+    assert_eq!(lifecycle.context().adapter().directory_loads(), loads + 1);
+    server.abort();
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn large_proofs_are_batched_and_negative_chunks_refute_only_their_view() {
     use pir_publication::ViewIdentity;

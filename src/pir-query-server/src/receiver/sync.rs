@@ -260,12 +260,14 @@ impl PublicationAdapter for Receiver {
         })
         .await??;
         #[cfg(test)]
-        if tables.as_ref().map(|t| &t.key) != self.tables.as_ref().map(|t| &t.key) {
+        if tables.is_some()
+            && tables.as_ref().map(|t| &t.key) != self.tables.as_ref().map(|t| &t.key)
+        {
             self.loads += 1;
         }
-        if tables.is_some() {
-            self.tables = tables;
-        }
+        // A publication without tables lets their objects be collected; fetched
+        // again they are new files, which the cached sources' readers refuse.
+        self.tables = tables;
         Ok(Loaded {
             candidate,
             epoch: self.publications.epoch(),
