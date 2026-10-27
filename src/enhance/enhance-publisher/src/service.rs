@@ -57,8 +57,7 @@ pub async fn run<E: PublisherExecutor + IngestionExecutor>(
         file.write_all(b"canonical-archive")
     })?;
     let mut tasks = Tasks::default();
-    // A publication built from a journal this start replaced is not served again.
-    let mut restore = true;
+    let mut adopted = false;
     match crate::rebuild::adopt_staged(&config.data_dir)? {
         crate::rebuild::JournalAdoption::None => {}
         crate::rebuild::JournalAdoption::Adopted {
@@ -68,7 +67,7 @@ pub async fn run<E: PublisherExecutor + IngestionExecutor>(
             previous,
         } => {
             tracing::info!(%receipt_id, height, changed_records, previous = %previous.display(), "adopted staged Enhance journal rebuild");
-            restore = false;
+            adopted = true;
         }
         crate::rebuild::JournalAdoption::Rejected { reason, moved_to } => {
             tracing::error!(%reason, moved_to = %moved_to.display(), "rejected staged Enhance journal rebuild")
@@ -82,6 +81,10 @@ pub async fn run<E: PublisherExecutor + IngestionExecutor>(
             .ok_or("Enhance publisher requires a node cookie")?,
     )?;
     let publisher = EnhancePublisher::open(&config.data_dir.join("publication"), rpc.clone())?;
+    // A publication built from a journal this start replaced is not served again.
+    if adopted {
+        publisher.forgo_restore();
+    }
     let artifacts =
         tokio::spawn(http.serve(config.artifact_listen, publisher.distribution().router()));
     tasks.own(&artifacts);
@@ -109,7 +112,6 @@ pub async fn run<E: PublisherExecutor + IngestionExecutor>(
         },
         serving,
         shutdown,
-        restore,
     )
     .await?;
     if failed.load(std::sync::atomic::Ordering::Acquire) {

@@ -110,6 +110,7 @@ impl EnhancePublisher {
                 error: None,
                 last_advancement: None,
                 consecutive_failures: 0,
+                restorable: true,
             })),
             distribution,
             preparation: Arc::new(Semaphore::new(1)),
@@ -123,12 +124,16 @@ impl EnhancePublisher {
     /// when no recovery fence was raised and none of its sessions was revoked since it
     /// was published, its inventory still matches it, every object it names hashes to
     /// its recorded digest and its anchor block is still canonical; the commit then
-    /// fails if anything changed authority meanwhile. Returns whether it was restored.
+    /// fails if anything changed authority meanwhile. Only the first call may restore,
+    /// and none after [`Self::forgo_restore`]. Returns whether it was restored.
     pub async fn restore<E: pir_pipeline::publisher::PublisherExecutor>(
         &self,
         executor: E,
         shutdown: pir_pipeline::service::Shutdown,
     ) -> Result<bool, String> {
+        if !std::mem::replace(&mut self.state.lock().unwrap().restorable, false) {
+            return Ok(false);
+        }
         let current = self.distribution.durable_current();
         let (Some(manifest), Some(object)) = (current.manifest.clone(), current.inventory.clone())
         else {
