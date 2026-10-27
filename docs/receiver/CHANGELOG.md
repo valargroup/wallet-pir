@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- The `receiver-probe` canary runs again, a second later, while the publisher's
+  health names a newer publication than the one the origin served it, for up to
+  15 s. After each new publication, health reports it 6 to 10 s before query nodes
+  serve it. The probe used to fail as `report_unavailable` in that window, and
+  bursts of blocks raised the canary's availability alert.
+
 - The NEAR audit also checks refunds: failed swaps out of ZEC and excess refunds on
   successful ones, about 50 a day. A refund counts as found when any transaction
   NEAR reports for the swap pays its refund address, and an unmatched excess refund
