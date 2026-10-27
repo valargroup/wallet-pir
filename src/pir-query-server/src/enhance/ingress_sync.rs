@@ -727,7 +727,13 @@ async fn init(State(r): State<QueryIngress>) -> Response {
             .clone()
             .try_acquire_owned()
             .map_err(|_| overloaded("public reads full"))?;
-        let (view, guard) = r.active().await?;
+        // A publisher restart withdraws authority for seconds; wait it out.
+        let (view, guard) = crate::hold::until(
+            crate::hold::WINDOW,
+            |(status, _): &ApiError| *status == StatusCode::SERVICE_UNAVAILABLE,
+            || r.active(),
+        )
+        .await?;
         let bytes = serde_json::to_vec(&view.manifest).map_err(unavailable)?;
         Ok::<_, ApiError>(
             (

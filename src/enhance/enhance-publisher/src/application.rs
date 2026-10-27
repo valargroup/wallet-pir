@@ -107,6 +107,8 @@ impl Ingestion for EnhanceIngestion {
 /// Supervise root-scheduled ingestion, HTTP, and one coalescing publication
 /// task until shutdown. Journal commits continue during preparation; in-flight
 /// publication finishes its owner operation before the publication task exits.
+/// The publication task first serves the previous publication again if it still
+/// checks out ([`EnhancePublisher::restore`]).
 pub async fn run_until<E>(
     executor: E,
     feed: ChainFeed,
@@ -124,6 +126,18 @@ where
     let stop = shutdown.clone();
     let publishing = executor.clone();
     let publication = tokio::spawn(async move {
+        // The publication a restart withdrew serves again while the next one prepares.
+        let restoring = std::time::Instant::now();
+        match preparing.restore(publishing.clone(), stop.clone()).await {
+            Ok(true) => tracing::info!(
+                seconds = restoring.elapsed().as_secs_f64(),
+                "Enhance serves its previous publication again"
+            ),
+            Ok(false) => {}
+            Err(error) => {
+                tracing::warn!(%error, "Enhance previous publication stays withdrawn")
+            }
+        }
         publishing
             .run(
                 PublicationWorkflow {

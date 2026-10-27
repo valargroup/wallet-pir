@@ -23,7 +23,8 @@ ROOT = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(ROOT / 'tools/lib'))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from fake_fleet import FakeFleet, sha256  # noqa: E402
-from wallet_pir_ops.deploy import cli, descriptors, host_helper, units  # noqa: E402
+from wallet_pir_ops import release  # noqa: E402
+from wallet_pir_ops.deploy import descriptors, host_helper, units  # noqa: E402
 from wallet_pir_ops.deploy.engine import Deployer, DeployError  # noqa: E402
 from wallet_pir_ops.deploy.remote import HELPER, LockHeld, SSHExecutor  # noqa: E402
 from wallet_pir_ops.deploy.transaction import Journal  # noqa: E402
@@ -369,7 +370,7 @@ class DeployTests(Fleet):
         self.fake.discovery['https://publisher.example:443'] = (
             200, json.dumps({'service': 'pir-publisher', 'version': '2.1.0'}))
         with self.assertRaisesRegex(DeployError, 'worker@worker-01: candidate contract major 1, publisher '
-                                                 'https://publisher.example:443 advertises 2; use fleet-release'):
+                                                 'https://publisher.example:443 advertises 2; use pir-deploy --breaking'):
             deployer.deploy(NEW_SHA, self.binary)
         self.assertEqual(self.restarts(), [])
 
@@ -590,7 +591,7 @@ class DeployTests(Fleet):
         self.assertTrue(all(event['contract'] == 'unknown' for event in journal.data['events']
                             if event['message'] == 'staged'))
 
-    def test_a_contract_major_change_is_refused_outside_fleet_release(self):
+    def test_a_contract_major_change_is_refused_outside_a_breaking_rollout(self):
         for publisher_answer, report in (
                 ((200, json.dumps({'service': 'pir-publisher', 'version': '2.0.0'})), self.report()),
                 ((200, json.dumps({'service': 'pir-publisher', 'version': '1.0.0'})),
@@ -601,7 +602,7 @@ class DeployTests(Fleet):
                 deployer = self.enhance_fleet()
                 self.fake.contract_reports[NEW_SHA] = report
                 self.fake.discovery['https://publisher.example:443'] = publisher_answer
-                with self.assertRaisesRegex(DeployError, 'use fleet-release'):
+                with self.assertRaisesRegex(DeployError, 'use pir-deploy --breaking'):
                     deployer.deploy(NEW_SHA, self.binary, retire_historical=True)
                 self.assertEqual(self.restarts(), [])
 
@@ -1238,7 +1239,7 @@ class UnitTests(unittest.TestCase):
         self.assertNotIn('coordinator', enhance.roles)
         self.assertNotIn('controller', SERVICES['status'].roles)
         self.assertEqual(SERVICES['receiver'].artifact_kinds, ('receiver-pir',))
-        self.assertIn('pir-publisher', cli.load_release().BINARIES['receiver-pir'])
+        self.assertIn('pir-publisher', release.BINARIES['receiver-pir'])
         (server,) = descriptors.targets(SERVICES['receiver'], inventory)
         self.assertEqual(descriptors.exact_check(SERVICES['receiver'], inventory)['host'], server.host)
 
@@ -1406,69 +1407,6 @@ class HelperTests(unittest.TestCase):
         server.shutdown()
         server.server_close()
         self.assertEqual(executor.http_get('local', base + '/ok', timeout=2)[0], 0)
-
-
-class CommandLineTests(Fleet):
-    def run_cli(self, *argv):
-        self.lines.clear()
-        return cli.main(['--inventory', str(self.inventory_path), '--state-dir', str(self.state), *argv],
-                        executor=self.fake, out=self.lines.append, sleep=self.clock.sleep, clock=self.clock)
-
-    def serving_cli(self, *argv):
-        selected = [item for role in SERVING_SELECTORS for item in ('--only', role)]
-        return self.run_cli(*argv, *selected)
-
-    def test_plan_is_read_only_and_preflight_needs_a_baseline(self):
-        self.enhance_fleet()
-        self.deployer()  # registers health endpoints
-        (self.state / 'baselines/enhance.json').unlink()
-        self.assertEqual(self.serving_cli('plan', 'enhance', '--binary', str(self.binary)), 0)
-        self.assertIn('worker@worker-01 enhance-pir-worker.service: restart', self.lines)
-        self.assertEqual(self.serving_cli('preflight', 'enhance', '--binary', str(self.binary), '--retire-historical'), 1)
-        self.assertTrue(any('run capture-baseline' in line for line in self.lines))
-        self.assertEqual(self.serving_cli('capture-baseline', 'enhance'), 0)
-        self.assertEqual(self.serving_cli('preflight', 'enhance', '--binary', str(self.binary), '--retire-historical'), 0)
-        self.assertEqual(self.fake.log, [])
-
-    def test_deploy_status_and_rollback_commands(self):
-        self.enhance_fleet()
-        self.deployer()
-        self.assertEqual(self.serving_cli('deploy', 'enhance', '--sha256', NEW_SHA, '--retire-historical'), 1)
-        self.assertTrue(any('not staged and no binary' in line for line in self.lines))
-        self.assertEqual(self.serving_cli('deploy', 'enhance', '--binary', str(self.binary), '--retire-historical'), 0)
-        self.assertEqual(self.run_cli('status', 'enhance'), 0)
-        self.assertIn('committed', self.lines[0])
-        self.assertEqual(self.run_cli('rollback', 'enhance'), 0)
-        self.assertTrue(all(self.running(h, u) == OLD_SHA for h, u in ENHANCE))
-
-    def test_submission_time_starts_the_release_clock(self):
-        import time
-        self.enhance_fleet()
-        self.deployer()
-        submitted = time.time() - 120
-        self.assertEqual(self.serving_cli('deploy', 'enhance', '--binary', str(self.binary), '--retire-historical',
-                                          '--submitted-unix', str(submitted)), 0)
-        journal = Journal.load(self.state, 'enhance')
-        self.assertEqual(journal.data['source']['submitted_unix'], submitted)
-        self.assertEqual(self.run_cli('status', 'enhance'), 0)
-        self.assertTrue(any('source_to_accepted' in line for line in self.lines), self.lines)
-        self.assertEqual(self.serving_cli('deploy', 'enhance', '--binary', str(self.binary),
-                                          '--submitted-unix', str(time.time() + 3600)), 1)
-        self.assertTrue(any('must be a past Unix time' in line for line in self.lines))
-
-    def test_plan_and_preflight_name_a_drop_in_on_a_unit_its_role_owns(self):
-        self.receiver_fleet()
-        path = dropin('receiver-pir.service', '50-key.conf')
-        self.fake.edit('receiver-01', path, '[Service]\nEnvironmentFile=/etc/receiver-pir/near.env\n')
-        self.assertEqual(self.run_cli('capture-baseline', 'receiver'), 0)
-        problem = 'problem: server@receiver-01: role server owns its whole unit; remove or fold in ' + path
-        self.assertEqual(self.run_cli('plan', 'receiver', '--binary', str(self.receiver_binary)), 0)
-        self.assertIn(problem, self.lines)
-        self.assertIn('  drop-in %s: REFUSED' % path, self.lines)
-        self.assertEqual(self.run_cli('preflight', 'receiver', '--binary', str(self.receiver_binary),
-                                      '--allow-unit-drift'), 1)
-        self.assertIn(problem, self.lines)
-        self.assertEqual(self.fake.log, [])
 
 
 if __name__ == '__main__':

@@ -483,8 +483,8 @@ Old recent shards keep their geometry within the publication lineage until a dec
 
 ## Continuous publication
 
-The unified publisher changes through `publisher-cutover-*`
-([publisher](../publisher.md)). The standalone continuous-publisher workflow
+The unified publisher changes through `pir-deploy publisher <sha>`
+([publisher](../publisher.md#updating-the-unified-coordinator)). The standalone continuous-publisher workflow
 (`deploy-transparent-publisher.yml` and its installer), which pushed worker
 binaries over SSH, was removed with HTTPS-only publication on 2026-10-22;
 retained source revisions keep it for historical rollback. Deep reorg recovery
@@ -833,8 +833,8 @@ completed-sync demand is at most 50% of measured sustainable throughput.
 
 ### Guarded schema operation API
 
-All production changes, including source staging, binary transfers and unit
-changes, run through `tools/scripts/wallet-pir-deploy.py`. The wrapper's
+Schema changes, including source staging and unit changes, run through
+`tools/scripts/wallet-pir-deploy.py`; binary releases use `pir-deploy`. The wrapper's
 `schema-plan`, `schema-preflight`, `schema-deploy`, `schema-status` and
 `schema-rollback` commands coordinate a checksum-bound recipe on the inventory's
 pinned root coordinator under `/run/lock/wallet-pir-production.lock`.
@@ -2100,7 +2100,7 @@ current-publication and warm-readiness requirements. It cannot combine with
   checked below, and its `listen` (history) or `status_listen` (display) serves the product's
   `/v1/status`. Only `workers` transactions run, never restarting the publisher, and `baseline`
   records only the workers; a `controller` request refuses and the publisher executable changes
-  through `publisher-cutover-*` ([publisher](../publisher.md)). A standalone controller still
+  through `pir-deploy publisher <sha>` ([publisher](../publisher.md)). A standalone controller still
   running or still in the inventory beside it refuses.
 - **History providers.** The publisher distributes History only over HTTPS, so its History workers
   are autonomous providers: each pins its `--config` file (`config_sha256`) and unit (`unit_sha256`),

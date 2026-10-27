@@ -79,8 +79,10 @@ pub async fn probe_live(
 /// the session, query and decode round trip and that the answer is well formed, but not
 /// a positive answer, which needs the canonical oracle `probe_live` reads.
 pub async fn probe_local(origin: String) -> Result<(), AnyError> {
+    // Init waits up to 15 s for a restarting publisher; stay just inside
+    // pir-probe's 12 s per-product limit so a held init can still answer.
     let http = reqwest::Client::builder()
-        .timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(11))
         .build()?;
     let manifest: Manifest = http
         .get(format!("{origin}/v1/status/init"))

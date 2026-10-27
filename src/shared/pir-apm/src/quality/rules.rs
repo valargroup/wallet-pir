@@ -186,6 +186,7 @@ impl Adder<'_> {
             observed: observed.into(),
             threshold: threshold.into(),
             hold_seconds: hold,
+            window_seconds: 0,
             sample,
         })
     }
@@ -1212,6 +1213,7 @@ mod tests {
                 observed: String::new(),
                 threshold: String::new(),
                 hold_seconds: 0,
+                window_seconds: 0,
                 sample: 90,
             }),
             ..Default::default()
@@ -1538,6 +1540,7 @@ mod tests {
                 observed: String::new(),
                 threshold: String::new(),
                 hold_seconds: 0,
+                window_seconds: 0,
                 sample: 90,
             }),
             ..Default::default()
@@ -1610,6 +1613,7 @@ mod tests {
                 observed: String::new(),
                 threshold: String::new(),
                 hold_seconds: 0,
+                window_seconds: 0,
                 sample: now - 7200,
             }),
             ..Default::default()

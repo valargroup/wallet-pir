@@ -120,6 +120,6 @@ its existing 128 GB capacity, 512 GiB volume and hostname. Preserve
 defaults do not describe the live fleet's operator variables.
 
 The retired Query 01 declaration and the one-time additive node provisioning
-workflow are removed. Application deployments use the shared publisher and
-`fleet-release-*` commands; see the [query node guide](../../../../docs/query-node.md).
+workflow are removed. Application deployments use `pir-deploy`; see the
+[operations guide](../../../../docs/operations.md#deploying-a-build).
 No node, volume or DNS change should accompany a routine binary update.

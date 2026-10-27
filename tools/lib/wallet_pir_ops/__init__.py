@@ -19,6 +19,7 @@ standalone control-session installers use `control_sessions` and the modules it 
 - `bundle`: exact-revision operations packaging and verification.
 - `role_config`: complete unit/configuration rendering without host effects.
 - `fleet`: configured roles derived from the inventory and shared registry.
-- `deploy`: the transactional role lifecycle API and CLI
-  (`tools/scripts/wallet-pir-deploy.py`).
+- `deploy`: fleet data operations that are not binary rollouts, and their CLI
+  (`tools/scripts/wallet-pir-deploy.py`). Binary rollouts use
+  `tools/deploy/pir-deploy`.
 """

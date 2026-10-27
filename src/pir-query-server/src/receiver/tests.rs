@@ -499,6 +499,91 @@ async fn filter_successors_reuse_loaded_directory_across_authority_conflicts() {
     server.abort();
 }
 
+/// A restarted publisher withdraws, starts a new recovery epoch and publishes its
+/// previous tables again. The query role serves them again on its next pass without
+/// reloading them.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_restarted_publisher_republishing_the_same_tables_is_served_on_the_next_pass() {
+    let root = tempfile::tempdir().unwrap();
+    let (origin, tls, server) = origin(root.path()).await;
+    let config = config(root.path(), &tls);
+    let publications = Publications::default();
+    let mut lifecycle = sync::synchronization(&config, publications.clone()).unwrap();
+    lifecycle.synchronize().await.unwrap();
+    origin.publish_filters(103);
+    lifecycle.synchronize().await.unwrap();
+    let served = publications.current().unwrap().id();
+    let loads = lifecycle.context().adapter().directory_loads();
+    origin.available.store(false, Ordering::SeqCst);
+    assert!(lifecycle.synchronize().await.is_err());
+    {
+        let mut authority = origin.authority.lock().unwrap();
+        let previous = authority.current().publication.clone().unwrap();
+        authority.apply(AuthorityTransition::Recover).unwrap();
+        let mut inventory: Inventory =
+            serde_json::from_slice(&origin.objects.lock().unwrap()[&previous.inventory.sha256])
+                .unwrap();
+        inventory.recovery_epoch = authority.current().fence.recovery_epoch;
+        let object = origin.store(&serde_json::to_vec(&inventory).unwrap());
+        authority
+            .apply(AuthorityTransition::Publish(inventory.reference(object)))
+            .unwrap();
+    }
+    origin.available.store(true, Ordering::SeqCst);
+    lifecycle.synchronize().await.unwrap();
+    assert_eq!(publications.current().map(|p| p.id()), Ok(served));
+    assert!(publications.filter_window().is_some());
+    assert!(publications.current_anchor().is_some());
+    assert_eq!(
+        lifecycle.context().adapter().directory_loads(),
+        loads,
+        "the same tables are not loaded again"
+    );
+    server.abort();
+}
+
+/// A publication without tables drops the cached ones, so tables that return
+/// afterwards load from the files fetched for them rather than collected ones.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn tables_returning_after_a_publication_without_them_load_again() {
+    let root = tempfile::tempdir().unwrap();
+    let (origin, tls, server) = origin(root.path()).await;
+    let config = config(root.path(), &tls);
+    let publications = Publications::default();
+    let mut lifecycle = sync::synchronization(&config, publications.clone()).unwrap();
+    lifecycle.synchronize().await.unwrap();
+    origin.publish_filters(103);
+    lifecycle.synchronize().await.unwrap();
+    let served = publications.current().unwrap().id();
+    let loads = lifecycle.context().adapter().directory_loads();
+    let with_tables = {
+        let authority = origin.authority.lock().unwrap();
+        authority.current().publication.clone().unwrap()
+    };
+    let mut inventory: Inventory =
+        serde_json::from_slice(&origin.objects.lock().unwrap()[&with_tables.inventory.sha256])
+            .unwrap();
+    inventory.directory = None;
+    let object = origin.store(&serde_json::to_vec(&inventory).unwrap());
+    origin
+        .authority
+        .lock()
+        .unwrap()
+        .apply(AuthorityTransition::Publish(inventory.reference(object)))
+        .unwrap();
+    lifecycle.synchronize().await.unwrap();
+    origin
+        .authority
+        .lock()
+        .unwrap()
+        .apply(AuthorityTransition::Publish(with_tables))
+        .unwrap();
+    lifecycle.synchronize().await.unwrap();
+    assert_eq!(publications.current().map(|p| p.id()), Ok(served));
+    assert_eq!(lifecycle.context().adapter().directory_loads(), loads + 1);
+    server.abort();
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn large_proofs_are_batched_and_negative_chunks_refute_only_their_view() {
     use pir_publication::ViewIdentity;

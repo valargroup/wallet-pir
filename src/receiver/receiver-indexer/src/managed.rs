@@ -242,9 +242,10 @@ async fn run<E: PublisherExecutor + IngestionExecutor>(
         tip,
         providers,
         publications: publications.clone(),
-        state: application::State::default(),
+        state: application::State::stopping_with(stop.clone()),
         distribution,
         executor: executor.clone(),
+        restore: true,
     };
     let guard = spawn_guard(publications, feed.clone(), stop.clone());
     tasks.own(&guard);
@@ -339,6 +340,8 @@ struct Writer<E> {
     state: application::State,
     distribution: crate::distribution::Distribution,
     executor: E,
+    /// The previous process's publication has not been offered again yet.
+    restore: bool,
 }
 fn block(tip: &Checkpoint) -> BlockId {
     BlockId {
@@ -381,6 +384,17 @@ impl<E: PublisherExecutor> Ingestion for Writer<E> {
             self.distribution.withdraw()?;
         }
         crate::revision::advance(&mut self.store, Some(&self.publications), revision)?;
+        if std::mem::take(&mut self.restore) {
+            match self
+                .distribution
+                .restore(&self.publications, revision)
+                .await
+            {
+                Ok(true) => tracing::info!("Receiver serves its previous publication again"),
+                Ok(false) => {}
+                Err(error) => tracing::warn!(%error, "Receiver previous publication not restored"),
+            }
+        }
         Ok(())
     }
     async fn withdraw_above(&mut self, _: Option<&BlockId>) -> Result<()> {
@@ -469,6 +483,7 @@ mod tests {
             publications: Publications::default(),
             state: application::State::default(),
             executor: pir_pipeline::engine::PublisherEngine,
+            restore: false,
             distribution: crate::distribution::Distribution::open(
                 directory.into(),
                 NodeClient::new("http://127.0.0.1:1".into(), None).unwrap(),

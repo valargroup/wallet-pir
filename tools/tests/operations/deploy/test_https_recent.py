@@ -16,7 +16,7 @@ sys.path.insert(0, str(ROOT / 'tools/lib'))
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from fake_fleet import FakeFleet, sha256  # noqa: E402
-from wallet_pir_ops.deploy import cli, descriptors, units  # noqa: E402
+from wallet_pir_ops.deploy import descriptors, units  # noqa: E402
 from wallet_pir_ops.deploy.engine import Deployer, DeployError  # noqa: E402
 from wallet_pir_ops.deploy.lifecycle import Lifecycle  # noqa: E402
 from tools.transparent.lib import https_recent  # noqa: E402
@@ -253,22 +253,6 @@ class HttpsRecent(unittest.TestCase):
         self.assertNotIn(STATE, argv)
         self.assertNotIn(STATE, json.dumps(self.fake.configs[-1]))
         self.assertEqual(self.touched_state(), [])
-
-    def test_cli_admits_https_recent_and_still_refuses_the_standalone_provider(self):
-        base = ['--inventory', str(self.inventory), '--state-dir', str(self.state), '--json']
-        output = []
-        code = cli.main(base + ['plan', 'transparent-history', '--only', 'https-recent',
-                                '--binary', str(self.binary)], executor=self.fake, out=output.append)
-        self.assertEqual(code, 0, output)
-        self.assertEqual(json.loads(output[-1])['targets'][0]['action'], 'install')
-        output.clear()
-        code = cli.main(base + ['plan', 'transparent-history', '--only', 'provider',
-                                '--binary', str(self.binary)], executor=self.fake, out=output.append)
-        self.assertEqual(code, 1)
-        self.assertIn('ordinary binary deployment', output[-1])
-        self.assertEqual(self.fake.log, [])
-
-
 
 class DisposableConfiguration(unittest.TestCase):
     """The check copy moves only shard_dir and refuses anything that would reach live state."""

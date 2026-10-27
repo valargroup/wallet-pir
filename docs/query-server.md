@@ -241,11 +241,12 @@ Configuration files never set `verify_only`; ordinary startup rejects
 Inspect the compiled contract and product feature set with `pir-query-server
 --contract-info`; it requires no configuration and opens no state or CUDA driver.
 This identifies capabilities, while the combined configuration identifies enabled
-products. The [fleet transaction](operations.md#coordinated-contract-releases)
-validates both before shutdown. A selected unified node replaces its executable
-once, checks every enabled product and restores the entire process if any one
-fails acceptance. A shared discovery-contract major cutover includes all
-registered consumers, regardless of product or process topology.
+products. [`pir-deploy`](operations.md#contract-releases) refuses a partial rollout
+whose contract major differs from the live publisher's. On each unified node
+`pirctl` checks the new executable against the host's configuration, probes every
+enabled product after the restart and restores the previous release if any one
+fails. A discovery-contract major change moves the publisher and every consumer
+together (`--breaking` or `all`).
 
 A section with `publisher` set synchronizes over HTTPS. Before the host binds
 any listener, opens state or starts a product, it fetches the publisher's

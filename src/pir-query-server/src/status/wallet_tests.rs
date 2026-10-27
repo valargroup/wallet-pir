@@ -173,12 +173,14 @@ async fn independent_status_wallet_decrypts_a_combined_role() {
         .observe(&transport, &fixture::txid(0), coverage)
         .await
         .is_err());
+    // Init waits a revocation out instead of answering from the revoked view;
+    // `hold` tests that it still refuses once the window ends.
     let init = http
         .get(format!("{}/status/v1/init", routes.origin))
+        .timeout(Duration::from_secs(2))
         .send()
-        .await
-        .unwrap();
-    assert_eq!(init.status(), reqwest::StatusCode::GONE);
+        .await;
+    assert!(init.is_err_and(|error| error.is_timeout()));
     let health: serde_json::Value = http
         .get(format!("{}/control/health", routes.origin))
         .send()

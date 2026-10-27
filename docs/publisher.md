@@ -261,12 +261,11 @@ This tool version requires current publication roots with completed storage-layo
 records and current four-product configuration. It does not translate legacy
 settings or load historical migration requests for recovery.
 
-Before updating to this tooling, finish storage migration and qualification,
-explicitly retire old-root rollback and clean up retained roots using the pinned
-migration package, and establish an ordinary `publisher-cutover/3` deployment as
-the recovery baseline. Retain the original package, requests and evidence for
-historical inspection. Current deployment, restart, interrupted-installation
-recovery and rollback to the immediate predecessor remain supported.
+Storage migration, old-root retirement and retained-root cleanup used the pinned
+migration package. Retain the original package, requests and evidence for
+historical inspection. Deployment, restart and rollback to the immediate
+predecessor go through `pir-deploy` (see [Updating the unified
+coordinator](#updating-the-unified-coordinator)).
 
 Transaction-detail activation first saves a durable intent containing the next
 restart record and HTTP authority, then commits both records before switching the
@@ -332,12 +331,13 @@ release revision and checksums are verified through the existing artifact
 resolver. No CUDA build is required to run the CPU publisher.
 
 The [descriptor](../tools/deploy/publisher/services.toml) represents the shared
-process once as service `publisher`, role `server`. Use it explicitly with
-`wallet-pir-deploy.py --descriptors tools/deploy/publisher/services.toml`.
+process once as service `publisher`, role `server`. The inventory tool reads it with
+`wallet-pir-deploy.py --descriptors tools/deploy/publisher/services.toml fleet`.
 The existing default fleet registry and product worker inventories are unchanged.
 The unit reads operator-managed `/etc/wallet-pir/publisher.json`; the example
-must never replace a live configuration automatically. This descriptor prepares
-binary/service deployment, not an automatic consolidation of old fleet inventories.
+must never replace a live configuration automatically. Binary rollouts of the
+publisher use `pir-deploy publisher <sha>`; the descriptor is not an automatic
+consolidation of old fleet inventories.
 
 The deployment inventory's `services.publisher` entry must contain one server,
 `vars.management_listen`, a `managed_products` list matching enabled sections,
@@ -354,9 +354,9 @@ Before any production activation:
    configuration. Retain schemas, runtime-shipping policy and publication modes.
 3. Review enabled products against `managed_products`, credential access,
    memory/cpu headroom and every product's existing qualification requirements.
-4. Stage the configuration and run its static check, then the deploy tool's
-   plan and preflight under the normal production contract. Prepare initial
-   unit/configuration installation explicitly; binary deployment is not data migration.
+4. Stage the configuration and run its static check, then `pir-deploy --dry-run
+   publisher <sha>`. Prepare initial unit/configuration installation explicitly;
+   binary deployment is not data migration.
 5. Obtain production approval. Stop the old owners before the unified process
    acquires state. Install through the locked deploy tooling, with existing
    public edges and query-worker placement preserved.
@@ -373,182 +373,45 @@ that relocation, modify DNS or change any production host.
 
 ## Updating the unified coordinator
 
-New shared discovery-contract releases use the topology-independent
-[`fleet-release-*` transaction](operations.md#coordinated-contract-releases).
-Same-major updates select only changed processes. A publisher major change
-requires compatible candidates for every registered consumer across Enhance,
-Status and Transparent products, including each enabled product in a unified
-query process. Shared discovery compatibility and private query-to-query
-protocol qualification are separate requirements. The following
-`publisher-cutover-*` interface remains for retained transactions and its existing
-product-specific rollout; it refuses shared contract-major changes.
+Every publisher update is a build release rolled with
+[`pir-deploy`](operations.md#deploying-a-build): `pir-deploy publisher <sha>` when the
+release keeps the live contract major, and `pir-deploy product <group> <sha>
+--breaking` or `pir-deploy all <sha>` when it changes it, so every consumer moves
+with the publisher. `pir-deploy --dry-run publisher <sha>` checks the new binary
+against the host's configuration and probes the running service first. If the new
+process does not become ready and pass `pir-probe`, `pirctl` restores the previous
+release; `pir-deploy rollback publisher` does the same later.
 
-Production publishing runs through `pir-publisher --config FILE`; wallet routes
-belong to query ingress. Use `publisher-cutover-*` in
-`tools/scripts/wallet-pir-deploy.py` from a clean pinned checkout or a matching
-verified operations bundle. New plans require the running shared publisher,
-its current product settings, and already-installed wallet routes. Four-product
-updates and five-product updates including Receiver use the same request; historical
-ownership and HTTPS migrations have no recovery entry points in this tooling.
+A binary update keeps the installed configuration, unit, sandbox, environment
+files and resource limits; change those through the host's configuration, not the
+release. Native startup validates the active publication's existing
+`history-restore.json` and its authority before serving, then verifies bodies in
+the background; without that record it performs full preparation.
 
-Prepare a private `publisher-cutover/3` request with the coordinator `host` and
-`machine_id`, `release` (`git_sha`, `binary_sha256`, `binary_bytes`), the installed
-four-product `configuration`, a complete `inventory`, and independent exact-answer
-`checks` for Enhance, Status, Transparent history and transaction details. Both
-Transparent settings preserve their installed distribution mode. The inventory uses
-`tools/deploy/publisher/all-services.toml` and has one publisher server managing
-all four products, with no standalone publisher roles. Its `exact_check.products`
-matches the request checks. Credentials stay in their existing files.
-
-To adopt Receiver into that process, add its enabled `receiver` configuration,
-independent `checks.receiver`, and `receiver` managed product. Keep the Receiver
-service entry with no `server` role and retain its routing ancillary entry.
-The optional `receiver_adoption` object has `host`, `machine_id`,
-`config_path` (`/etc/receiver-pir-publisher.json`), `data_dir`
-(`/srv/receiver-pir/index`) and `publisher_origin` (the main publisher's existing
-HTTPS origin), and `mode: reingest`. It is accepted only when the installed shared configuration has
-no Receiver. Preserve all Receiver settings except changing `bind` to
-`127.0.0.1:18380`; the shared chain connection replaces its separate node.
-Provision the source unit's existing Infisical environment file at the same path
-on the destination before preflight. The plan compares its digest without
-reading credential values into requests or journals.
-
-With `mode: reingest`, the shared publisher starts with a fresh Receiver index
-while the old publisher and its HTTPS origin keep serving. After ingestion is
-ready, the transaction stops both writers briefly, carries forward only the
-authority counters and withdrawal floor, and restarts the shared publisher.
-It then switches the HTTPS provider edge and disables the old owner. Databases
-and publication objects are rebuilt on the destination. Rollback returns the
-authority floor before restarting the old owner against its retained index.
-
-The shared unit adds Receiver's writable path and increases its memory ceiling
-from 40 to 47 GiB. Receiver's hostname preserves its wallet upstream and forwards
-provider requests and discovery over verified HTTPS to the shared publisher.
-Query hosts retain their Receiver origin. Verify a fresh fetch and an encrypted
-Receiver lookup through each selected query endpoint; cached inventory alone is
-not evidence of a successful cutover.
-
-The retired complete-state transfer path is absent from new operations packages.
-Historical transfer transactions use their recorded package. Current reingestion
-transactions retain authority handover and rollback against the old index.
-Interrupted adoption uses `reconcile` or `rollback`, followed by a fresh plan.
-Later publisher requests retain Receiver but omit `receiver_adoption`.
-
-For an explicitly scoped operational rollout, publisher and fleet-release
-requests may set `probe_products: ["receiver"]` to run only Receiver retrieval
-acceptance. All enabled product configuration and process readiness checks
-remain in place; receipts record the requested scope. Identical fleet probes
-are run once in this mode. `publisher-cutover-rollback --skip-exact-checks`
-restores services and verifies readiness without repeating retrieval probes,
-for example when a retired query hostname invalidates the original probe.
-
-Publisher updates preserve the installed product settings exactly. Retired
-transport, replay and trust settings must already be absent from the installed
-configuration. Planning never silently converts settings or moves storage roots
-without the explicit Receiver adoption above.
-The transaction retains its predecessor's configuration, unit and executable
-identities for drift checks and rollback.
+The one-time Receiver adoption into the shared publisher (reingestion, authority
+handover and edge switch) is complete and its tooling is retired. Receiver now
+publishes from the shared publisher; later updates keep it enabled.
 
 Private control changes require the publisher, Enhance packing router and query
-ingress to change together. The `serving` object pins the matching query-server
-`git_sha`, `binary_sha256`, `binary_bytes` and installed `caddy_sha256`. Supply
-`--serving-binary` to plan, preflight and deploy. Existing workers retain their
-wallet wire protocol. Ordinary publisher updates do not restart Transparent workers.
-
-An ordinary `publisher-cutover/3` request may set `resume_load: false` when the
-continuous checker is already inactive or failed with `MainPID=0` and has no
-critical latch. The update and subsequent restart leave it stopped; rollback
-restores its captured activity. Omitting the option retains the running-checker
-requirement and resumes it after the independent encrypted-answer probes.
-
-
-Run plan and preflight with `--request` and its exact `--request-sha256`;
-preflight also takes the clean `pir-publisher` `--archive`. Review the returned
-`plan_sha256`, then deploy with `--expect-plan-sha256` and the same inputs.
-The tool pins consumed inventories and pool policies, preserves the installed
-sandbox, environment-file references and resource limits, and requires 50 GiB
-host memory plus twenty percent available memory and disk. It refuses changes
-to product policy, foreign file changes, competing owners or altered binaries.
-
-Under one production lock, deployment stages and checks both releases before
-stopping the publisher. It pauses continuous load, starts matching serving roles
-and publisher, verifies readiness, and runs all four encrypted-answer probes
-before resuming load and committing. The wallet routes remain unchanged and
-unmatched requests remain 404. Every effect is journaled on the coordinator.
-
-Deployment leaves History completion records to the publisher. Native startup
-validates the active publication's existing `history-restore.json` and its
-authority before serving, then verifies bodies in the background. If no record
-exists, startup performs full preparation. Deployment does not pin or rescan
-History artifacts before stopping the predecessor; readiness and all four
-encrypted-answer probes still gate completion. Recovery of older transactions
-that already prepared a pinned record retains their recorded install and
-rollback behavior.
-
-`publisher-cutover-status` reports the transaction and observed identities.
-`publisher-cutover-restart` repeats cooperative shutdown, readiness and exact
-checks without replacing the rollback baseline. `publisher-cutover-rollback`
-and `publisher-cutover-reconcile` restore the saved edge, serving roles and
-publisher together, then repeat readiness and product probes. A failed deploy
-rolls back automatically; if that rollback also fails, the journal's `failure`
-keeps `deploy_error` and `rollback_error` as separate fields. Only `publisher-cutover/3` journals are supported. Retired storage and HTTPS
-handoff fields are rejected, including for recovery. Historical migrations must
-be closed before installing this tool version; use their pinned original package
-when inspecting their retained records.
-
-Publisher updates do not deploy GPU artifacts or replaces production-snapshot, native-wallet
+ingress to change together: deploy them from the same release with `--breaking` or
+`all`. Ordinary publisher updates do not restart Transparent workers. Publisher
+updates do not deploy GPU artifacts or replace production-snapshot, native-wallet
 and sustained-service qualification.
 
 The APM sidecar must match the wallet ownership change: its init and query
 metrics come from query ingress, while publisher health and publication metrics
-stay on the publisher. Update its binary through the opt-in descriptor
-`tools/enhance/deploy/apm.toml` with the normal baseline, plan, preflight, deploy,
-status and rollback commands. This preserves its unit arguments, credential
-files and durable incident/delivery state. Acceptance requires fresh monitoring
-coverage; a stale sidecar can report missing init coverage despite correct
-wallet answers.
+stay on the publisher. Update it with `pir-deploy product monitoring <sha>`, which
+keeps its unit arguments, credential files and durable incident/delivery state.
+Acceptance requires fresh monitoring coverage; a stale sidecar can report missing
+init coverage despite correct wallet answers.
 
-## Fast branch builds over SSH
+## Fast branch builds
 
-Branch-built artifacts can use the existing deployment transactions directly;
-they do not need to be downloaded from CI. Check SSH reachability and use a clean,
-visible build checkout. Fetch the selected branch once, pin its full SHA, and
-reuse the host's existing target directory, toolchain and native build flags.
-Do not change a live checkout or delete its build cache. Build the two hosts
-sequentially within one target lane, preserving all enabled product features:
-
-```sh
-deploy_sha=$(git rev-parse HEAD)
-bounded-run --name publisher-branch-build --limit 30 --max 1800 -- \
-  cargo build --locked --release -p pir-publisher \
-  --features enhance,status,transparent-history,transparent-detail,receiver,native-reinspiring
-python3 tools/ci/release.py assemble --sha "$deploy_sha" --kind pir-publisher \
-  --target "$CARGO_TARGET_DIR" --output .local-pir/publisher-branch-artifact
-bounded-run --name query-branch-build --limit 30 --max 1800 -- \
-  cargo build --locked --release -p pir-query-server \
-  --features enhance,status,transparent-history,transparent-detail,receiver,native-reinspiring
-python3 tools/ci/release.py assemble --sha "$deploy_sha" --kind pir-query-server \
-  --target "$CARGO_TARGET_DIR" --output .local-pir/query-branch-artifact
-```
-
-If a bounded build is still running, finish it with the printed `--wait` command
-before assembling or starting another Cargo writer. Choose fresh output paths
-for subsequent revisions. Preserve any additional feature required by the
-installed query variant; CPU artifacts do not replace CUDA artifacts.
-
-Run `publisher-cutover-plan` and `publisher-cutover-preflight` with the pinned
-request and publisher archive. After production confirmation, use
-`publisher-cutover-deploy` with that plan digest. For a publisher-only update,
-pin the installed Enhance serving binary and set `preserve_serving: true`.
-Then update each combined query host sequentially using `fleet-release-*` and
-the query archive. That binary-only path retains the installed configuration,
-environment, thread settings and resource policy. Prepare its immutable binary
-only after deployment is authorized. Each Receiver-enabled combined host must
-have a separate `receiver` encrypted-answer check in `exact_check.products`.
-Keep `status` and `rollback` inputs alongside each transaction. These are
-unqualified branch artifacts: focused offline checks, readiness and the existing
-encrypted probes remain required; a full integration campaign is not part of
-this SSH iteration.
+`pir-deploy` installs only published `build-<sha12>` releases. To deploy a branch,
+dispatch the Release workflow on it (`gh workflow run release.yml --ref <branch>`),
+then roll that commit's release with `pir-deploy --dry-run` and the mode you need.
+These are unqualified branch artifacts: readiness and the release's `pir-probe`
+answers remain required; a full integration campaign is not part of this iteration.
 
 ## Product libraries and commands
 
@@ -579,21 +442,3 @@ The standalone history controller and display `run` command are removed. Their
 services run through the root configuration and publish live over HTTPS.
 No executable aliases or data conversion are needed. Install the matching binary,
 configuration and unit together through the supported deployment tooling.
-
-For a stopped-checker repair, `publisher-cutover/3` may pin an existing disk-capacity incident with `expected_disk_latch_sha256` and `resume_load: false`. Only the known History worker/router disk-headroom reasons are accepted. The latch must remain byte-for-byte identical; it is never removed or acknowledged, and the checker stays stopped through deployment and rollback. Answer failures, memory incidents, OOMs and changed latches still refuse the operation.
-
-A `publisher-cutover/3` request may set `preserve_serving: true` for a publisher-only update. Its serving release keeps its own exact source and binary pins; every serving role must already match the requested binary and configuration. Any required serving change refuses the update. The publisher and wallet probes still run, and the discovery edge route is journaled normally.
-
-If the connection was lost while stopping the predecessor, `publisher-cutover-continue` can finish that exact stopped-checker transaction. It requires the recorded stop intent, unchanged publisher configuration and inputs, unchanged serving processes, and the original staged executable. It refuses a running publisher or any other interrupted phase; ordinary verification recovery still uses `publisher-cutover-verify`.
-
-If restoration reached its recorded publisher start and both serving roles passed
-their restored identity checks, but an older Status diagnostic client fails on
-expired sessions, use `publisher-cutover-repair-probe-plan` and then
-`publisher-cutover-repair-probe-verify --expect-plan-sha256 <digest>` with the same
-request and checksum. This recovery selects only the staged publisher executable
-as the Status probe client and updates only its digest literal in the harness.
-It keeps the original harness logic, independent oracle,
-load and deadlines, records the client digest, and repeats all four exact-answer
-checks without restarting any service. It refuses pending effects, changed
-restored files or process identities, a changed probe executable, and a stale
-plan. The stopped checker and its incident latch remain unchanged.

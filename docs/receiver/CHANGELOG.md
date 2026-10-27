@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- A publisher stop also ends the open tip shard's build, which checks every
+  witness against its shard root and took about 18 s each pass: the build asks for
+  a stop between its steps and every 256 checked records, so a stop during that
+  check no longer holds the publisher for up to 18 s.
+
+- A restarted publisher no longer replaces the Receiver publication it restored
+  with one that has block filters but no tables while it rebuilds them, and query
+  servers reuse the tables they already loaded when a publication names the same
+  files. A publisher restart now interrupts Receiver for about one query-server
+  poll instead of until the rebuild finishes.
+
+- A restarted publisher serves its previous Receiver publication again as soon as
+  it has read the chain, under its new recovery epoch, while it rebuilds the tables.
+  Only a publication of the same history revision whose files are all still kept
+  and whose anchors are still on the chain is restored, so Receiver no longer goes
+  unready for the ~27 s rebuild after every publisher deploy.
+
+- A publisher stop no longer waits for Receiver to build every shard of a pass: the
+  build ends at the next shard and replaces nothing a later pass reuses, so a deploy's
+  publisher restart takes about a second instead of up to 20.
+
 - A restarted publisher republishes the same Receiver tables under a new
   publication. Inventories and descriptors carry the publisher's recovery epoch,
   so query servers no longer refuse the restarted publication as the one they saw

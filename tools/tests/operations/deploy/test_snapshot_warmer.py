@@ -3,12 +3,13 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import sys
 import tempfile
 import unittest
 from unittest import mock
 
-import publisher_fixture  # Registers the operations package for direct discovery.
-from wallet_pir_ops.deploy import snapshot_warmer as warmer
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / 'lib'))
+from wallet_pir_ops.deploy import snapshot_warmer as warmer  # noqa: E402
 
 
 class SnapshotFilesTests(unittest.TestCase):

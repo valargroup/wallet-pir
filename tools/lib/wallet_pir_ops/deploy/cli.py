@@ -3,48 +3,22 @@ import argparse
 import json
 import os
 from pathlib import Path
-import re
 import subprocess
-import shlex
 import sys
-import tempfile
-import time
 
 from . import descriptors
-from .engine import Deployer, DeployError, file_sha256
+from .engine import DeployError
 from .remote import LockHeld, RemoteError, SSHExecutor
 from .transaction import default_state_dir
 
 from ..paths import ROOT
 DESCRIPTORS = ROOT / 'tools/deploy/services.toml'
-SHA256 = re.compile('^[0-9a-f]{64}$')
 
 USAGE = """\
-Transactional deploys of Enhance, Status and Receiver PIR over SSH.
-Transparent schema recipes run on the pinned coordinator under the same lock.
-
-  plan SERVICE (--binary F | --archive F --sha REV | --sha256 H)
-      Read-only: per-target action, drop-in handling and unit drift.
-      Targets whose inventory entry names another artifact_kind (the GPU
-      worker) need --extra-archive KIND=FILE and roll in their own transaction.
-      Roles that name their own binary also roll in their own transaction.
-      One archive supplies each file; the release directory is that file's sha256.
-      A host that runs two binaries receives both directories.
-  preflight SERVICE (...same...) [--stage]
-      Read-only unless --stage: identity on every host, baseline, drift,
-      disk space and, where the release is staged, its self-check.
-  deploy SERVICE (...same...) [--allow-unit-drift] [--retire-historical]
-      Holds the production lock; changes only targets that differ.
-  rollback SERVICE [--transaction ID] [--force]
-      Restores the touched targets of the latest (or named) transaction.
-  status SERVICE
-  capture-baseline SERVICE [--output FILE]
-
-  query-node-{plan,preflight,provision,status} --request F --request-sha256 H --receipt F
-      Run on the coordinator. Add only the query Terraform source and apply the
-      reviewed six-resource plan under the production lock. Existing fleet
-      files and state addresses stay in place; no application is activated.
-      Provision requires --expect-plan-sha256 from plan/preflight.
+Fleet data operations over SSH that are not binary rollouts. Binary rollouts
+of every service use tools/deploy/pir-deploy, which runs tools/deploy/pirctl on
+each host. Transparent schema recipes run on the pinned coordinator under the
+production lock.
 
   schema-plan --recipe FILE
   schema-preflight --recipe FILE
@@ -93,6 +67,17 @@ Transparent schema recipes run on the pinned coordinator under the same lock.
       check; refuses a critical latch or changed pinned binaries
       (tools/transparent/lib/load_repair.py).
 
+  status-routing-{plan,preflight,deploy,status,rollback} --request F --request-sha256 H
+  coordinator-edge-{plan,preflight,deploy,status,rollback,verify,dns-plan,dns-stage,
+                    history-relay-plan,history-relay-repair} --request F --request-sha256 H
+      Status wallet-route cutover and the unified wallet site on the coordinator Caddy.
+      Every change names the reviewed plan with --expect-plan-sha256.
+
+  cache-storage-{plan,prune}, cache-volume-{plan,provision},
+  cache-data-{plan,prepare,activate,status}
+      Retire an unused transaction-detail cache, create its approved data volume,
+      and move the Details cache onto it, each under the production lock.
+
   worker-report SERVICE [--only ROLE[@HOST]]
       Read-only private report from existing endpoints: process, executable,
       assigned and loaded publication, preparation, readiness axes.
@@ -117,158 +102,15 @@ The inventory (hosts, SSH, lock) is --inventory or WALLET_PIR_DEPLOY_INVENTORY.
 """
 
 
-def load_release():
-    from .. import release
-    return release
-
-
 def transparent_cli():
     from tools.transparent.lib import deploy_cli
     return deploy_cli
 
 
-def target_binary(args, service, state_dir):
-    """`(sha256, local binary or None, source record)` from exactly one of the source flags.
-
-    The file name is the group's binary (`args.binary_name`), or the service
-    binary when the group did not name one. An archive contributes that file;
-    its sha256, not the archive's, names the release directory.
-    """
-    sha, path, source = _target_binary(args, service, state_dir)
-    submitted = getattr(args, 'submitted_unix', None)
-    if submitted is not None:
-        # The release clock starts at source submission, before compilation and
-        # any wait for the production lock; journal status reports it.
-        if not 0 < submitted <= time.time():
-            raise DeployError('--submitted-unix must be a past Unix time')
-        source = {**source, 'submitted_unix': submitted}
-    return sha, path, source
-
-
-def _target_binary(args, service, state_dir):
-    chosen = [flag for flag in ('binary', 'archive', 'sha256') if getattr(args, flag)]
-    if len(chosen) != 1:
-        raise DeployError('give exactly one of --binary, --archive (with --sha) or --sha256')
-    name = getattr(args, 'binary_name', None) or service.binary
-    if args.binary:
-        path = Path(args.binary).resolve()
-        return file_sha256(path), path, {'binary': str(path), 'name': name}
-    if args.sha256:
-        if not SHA256.match(args.sha256):
-            raise DeployError('--sha256 must be 64 lowercase hex digits')
-        return args.sha256, None, {'sha256': args.sha256, 'name': name}
-    if not args.sha:
-        raise DeployError('--archive requires --sha, the full source revision')
-    kind = args.kind or (service.artifact_kinds[0] if service.artifact_kinds else None)
-    if kind not in service.artifact_kinds:
-        raise DeployError('%s deploys artifact kinds %s' % (service.name, list(service.artifact_kinds)))
-    work = Path(state_dir) / 'artifacts'
-    work.mkdir(mode=0o700, parents=True, exist_ok=True)
-    destination = Path(tempfile.mkdtemp(prefix='%s-%s-' % (kind, args.sha[:12]), dir=work)) / 'bundle'
-    # Verifies the revision, the checksum inventory and every file's digest.
-    load_release().extract(Path(args.archive), destination, args.sha, kind)
-    path = destination / name
-    if not path.is_file():
-        raise DeployError('%s archive has no %s binary' % (kind, name))
-    return file_sha256(path), path, {'archive': str(Path(args.archive).resolve()), 'revision': args.sha,
-                                     'kind': kind, 'name': name}
-
-
-def artifact_groups(args, service, inventory):
-    """Split the selected targets into one transaction per binary, in rollout order.
-
-    A role names its executable, or uses the service binary. Each transaction
-    stages that one file, and the release directory is the file's sha256. A
-    target whose inventory entry names an `artifact_kind` (a GPU worker's CUDA
-    build) cannot take the main archive's copy of that file. It is deployed
-    from `--extra-archive KIND=FILE`, with the same `--sha`. Without that
-    archive the command refuses, so a regular deploy never skips such a target
-    silently; `--only` excludes it deliberately.
-
-    `--binary` and `--sha256` name one file. A selection that runs two binaries
-    has to come from an archive, which contains each of them.
-    Returns `[(args for that group, target keys)]`, one entry per transaction.
-    """
-    selected = descriptors.select(descriptors.targets(service, inventory), getattr(args, 'only', None))
-    main_kind = (args.kind or (service.artifact_kinds[0] if service.artifact_kinds else None)) if args.archive else None
-    extra = {}
-    for item in getattr(args, 'extra_archive', None) or ():
-        kind, sep, path = item.partition('=')
-        if not sep or kind not in service.artifact_kinds or kind in extra or kind == main_kind:
-            raise DeployError('--extra-archive is KIND=FILE, once per kind other than the main one; kinds are %s'
-                              % list(service.artifact_kinds))
-        extra[kind] = path
-    groups = {}
-    for target in selected:
-        kind = target.artifact_kind if target.artifact_kind not in (None, main_kind) else None
-        name = target.role.binary or service.binary
-        groups.setdefault((kind, name), []).append(target.key)
-    missing = [kind for kind, _name in groups if kind is not None and kind not in extra]
-    if missing:
-        raise DeployError('%s run the %s artifact: add --extra-archive %s=FILE with the same --sha, '
-                          'or leave them out with --only'
-                          % ([key for kind, _name in groups if kind == missing[0] for key in groups[(kind, _name)]],
-                             missing[0], missing[0]))
-    unused = set(extra) - {kind for kind, _name in groups}
-    if unused:
-        raise DeployError('no selected target runs %s' % sorted(unused))
-    if any(kind is not None for kind, _name in groups) and not args.sha:
-        raise DeployError('--extra-archive requires --sha, the full source revision')
-    names = sorted({name for _kind, name in groups})
-    if len(names) > 1 and not args.archive:
-        raise DeployError('these roles run different binaries (%s); deploy from an archive so each file keeps its '
-                          'own release directory, or limit --only to one binary' % ', '.join(names))
-    order = [t.key for t in selected]
-    result = []
-    for (kind, name), keys in sorted(groups.items(), key=lambda item: order.index(item[1][0])):
-        group = argparse.Namespace(**vars(args))
-        group.binary_name = name
-        if kind is not None:
-            group.binary, group.sha256, group.archive, group.kind = None, None, extra[kind], kind
-        result.append((group, keys))
-    return result
-
-
-def run_release(command, args, service, inventory, executor, deployer, out):
-    """Execute one artifact group through the shared lifecycle API."""
-    from .lifecycle import Lifecycle
-    sha, binary, source = target_binary(args, service, args.state_dir)
-    lifecycle = Lifecycle(deployer)
-    if command == 'deploy':
-        result = lifecycle.deploy(sha, binary, source, allow_drift=args.allow_unit_drift,
-                                  retire_historical=args.retire_historical,
-                                  skip_exact_check=args.skip_exact_check)
-    else:
-        result = lifecycle.inspect(command, sha, binary, allow_drift=args.allow_unit_drift,
-                                   retire_historical=args.retire_historical,
-                                   stage=command == 'preflight' and args.stage)
-    if args.json:
-        out(json.dumps(result.describe(), sort_keys=True))
-    return 1 if command == 'preflight' and result.problems else 0
-
-
-def external_workers(args, service, inventory):
-    """Whether a command touches only a product's role-mode external workers.
-
-    Product services keep their recipes for publications and every other role;
-    the shared engine may install, verify and roll back an external worker's
-    rendered unit, which never carries publication authority.
-    """
-    from .transaction import Journal
-    if args.command == 'rollback':
-        journal = Journal.load(args.state_dir, service.name, args.transaction)
-        return journal is not None and all(service.roles[r['role']].mode == 'role' and service.roles[r['role']].shared_lifecycle for r in journal.hosts)
-    only = getattr(args, 'only', None)
-    if not only:
-        return False
-    selected = descriptors.select(descriptors.targets(service, inventory), only)
-    return all(t.role.mode == 'role' and t.role.shared_lifecycle for t in selected)
-
-
 def parser():
     top = argparse.ArgumentParser(prog='wallet-pir-deploy.py', description=USAGE,
                                   formatter_class=argparse.RawDescriptionHelpFormatter)
-    top.add_argument('--json', action='store_true', help='structured results for role lifecycle commands')
+    top.add_argument('--json', action='store_true', help='structured results for ops-package commands')
     top.add_argument('--inventory', default=os.environ.get('WALLET_PIR_DEPLOY_INVENTORY'))
     top.add_argument('--descriptors', default=str(DESCRIPTORS))
     top.add_argument('--state-dir', default=str(default_state_dir()))
@@ -322,56 +164,15 @@ def parser():
             command.add_argument('--fleet', help='the planned inventory, if it is not yet installed')
             command.add_argument('--known-hosts', help='the planned host-key pins, if not yet installed')
     transparent_cli().register(commands)
-    from . import publisher
-    publisher.register(commands)
-    from . import fleet_release
-    fleet_release.register(commands)
     from . import cache_storage
     cache_storage.register(commands)
     from . import cache_volume
     cache_volume.register(commands)
     from . import cache_data
     cache_data.register(commands)
-    for name in ('plan', 'preflight', 'deploy'):
-        command = commands.add_parser(name)
-        command.add_argument('service')
-        command.add_argument('--binary', help='local binary to deploy')
-        command.add_argument('--archive', help='release bundle from tools/ci/release.py')
-        command.add_argument('--sha', help='full source revision of --archive')
-        command.add_argument('--kind', help='artifact kind of --archive')
-        command.add_argument('--extra-archive', action='append', metavar='KIND=FILE',
-                             help='bundle for inventory targets that declare another artifact_kind '
-                                  '(e.g. a GPU worker), deployed in their own transaction')
-        command.add_argument('--sha256', help='binary digest only; for a no-op check or an already staged release')
-        command.add_argument('--allow-unit-drift', action='store_true',
-                             help='accept a new unit that differs from the live one beyond the binary')
-        command.add_argument('--only', action='append', metavar='ROLE[@HOST]',
-                             help='limit to these targets (repeatable), e.g. worker@worker-01')
-        command.add_argument('--retire-historical', action='store_true',
-                             help='move historical ExecStart-only drop-ins into the transaction directory')
-        if name == 'preflight':
-            command.add_argument('--stage', action='store_true',
-                                 help='under the lock, upload the release directory and run its self-check')
-        if name == 'deploy':
-            command.add_argument('--skip-exact-check', action='store_true')
-            command.add_argument('--submitted-unix', type=float,
-                                 help='when the source revision was submitted; starts the release clock')
-            command.add_argument('--hold-on-failure', action='store_true',
-                                 help='leave changed targets in place for operator repair instead of rolling back')
-    command = commands.add_parser('rollback')
-    command.add_argument('service')
-    command.add_argument('--transaction')
-    command.add_argument('--force', action='store_true', help='restore even if unit files changed after the transaction')
     command = commands.add_parser('worker-report', help='read-only private report of workers from their endpoints')
     command.add_argument('service')
     command.add_argument('--only', action='append', metavar='ROLE[@HOST]')
-    for name in ('status', 'capture-baseline'):
-        command = commands.add_parser(name)
-        command.add_argument('service')
-        if name == 'capture-baseline':
-            command.add_argument('--output')
-        command.add_argument('--only', action='append', metavar='ROLE[@HOST]',
-                             help='only these targets (repeatable)')
     return top
 
 
@@ -429,16 +230,13 @@ def run_package(args, inventory, executor, layout, github, out):
 
 
 def main(argv=None, executor=None, out=print, package_layout=None, package_github=None, **options):
-    """`executor` and `options` (passed to `Deployer`) let tests substitute a fake fleet and clock."""
+    """`executor` and `options` (passed to the product handlers) let tests substitute a fake fleet and clock."""
     args = parser().parse_args(argv)
     from .deployment_alerts import Notifications
     # Read-only commands never open a window. Existing deploy handlers keep their
     # own single validation pass and production lock.
-    deploying = not args.command.startswith('ops-package-') and (
-        args.command in ('deploy', 'rollback', 'publisher-cutover-continue',
-                         'publisher-cutover-reconcile', 'publisher-cutover-repair-release',
-                         'publisher-cutover-repair-sandbox', 'fleet-release-reconcile') or args.command.endswith(
-            ('-deploy', '-rollback', '-restart', '-verify')))
+    deploying = not args.command.startswith('ops-package-') and args.command.endswith(
+        ('-deploy', '-rollback', '-restart', '-verify'))
     if not deploying:
         return run(args, executor, out, package_layout, package_github, **options)
     try:
@@ -462,9 +260,9 @@ def run(args, executor, out, package_layout, package_github, **options):
         from ..bundle import check_installed
         product_command = args.command.startswith(('schema-', 'txid-display-', 'transparent-binary-', 'transparent-alerts-',
                                                    'transparent-load-repair-', 'transparent-provider-maintenance-',
-                                                   'ops-package-', 'publisher-cutover-', 'fleet-release-', 'status-routing-',
+                                                   'ops-package-', 'status-routing-',
                                                    'coordinator-edge-', 'cache-storage-', 'cache-volume-', 'cache-data-'))
-        mutation = (args.command in ('deploy', 'rollback') or getattr(args, 'stage', False)
+        mutation = (getattr(args, 'stage', False)
                     or product_command and not args.command.endswith(('-plan', '-preflight', '-status', '-summary', '-recipe')))
         # A clean installed package may install a newer package revision; every
         # binary change still names the same source revision as the package.
@@ -482,17 +280,6 @@ def run(args, executor, out, package_layout, package_github, **options):
             from . import cache_storage
             out(json.dumps(cache_storage.dispatch(args, executor), sort_keys=True))
             return 0
-        if args.command.startswith('publisher-cutover-'):
-            from . import publisher
-            publisher_repair = args.command.endswith(('-repair-sandbox-plan', '-repair-sandbox',
-                                                     '-repair-release-plan', '-repair-release'))
-            request, _inventory = publisher.load_request(args.request, args.request_sha256)
-            # Forward repairs validate their release and existing transaction
-            # inside their own handlers before any service changes.
-            check_installed(mutation=mutation, revision=None if publisher_repair else request['release']['git_sha'])
-            result = publisher.dispatch(args, executor=executor, **options)
-            out(json.dumps(result, sort_keys=True))
-            return 0
         if args.command.startswith(('schema-', 'txid-display-', 'transparent-binary-', 'transparent-alerts-',
                                      'transparent-load-repair-', 'transparent-provider-maintenance-')):
             if args.json:
@@ -500,15 +287,6 @@ def run(args, executor, out, package_layout, package_github, **options):
             return transparent_cli().dispatch(args, executor=executor, out=out, **options)
         if not args.inventory:
             raise DeployError('pass --inventory or set WALLET_PIR_DEPLOY_INVENTORY')
-        if args.command.startswith('fleet-release-'):
-            from . import fleet_release
-            request = fleet_release.load_request(args.request, args.request_sha256)
-            problems = fleet_release.validate_request(request)
-            if problems:
-                raise DeployError('; '.join(problems))
-            check_installed(mutation=mutation, revision=request['source']['revision'])
-            out(json.dumps(fleet_release.dispatch(args, executor), sort_keys=True))
-            return 0
         if args.command.startswith('status-routing-'):
             from .engine import mutation_fence
             from tools.status.lib.routing import Routing, load_request, digest
@@ -600,7 +378,6 @@ def run(args, executor, out, package_layout, package_github, **options):
                                 'consumers': entry.get('consumers'), **observed})
             out(json.dumps(results[0] if args.name else {'ancillary': results}, sort_keys=True))
             return 1 if any('error' in r for r in results) else 0
-        log = (lambda message: None) if args.json else out
         services = descriptors.load_descriptors(args.descriptors)
         if args.service not in services:
             raise DeployError('unknown service %r; known: %s' % (args.service, sorted(services)))
@@ -613,42 +390,7 @@ def run(args, executor, out, package_layout, package_github, **options):
             out(json.dumps({'service': service.name, 'workers': worker_report.collect(service, selected, executor)},
                            sort_keys=True))
             return 0
-        if service.driver != 'binary' and args.command != 'status' and not external_workers(args, service, inventory):
-            raise DeployError('%s uses the %s product recipes; ordinary binary deployment cannot change its publications'
-                              % (service.name, service.driver))
-        executor = executor or SSHExecutor(inventory)
-        if args.command in ('plan', 'preflight', 'deploy'):
-            groups = artifact_groups(args, service, inventory)
-            for group, keys in groups:
-                if len(groups) > 1:
-                    label = group.binary_name
-                    if group.archive:
-                        label = '%s (%s)' % (group.binary_name, group.kind or 'archive')
-                    log('== %s: %s' % (label, ', '.join(keys)))
-                deployer = Deployer(service, inventory, executor, args.state_dir, args.baseline, out=log,
-                                    only=keys, hold_on_failure=getattr(args, 'hold_on_failure', False), **options)
-                code = run_release(args.command, group, service, inventory, executor, deployer, out)
-                if code:
-                    return code
-            return 0
-        deployer = Deployer(service, inventory, executor, args.state_dir, args.baseline, out=log,
-                            only=getattr(args, 'only', None), **options)
-        if args.command == 'capture-baseline':
-            baseline = deployer.capture_baseline(args.output)
-            if args.json:
-                out(json.dumps({'service': service.name, 'operation': args.command,
-                                'baseline': str(args.output or deployer.baseline_path),
-                                'targets': sorted(baseline['targets'])}, sort_keys=True))
-        elif args.command == 'status':
-            from .lifecycle import Lifecycle
-            result = Lifecycle(deployer).status()
-            if args.json:
-                out(json.dumps(result.describe(), sort_keys=True))
-        elif args.command == 'rollback':
-            from .lifecycle import Lifecycle
-            result = Lifecycle(deployer).rollback(args.transaction, args.force)
-            if args.json:
-                out(json.dumps(result.describe(), sort_keys=True))
+        raise DeployError('unknown command %r' % args.command)
     except subprocess.TimeoutExpired:
         error_result('command timed out; reconcile the recorded transaction and inspect its private logs', 'unknown')
         return 75 if args.command.startswith('schema-') else 1

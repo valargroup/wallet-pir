@@ -19,12 +19,13 @@ from pathlib import Path
 import re
 import shlex
 import time
+from urllib.parse import urlsplit
 
 from .. import contract, durable
 from . import descriptors, timing, units
 from .remote import production_lock
 from .. import schema_fence
-from .transaction import FINAL, FLEET_ROOT, Journal
+from .transaction import FINAL, Journal
 
 SYSTEM = '/etc/systemd/system'
 SELF_CHECK_SECONDS = 60
@@ -38,7 +39,7 @@ class DeployError(RuntimeError):
     pass
 
 
-def mutation_fence(inventory, executor, lock=None, *, fleet_id=None):
+def mutation_fence(inventory, executor, lock=None):
     """Refuse while a Transparent schema transaction is unfinished; read-only.
 
     Under the held production lock (`lock`) before every mutation; without one
@@ -51,21 +52,72 @@ def mutation_fence(inventory, executor, lock=None, *, fleet_id=None):
         schema_fence.local_schema_fence()
     elif host:
         schema_fence.schema_mutation_fence(lambda path: executor.read(host, path))
-    def read(path):
-        if host:
-            return executor.read(host, path)
-        local = Path(path)
-        return local.read_text() if local.exists() else None
-    pointer = read(FLEET_ROOT + '/latest.json')
-    if pointer is not None:
-        identifier = json.loads(pointer).get('id')
-        if not isinstance(identifier, str) or not re.fullmatch('fleet-[A-Za-z0-9-]+', identifier):
-            raise DeployError('invalid fleet transaction pointer')
-        latest = json.loads(read(FLEET_ROOT + '/transactions/' + identifier + '.json') or '{}')
-        if latest.get('id') != identifier or latest.get('schema') != 'fleet-release-journal/1':
-            raise DeployError('fleet transaction journal is missing or invalid')
-        if latest.get('phase') not in FINAL and identifier != fleet_id:
-            raise DeployError('unfinished fleet release %s; verify or reconcile it before another mutation' % identifier)
+
+
+PUBLISHER_KEYS = ('publisher', 'publisher_origin')
+OBSERVE_SECONDS = 60
+
+
+def origin(url):
+    """`https://host:port` for an HTTPS publisher URL, or None for anything else."""
+    if not isinstance(url, str):
+        return None
+    try:
+        parts = urlsplit(url)
+        if parts.scheme != 'https' or not parts.hostname or parts.username or parts.password:
+            return None
+        host = '[%s]' % parts.hostname.lower() if ':' in parts.hostname else parts.hostname.lower()
+        return 'https://%s:%d' % (host, parts.port or 443)
+    except ValueError:
+        return None
+
+
+def publisher_origins(settings):
+    """Every HTTPS publisher origin used by enabled role settings."""
+    found = set()
+    if isinstance(settings, dict):
+        if settings.get('enabled') is False:
+            return found
+        for key, value in settings.items():
+            if key in PUBLISHER_KEYS and origin(value):
+                found.add(origin(value))
+            else:
+                found |= publisher_origins(value)
+    elif isinstance(settings, list):
+        for value in settings:
+            found |= publisher_origins(value)
+    return found
+
+
+def observe_publisher(executor, host, name):
+    """The major a publisher origin advertises, observed from the host serving it."""
+    try:
+        status, body = executor.http_get(host, name + contract.DISCOVERY_PATH, OBSERVE_SECONDS)
+        return {'major': contract.publisher_document_major(status, body)}
+    except Exception as error:  # noqa: BLE001 - an unobserved origin is unknown, never compatible
+        return {'major': None, 'error': str(error)}
+
+
+def configuration(executor, process, state):
+    """Read the exact configuration the installed process starts with."""
+    text = [state.get('fragment_text') or '', *(d['text'] for d in state.get('drop_ins', []))]
+    command = units.exec_start(units.effective(text))
+    arguments = shlex.split(command)
+    if arguments.count('--config') != 1:
+        raise DeployError('%s must run with one --config FILE' % process['key'])
+    index = arguments.index('--config')
+    if index + 1 >= len(arguments):
+        raise DeployError('missing configuration path')
+    path = arguments[index + 1]
+    if not path.startswith('/'):
+        raise DeployError('configuration path must be absolute')
+    body = executor.read(process['host'], path)
+    if body is None:
+        raise DeployError('%s configuration is unreadable' % process['key'])
+    document = json.loads(body)
+    if not isinstance(document, dict):
+        raise DeployError('configuration must be an object')
+    return path, body, document
 
 
 def file_sha256(path):
@@ -574,11 +626,10 @@ class Deployer:
         workers and unified nodes included, must run a candidate whose
         compiled major equals what each of its publishers advertises now,
         observed from that consumer's host. Unknown on either side refuses:
-        a contract-major change goes through `fleet-release-*`, which moves
-        publishers and every consumer together. Runs after staging and before
+        a contract-major change goes through `tools/deploy/pir-deploy` with
+        `--breaking`, which moves publishers and every consumer together. Runs after staging and before
         any unit changes.
         """
-        from .fleet_release import observe_publisher, publisher_origins
         refusals = []
         for plan in plans:
             target = plan.target
@@ -595,12 +646,11 @@ class Deployer:
                 except contract.ContractError:
                     major = None
                 if major != info.contract_major:
-                    refusals.append(target.key + ': publisher contract changes or is unknown; use fleet-release')
+                    refusals.append(target.key + ': publisher contract changes or is unknown; use pir-deploy --breaking')
             if executable != 'pir-query-server':
                 continue
             origins = sorted(publisher_origins(target.settings))
             if not origins:
-                from .fleet_transaction import configuration
                 try:
                     document = configuration(self.ex, {'host': target.host, 'key': target.key}, plan.state)[2]
                     origins = sorted(publisher_origins(document))
@@ -612,7 +662,7 @@ class Deployer:
                 except (DeployError, ValueError):
                     pass
             if not origins:
-                refusals.append(target.key + ': query publisher dependency is unknown; use fleet-release')
+                refusals.append(target.key + ': query publisher dependency is unknown; use pir-deploy --breaking')
                 continue
             info = identities.get(target.host)
             if info is None:
@@ -623,7 +673,7 @@ class Deployer:
                 observed = observe_publisher(self.ex, target.host, origin)
                 journal.event('publisher contract', target=target.key, origin=origin, major=observed['major'])
                 if observed['major'] != info.contract_major:
-                    refusals.append('%s: candidate contract major %d, publisher %s advertises %s; use fleet-release'
+                    refusals.append('%s: candidate contract major %d, publisher %s advertises %s; use pir-deploy --breaking'
                                     % (target.key, info.contract_major, origin,
                                        'an unknown major' if observed['major'] is None else observed['major']))
         if refusals:

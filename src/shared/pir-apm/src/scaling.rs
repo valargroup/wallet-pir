@@ -242,6 +242,7 @@ fn conditions(
             observed,
             threshold,
             hold_seconds,
+            window_seconds: 0,
             sample,
         })
     };
@@ -1010,6 +1011,7 @@ mod tests {
             observed: "x".into(),
             threshold: "y".into(),
             hold_seconds: 0,
+            window_seconds: 0,
             sample: at,
         };
         enhance
@@ -1073,6 +1075,7 @@ mod tests {
             observed: "x".into(),
             threshold: "y".into(),
             hold_seconds: 0,
+            window_seconds: 0,
             sample: at,
         };
         let mut enhance = Store::open(&path).unwrap();

@@ -147,6 +147,29 @@ fn a_fresh_object_is_hashed_once_per_pass() {
     assert_eq!(first.hashed, once);
 }
 
+/// One pass hashes each distinct object once, however the hashing threads share the
+/// work and however often the inventory names it, and fails when any one is corrupt.
+#[test]
+fn a_pass_hashes_each_distinct_object_once_across_threads() {
+    let root = tempfile::tempdir().unwrap();
+    let objects: Vec<Object> = (0..9u8).map(|i| object(root.path(), &[i; 4096])).collect();
+    let named: Vec<&Object> = objects.iter().chain(&objects[..3]).collect();
+    let mut pass = VerificationPass::default();
+    pass.check_all(root.path(), &named, &BTreeMap::new(), &|| false)
+        .unwrap();
+    let all = VerificationStats {
+        files: 9,
+        bytes: 9 * 4096,
+        reused: 0,
+    };
+    assert_eq!(pass.hashed, all);
+    fs::write(objects[7].path(root.path()).unwrap(), [0xff; 4096]).unwrap();
+    let mut pass = VerificationPass::default();
+    assert!(pass
+        .check_all(root.path(), &named, &BTreeMap::new(), &|| false)
+        .is_err());
+}
+
 #[test]
 fn repeated_digest_with_a_different_length_is_rejected() {
     use enhance_shared::{protocol, RECORD_BYTES};
@@ -205,9 +228,47 @@ fn repeated_digest_with_a_different_length_is_rejected() {
     // Only the row file exists: verification must reject the contradictory
     // hint length before attempting to open the later public or packing files.
     assert_eq!(
-        verify_publication(root.path(), inventory).unwrap_err(),
+        verify_publication(root.path(), inventory.clone()).unwrap_err(),
         "publication object checksum or length mismatch"
     );
+    // A publisher stop ends verification before any file is read.
+    assert_eq!(
+        verify_publication_until(root.path(), inventory, &|| true).unwrap_err(),
+        STOPPED
+    );
+}
+
+/// A stop that arrives once a changed shard's rows are installed ends the shard's
+/// build before the engine reads them again.
+#[test]
+fn a_stop_ends_shard_building_before_the_next_unit_is_read() {
+    use enhance_shared::RECORD_BYTES;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    let root = tempfile::tempdir().unwrap();
+    let coverage = Lifecycle::default()
+        .coverage(1, Geometry::default())
+        .unwrap();
+    let units = coverage.shards[0].units.len();
+    let (installed, stopped) = (AtomicUsize::new(0), AtomicBool::new(false));
+    let error = construct_publication(
+        root.path(),
+        coverage,
+        &[(0, "0".into())].into(),
+        |_, count| {
+            assert!(!stopped.load(Ordering::SeqCst), "rows read after the stop");
+            Ok(vec![0; count * RECORD_BYTES])
+        },
+        // The shard check, then one check per installed unit, then the engine's.
+        &|| {
+            let stop = installed.fetch_add(1, Ordering::SeqCst) > units;
+            stopped.store(stop, Ordering::SeqCst);
+            stop
+        },
+    )
+    .unwrap_err();
+    assert_eq!(error, STOPPED);
+    assert!(installed.load(Ordering::SeqCst) > units + 1);
 }
 
 #[test]

@@ -60,6 +60,7 @@ pub fn conditions(d: &DashboardData, now: u64, history: &mut CounterHistory) -> 
             observed,
             threshold: threshold.into(),
             hold_seconds: hold,
+            window_seconds: 0,
             sample,
         })
     };

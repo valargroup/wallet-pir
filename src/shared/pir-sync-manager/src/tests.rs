@@ -122,6 +122,7 @@ impl Tls {
                     match mode.as_str() {
                         "ok" => ("200 OK", "", String::from_utf8(ok).unwrap()),
                         "missing" => ("404 Not Found", "", "missing".into()),
+                        "restarting" => ("502 Bad Gateway", "", "restarting".into()),
                         "redirect" => (
                             "302 Found",
                             "Location: /.well-known/pir-service-discovery-moved\r\n",
@@ -361,6 +362,12 @@ async fn discovery_accepts_only_a_trusted_compatible_publisher() {
     let missing = refused("missing").await;
     assert!(missing.to_string().contains("HTTP 404"), "{missing}");
     assert!(missing.to_string().contains(pir_service_discovery::PATH));
+    assert!(!missing.unavailable());
+    // A publisher that does not answer, or whose proxy reports it down, is
+    // restarting rather than misconfigured.
+    assert!(error.unavailable());
+    let restarting = refused("restarting").await;
+    assert!(restarting.unavailable(), "{restarting}");
     let redirect = refused("redirect").await;
     assert!(redirect.to_string().contains("HTTP 302"), "{redirect}");
     let oversize = refused("oversize").await;
