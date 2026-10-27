@@ -2,6 +2,7 @@
 //! participate in publication completion or renew its source observation time.
 mod ingestion;
 mod preparation;
+mod restore;
 mod workflow;
 use crate::{authority, source, zakura::ZakuraClient};
 use axum::{
@@ -150,6 +151,46 @@ impl Publisher {
             }
         }
     }
+    /// Publish `inventory`, stored as `object`, unless authority advanced past
+    /// `expected` or its manifest is no longer fresh: retain its objects, commit
+    /// its generation, then make it current.
+    fn commit_inventory(
+        &self,
+        authority: &mut authority::Authority,
+        inventory: &Inventory,
+        object: pir_publication::ObjectReference,
+        expected: u64,
+        shutdown: &pir_pipeline::service::Shutdown,
+    ) -> Result<(), Failure> {
+        let manifest = &inventory.manifest;
+        // The same guard fences withdrawal and durable advancement after RPC.
+        let mut published = self.published.write().unwrap();
+        if shutdown.requested() {
+            return Err("Status publication stopped".into());
+        }
+        published.check_fence(expected)?;
+        manifest.fresh(now_ms())?;
+        self.objects.retain_publication(
+            std::iter::once(object.clone()).chain(inventory.referenced_objects().cloned()),
+            manifest.observed_ms.saturating_add(MAX_AGE_MS),
+            now_ms(),
+        )?;
+        authority.commit(manifest)?;
+        published
+            .authority
+            .as_mut()
+            .ok_or("Status publication authority is not open")?
+            .apply(AuthorityTransition::Publish(PublicationReference::new(
+                inventory.material_identity(),
+                object,
+                StatusDescriptor {
+                    generation: manifest.generation,
+                },
+            )))?;
+        published.manifest = Some(manifest.clone());
+        *self.exported.lock().unwrap() = Some(inventory.clone());
+        Ok(())
+    }
     /// Supervise the private listener, root-scheduled window ingestion and
     /// publication until shutdown. Ingestion finishes its current operation
     /// before the publication loop releases the state lock.
@@ -208,6 +249,7 @@ impl Publisher {
                     salt,
                     authority: None,
                     previous: None,
+                    restorable: true,
                     last_observed: 0,
                     server,
                     observer: &observer,

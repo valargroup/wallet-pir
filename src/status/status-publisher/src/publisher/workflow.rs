@@ -5,9 +5,13 @@ use super::*;
 /// poll. Keep three quarters of the original lifetime available to consumers;
 /// the next refresh must still carry a newly checked source observation.
 fn keep_published(active: &Manifest, observed: &source::Observation, now: u64) -> bool {
+    now.saturating_sub(active.observed_ms) < MAX_AGE_MS / 4 && same_content(active, observed)
+}
+
+/// Whether `observed` holds exactly the rows and anchor `active` was prepared from.
+pub(super) fn same_content(active: &Manifest, observed: &source::Observation) -> bool {
     let snapshot = &observed.snapshot;
-    now.saturating_sub(active.observed_ms) < MAX_AGE_MS / 4
-        && active.network == snapshot.network
+    active.network == snapshot.network
         && active.salt == snapshot.salt
         && active.coverage_start == snapshot.start
         && active.anchor_height == snapshot.height
@@ -25,6 +29,8 @@ pub(super) struct Publication<'a> {
     pub(super) salt: [u8; 32],
     pub(super) authority: Option<authority::Authority>,
     pub(super) previous: Option<Generation>,
+    /// Whether the first observation may still restore the last publication.
+    pub(super) restorable: bool,
     pub(super) last_observed: u64,
     pub(super) server: tokio::task::JoinHandle<std::io::Result<()>>,
     pub(super) observer:
@@ -78,6 +84,30 @@ impl pir_pipeline::publisher::Publisher for Publication<'_> {
                     observed.snapshot.network,
                     self.salt,
                 )?);
+            }
+            if std::mem::take(&mut self.restorable) {
+                let restoring = std::time::Instant::now();
+                match self
+                    .publisher
+                    .restore(
+                        &observed,
+                        self.authority.as_mut().unwrap(),
+                        &self.rpc,
+                        &self.shutdown,
+                    )
+                    .await
+                {
+                    // Preparation still runs, so later observations build on
+                    // this material; meanwhile the restored publication serves.
+                    Ok(true) => tracing::info!(
+                        seconds = restoring.elapsed().as_secs_f64(),
+                        "Status serves its previous publication again"
+                    ),
+                    Ok(false) => {}
+                    Err(error) => {
+                        tracing::warn!(%error, "Status previous publication stays withdrawn")
+                    }
+                }
             }
             self.last_observed = observed.observed_ms;
             let refresh = self.previous.as_ref().is_some_and(|previous| {

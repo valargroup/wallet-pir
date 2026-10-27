@@ -69,7 +69,11 @@ correctly, its anchor is still on the chain, no fence was raised since and this 
 adopted no rebuilt journal (log line
 `Enhance serves its previous publication again`, or `stays withdrawn` with the
 reason). `Enhance publication committed` gives each publication's build and verify
-times. Query
+times. Status starts a new recovery epoch at every restart; when its first
+observation still holds the rows and anchor of its last publication, it publishes
+that inventory again under the new epoch within a second or two (`Status serves its
+previous publication again`) instead of after the ~13 s rebuild, which then runs
+behind it. Query
 roles poll a restarting publisher every second, and Enhance and Status `init` and
 Receiver's inventory and filter head wait up to 15 s for something to serve, so
 wallets see a slower answer rather than an error. A query node's own restart closes

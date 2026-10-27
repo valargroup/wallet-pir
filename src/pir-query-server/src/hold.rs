@@ -130,13 +130,8 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_first_attempt_that_stalls_ends_with_the_window() {
         let started = tokio::time::Instant::now();
-        let answer: Result<(), _> = until(
-            WINDOW,
-            |_: &&str| true,
-            || std::future::pending(),
-            || "expired",
-        )
-        .await;
+        let answer: Result<(), _> =
+            until(WINDOW, |_: &&str| true, std::future::pending, || "expired").await;
         assert_eq!(answer, Err("expired"));
         assert!(started.elapsed() <= WINDOW);
         assert!(started.elapsed() >= WINDOW - Duration::from_secs(1));
