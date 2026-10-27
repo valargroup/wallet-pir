@@ -1,4 +1,4 @@
-# Receiver deployment and retained HTTPS edge
+# Receiver deployment
 
 Receiver ingestion and publishing run inside the shared `pir-publisher`, alongside
 Enhance, Status, Transparent history and transaction details. Wallet requests run
@@ -25,15 +25,11 @@ own recovery journal and rollback paths.
 
 ## Infrastructure
 
-The existing Receiver Droplet remains an HTTPS edge and rollback location. Its
-publishing service is disabled after adoption. Preserve its state and predecessor
-artifacts while the current transaction can still roll back to it.
-
-The Terraform resource addresses, Droplet identity and public DNS record remain
-unchanged. `receiver.tf` protects this active edge from destruction. This cleanup
-does not retire that host or change DNS. The retained cloud-init and standalone
-role resources support the existing host and recovery; they are not the normal
-shared deployment recipe.
+The coordinator's Caddy serves `receiver-pir.valargroup.dev`, and the public DNS
+record in `receiver.tf` names the coordinator. The earlier `receiver-pir-poc-01`
+Droplet, which kept a standalone HTTPS edge and rollback location after adoption,
+was retired on 2026-10-27. The retained cloud-init and standalone role resources
+document that host; they are not the shared deployment recipe.
 
 ## HTTPS routing
 

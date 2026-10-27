@@ -21,12 +21,10 @@ project-membership resource sets. `services.tf` passes shared references and
 `moves.tf` extracts the resources without changing their instance keys;
 `shared.tf` retains the earlier rename and archive-key move chains.
 
-`receiver.tf` retains the Receiver HTTPS edge/rollback Droplet and DNS record.
-Receiver ingestion runs in the shared publisher, and wallet queries run on the
-shared query host. Keep the existing Terraform resource addresses and DNS;
-removing this block would remove the active public edge. Import existing resources as the
-[receiver deployment](../../../receiver/digitalocean/README.md#infrastructure)
-describes before enabling it. Use the [transparent deployment target](../../../../docs/transparent/deployment.md)
+`receiver.tf` holds the Receiver DNS record, which names the coordinator: Receiver
+ingestion runs in the shared publisher and the coordinator's Caddy serves the wallet
+hostname. Import the existing record before enabling it.
+Use the [transparent deployment target](../../../../docs/transparent/deployment.md)
 and [verified-status record](../../../../docs/transparent/status.md) before changing them.
 The proposed transparent fleet is not established by this README. Worker pools per table, a second
 coordinator, a separate ingest host, and artifact publishing to Spaces are
