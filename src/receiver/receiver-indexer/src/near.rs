@@ -556,10 +556,20 @@ impl Audit {
                 let due = r
                     .candidates_changed_at
                     .is_some_and(|t| t + COMPLETION_GRACE_SECS <= now);
+                let excess = r.feed == Feed::ExcessRefunds.name();
+                // A swap with no candidate yet can only learn one by a refresh once
+                // normal reads have passed it.
+                let overlap = overlaps[usize::from(excess)];
+                if !found
+                    && (due || r.candidates.is_empty())
+                    && overlap.is_some_and(|o| r.created_at < o)
+                    && r.refreshed_at.is_none_or(|at| at + REFRESH_SECS <= now)
+                {
+                    followups.refresh.push(r.clone());
+                }
                 if found || !due {
                     continue;
                 }
-                let excess = r.feed == Feed::ExcessRefunds.name();
                 // A confirmed excess refund needs no new answer after a candidate
                 // change, only its check recorded again.
                 if (!excess || r.refund_confirmed_at.is_some()) && r.checked_at.is_none() {
@@ -570,12 +580,6 @@ impl Audit {
                     && r.confirm_after.is_none_or(|at| at <= now)
                 {
                     followups.confirm.push(r.clone());
-                }
-                let overlap = overlaps[usize::from(excess)];
-                if overlap.is_some_and(|o| r.created_at < o)
-                    && r.refreshed_at.is_none_or(|at| at + REFRESH_SECS <= now)
-                {
-                    followups.refresh.push(r.clone());
                 }
             }
             Ok((payout_changes, refund_changes, followups))
@@ -2134,5 +2138,37 @@ mod tests {
         audit.follow_up(&mut provider, followups).await.unwrap();
         assert!(refreshed(&provider, 2).refreshed_at.is_some());
         server.abort();
+    }
+
+    /// A refunded swap first reported without hashes is refreshed once normal reads
+    /// have passed it, so a hash NEAR adds later is still found; one still inside the
+    /// overlap is left to normal reads.
+    #[test]
+    fn hashless_refunds_are_refreshed_after_the_overlap() {
+        let dir = tempfile::tempdir().unwrap();
+        let (provider_path, index_path) = (
+            dir.path().join("providers.sqlite"),
+            dir.path().join(receiver_store::STORE_FILE),
+        );
+        drop(paid_index(&index_path));
+        let now = 2_000_000;
+        let mut provider = PayoutStore::open(&provider_path).unwrap();
+        provider
+            .record_refunds(
+                Feed::Refunds.name(),
+                &[
+                    refund(1, receiver(1), &[], now - REFUND_LOOKBACK_SECS - 1),
+                    refund(2, receiver(1), &[], now - 60),
+                ],
+                now,
+                now - 60,
+                now - 60,
+            )
+            .unwrap();
+        let audit = audit(&provider_path, &index_path);
+        let (_, changes, followups) = audit.review(&provider, now).unwrap();
+        assert!(changes.is_empty());
+        let swaps: Vec<_> = followups.refresh.iter().map(|r| r.swap[0]).collect();
+        assert_eq!(swaps, [1]);
     }
 }
