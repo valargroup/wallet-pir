@@ -43,9 +43,12 @@ where
     let mut last = error;
     while tokio::time::Instant::now() + RETRY < deadline {
         tokio::time::sleep(RETRY).await;
-        match attempt().await {
-            Err(error) if retry(&error) => last = error,
-            done => return done,
+        // A retry that stalls, such as on a slow authority refresh, ends with the
+        // window and answers the last refusal.
+        match tokio::time::timeout_at(deadline, attempt()).await {
+            Err(_) => break,
+            Ok(Err(error)) if retry(&error) => last = error,
+            Ok(done) => return done,
         }
     }
     Err(last)
@@ -82,6 +85,26 @@ mod tests {
         assert_eq!(answer, Err("refused"));
         assert!(started.elapsed() <= WINDOW);
         assert!(started.elapsed() >= WINDOW - Duration::from_secs(1));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_retry_that_stalls_ends_with_the_window() {
+        let calls = AtomicU32::new(0);
+        let started = tokio::time::Instant::now();
+        let answer: Result<(), _> = until(
+            WINDOW,
+            |_: &&str| true,
+            || async {
+                if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                    Err("refused")
+                } else {
+                    std::future::pending().await
+                }
+            },
+        )
+        .await;
+        assert_eq!(answer, Err("refused"));
+        assert!(started.elapsed() <= WINDOW);
     }
 
     #[tokio::test(start_paused = true)]
