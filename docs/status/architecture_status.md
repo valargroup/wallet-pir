@@ -345,10 +345,13 @@ The costs that grow with the window are:
   and rebuilds the complete record map, bucket counts and row image, even when
   nothing changed. Controller memory and CPU per poll grow linearly with
   retained entries. The September 27 record did not measure controller memory.
-- **Full rebuild.** The first publication after a restart rebuilds the worker
-  and router (8.5 and 3.6 seconds on September 27). The database size is fixed
-  by the geometry. Whether rebuild time changes with occupancy has not been
-  measured.
+- **Full rebuild.** The first preparation after a restart rebuilds the worker
+  and router (8.5 and 3.6 seconds on September 27; about 13 seconds with two
+  preparation threads on October 27). The database size is fixed by the
+  geometry. Whether rebuild time changes with occupancy has not been measured.
+  When the first observation still holds the last publication's rows and
+  anchor, the restarted publisher publishes that inventory again under a new
+  generation and recovery epoch at once, and the rebuild runs behind it.
 - **RPC load.** Bootstrap sends two sequential RPCs per block to the
   coordinator's Zakura node, about 8,200 for 4,096 blocks. In steady state the
   source fetches only new blocks.

@@ -129,37 +129,17 @@ impl pir_pipeline::publisher::Publication for StatusPublication<'_> {
         self,
         (prepared, inventory, object): Self::Candidate,
     ) -> Result<Generation, Failure> {
-        let manifest = &inventory.manifest;
-        // The same guard fences withdrawal and durable advancement after RPC.
-        let mut published = self.publisher.published.write().unwrap();
-        if self.shutdown.requested() {
-            return Err("Status publication stopped".into());
-        }
-        published.check_fence(self.expected)?;
-        manifest.fresh(now_ms())?;
-        self.publisher.objects.retain_publication(
-            std::iter::once(object.clone()).chain(inventory.referenced_objects().cloned()),
-            manifest.observed_ms.saturating_add(MAX_AGE_MS),
-            now_ms(),
+        self.publisher.commit_inventory(
+            self.authority,
+            &inventory,
+            object,
+            self.expected,
+            &self.shutdown,
         )?;
-        self.authority.commit(manifest)?;
-        published
-            .authority
-            .as_mut()
-            .ok_or("Status publication authority is not open")?
-            .apply(AuthorityTransition::Publish(PublicationReference::new(
-                inventory.material_identity(),
-                object,
-                StatusDescriptor {
-                    generation: manifest.generation,
-                },
-            )))?;
-        published.manifest = Some(manifest.clone());
-        *self.publisher.exported.lock().unwrap() = Some(inventory.clone());
         tracing::info!(
             generation = self.generation,
             recovery_epoch = self.epoch,
-            source_observed_ms = manifest.observed_ms,
+            source_observed_ms = inventory.manifest.observed_ms,
             published_ms = now_ms(),
             "Status prepared publication"
         );
