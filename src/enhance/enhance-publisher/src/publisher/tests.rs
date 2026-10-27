@@ -198,6 +198,7 @@ async fn local_publication_needs_no_consumers_and_never_reuses_prewithdrawal_wor
         .unwrap());
     let restored = publisher.distribution.durable_current();
     assert!(restored.eligible);
+    assert!(publisher.state.lock().unwrap().last_advancement.is_some());
     assert_eq!(restored.manifest, before_restart.manifest);
     assert!(restored.withdrawal_revision > before_restart.withdrawal_revision);
     assert!(publisher.work(&journal).unwrap().is_none());

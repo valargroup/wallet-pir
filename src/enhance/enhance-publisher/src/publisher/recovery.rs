@@ -184,6 +184,9 @@ impl EnhancePublisher {
                 .stopping(shutdown),
             )
             .await?;
+        // A restored publication is a durable successor, as the first one this process
+        // built would be; publication monitoring needs this time to read its metrics.
+        self.state.lock().unwrap().last_advancement = Some(std::time::SystemTime::now());
         Ok(true)
     }
     pub(super) fn save_state(
