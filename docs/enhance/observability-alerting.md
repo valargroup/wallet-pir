@@ -136,6 +136,32 @@ it. With no read reported yet, the threshold counts from APM's first sample, so
 a disabled audit fires after it. Missing payouts are checked by
 the external monitor's Receiver canary, which reads the same route.
 
+The same route drives the NEAR cross-check conditions below. All are warnings,
+and none affects Receiver lookups. Idle conditions count from APM's last
+observed increase, or from the first sample that reported the feed. A null
+report or a decrease (a reset store) is not progress, so an APM restart leaves
+them unknown until the feed advances or the threshold passes. The refund
+conditions apply only once `near.reads` lists `near-refund-audit` or
+`near-excess-refund-audit`, even with a null value, so an older publisher gets
+none. A successful response that has `near.reads` and an indexer report but no
+longer lists a refund feed retires that feed's incidents. A failed request or
+null report retires nothing.
+
+| Key | Fires when | Hold |
+| --- | --- | --- |
+| `receiver_payout_crosscheck_idle` | `indexer.payouts_checked` has not increased for `receiver_audit_idle_seconds` (6 h) | 0 |
+| `receiver_excess_refund_crosscheck_idle` | `indexer.excess_refunds_checked_through` has not advanced for `receiver_excess_refund_idle_seconds` (6 h) | 0 |
+| `receiver_refund_crosscheck_idle` | `indexer.refunds_checked_through` has not advanced for `receiver_refund_idle_seconds` (48 h) | 0 |
+| `receiver_refund_not_found` | `refunds_missing_new + refunds_uncheckable_new + refunds_unconfirmed_new > 0` (last 3 h) | `receiver_refund_missing_hold_seconds` (1 h) |
+| `receiver_refunds_not_found_repeatedly` | `refunds_missing_day >= receiver_refund_pattern_count` (3) | `receiver_refund_missing_hold_seconds` (1 h) |
+
+`receiver_refunds_not_found_repeatedly` lists up to 10 deposit addresses from
+`indexer.refunds_missing_deposits`. It ships as a warning and becomes critical
+once shadow data on refund candidate delays sets its threshold. When refund
+feeds are reported, `receiver_payout_crosscheck_paused` judges the stalest of
+the payout and refund feed reads and names it. A refund feed with no read yet
+counts from the first sample that reported it.
+
 Optional `PIR_APM_ALERT_POLICY` names a JSON file. Fields and defaults:
 
 ```json
@@ -156,6 +182,11 @@ Optional `PIR_APM_ALERT_POLICY` names a JSON file. Fields and defaults:
   "publication_critical_blocks": 16,
   "publication_failure_hold_seconds": 120,
   "receiver_audit_stale_seconds": 1800,
+  "receiver_audit_idle_seconds": 21600,
+  "receiver_excess_refund_idle_seconds": 21600,
+  "receiver_refund_idle_seconds": 172800,
+  "receiver_refund_missing_hold_seconds": 3600,
+  "receiver_refund_pattern_count": 3,
   "quality": {
     "history_unpublished_warning_seconds": 30,
     "history_unpublished_critical_seconds": 60,
@@ -185,6 +216,9 @@ The `quality` object holds the Transparent service and capacity thresholds
 described in [Transparent service alerts](#transparent-service-alerts) and
 [Transparent RAM capacity](#transparent-ram-capacity). Any field may be left
 out to keep its default; warnings must not exceed their critical limits.
+The policy refuses unknown fields, so remove the `receiver_*_idle_seconds`,
+`receiver_refund_missing_hold_seconds` and `receiver_refund_pattern_count`
+fields before rolling back to an APM that predates them.
 
 The independent checker requires:
 
@@ -235,6 +269,8 @@ Investigate by check family:
 | `canary_*` | Inspect transport/category and pinned oracle validity; distinguish wrong bytes from unavailable service. |
 | `external_monitor`, `apm_progress` | Inspect systemd, loop progress, and state-database permissions on the named monitoring host. |
 | `receiver_payout_crosscheck_paused`, `receiver_health` | Read the Receiver health route on the coordinator, then the publisher journal for `near feed deferred`; a feed with no stored cursor starts from `near_since`. |
+| `receiver_*_crosscheck_idle` | Read `indexer` on the Receiver health route. Uncheckable counts point at the explorer not reporting txids. Otherwise compare with recent NEAR Intents traffic and the chain tip before suspecting the feed. |
+| `receiver_refund_not_found`, `receiver_refunds_not_found_repeatedly` | Read the `refunds_*` counts on the Receiver health route, then inspect the swaps by hand: a deposit-only candidate list, a late explorer listing, a 1Click outage (`refunds_unconfirmed_new`), or a refund Receiver PIR cannot find (OVK or pool change). |
 | `*delivery*` | Check credential presence, sanitized last failure, and oldest pending age; preserve the outbox. |
 | `scaling_*` | Read `scaler/status.json` and `scaler/journal/operation.json` on the coordinator. A fenced operation proceeds only after `resolve-apply` ([elastic recent](../transparent/elastic-recent.md#actuator-operations)). |
 
@@ -270,6 +306,14 @@ including WAL files, with their owning process stopped or use SQLite backup.
 Retain the monitor infrastructure unless separately approved for deletion.
 Additive server metrics and queue timestamps are backward-compatible and can
 remain deployed. Never delete incident/outbox state to clear an alarm.
+
+Before rolling APM back past the NEAR cross-check conditions, make sure
+`receiver_payout_crosscheck_idle`, `receiver_excess_refund_crosscheck_idle`,
+`receiver_refund_crosscheck_idle`, `receiver_refund_not_found` and
+`receiver_refunds_not_found_repeatedly` are not active. An older APM never
+evaluates these keys, so an open one would stay open. Wait for it to recover,
+or run the publisher without its refund feeds first so this APM retires the
+refund incidents. Remove their policy fields too (see the policy above).
 
 ## 2026-09-26 rollout handoff
 
