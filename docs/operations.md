@@ -75,7 +75,12 @@ Receiver's inventory and filter head wait up to 15 s for something to serve, so
 wallets see a slower answer rather than an error. A query node's own restart closes
 its port for a few seconds; its Caddy retries the connection for up to 15 s
 (`lb_try_duration`, written by the installer and the fleet cloud-init) instead of
-answering 502. Components that share a host deploy one after another. `pir-deploy rollback <group|host>` swaps components back to
+answering 502. Once it listens, a request for a product that has not installed its
+wallet routes yet (a second or two after start) waits up to 15 s for them; a
+stopping server answers 503 at once. A Status serving fence or invalidation is
+logged (`Status serving fenced by the publisher`, `Status views invalidated by an
+authority check`): wallets get 410 for those views until a newer one is installed.
+Components that share a host deploy one after another. `pir-deploy rollback <group|host>` swaps components back to
 their previous release, and `pir-deploy status` prints what each host runs. A
 component's previous release must still read what the publisher now sends: query
 servers built before `e9848f1e4157` refuse the Receiver distribution of later

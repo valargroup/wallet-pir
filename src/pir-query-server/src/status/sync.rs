@@ -187,7 +187,7 @@ impl PublicationAdapter for StatusPublication {
         let service = self.service.clone();
         async move {
             let mut state = service.state.lock().await;
-            let fenced = state
+            let fenced: Vec<ViewIdentity> = state
                 .controller
                 .as_ref()
                 .map(Controller::serving_manifests)
@@ -199,6 +199,8 @@ impl PublicationAdapter for StatusPublication {
                 controller.revoke();
             }
             state.router_holds.clear();
+            // Wallets get 410 until a view of the new fence is installed.
+            tracing::info!(role = ?service.role, views = fenced.len(), "Status serving fenced by the publisher");
             fenced
         }
     }
@@ -211,6 +213,8 @@ impl PublicationAdapter for StatusPublication {
         async move {
             let mut state = service.state.lock().await;
             let views: BTreeSet<_> = views.into_iter().map(|view| view.0).collect();
+            // Wallets get 410 for these views until a newer one is installed.
+            tracing::info!(role = ?service.role, views = views.len(), "Status views invalidated by an authority check");
             if let Some(controller) = &state.controller {
                 controller.invalidate(views.iter().copied());
             }

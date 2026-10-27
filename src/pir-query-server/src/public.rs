@@ -6,35 +6,65 @@
 //! everything else, including product health, readiness, metrics, control,
 //! provider and evaluation routes, answers 404 on this listener and stays on
 //! the product's private listeners. A product installs its wallet router into
-//! its [`Slot`] once it can serve; until then, and after the host withdraws a
-//! stopped product, its namespaces answer 503 while other products continue.
+//! its [`Slot`] once it can serve. Until then its requests wait up to
+//! [`STARTING_WAIT`], since a restart's product takes a second or two to
+//! install; after that, and at once after the host withdraws a stopped
+//! product, its namespaces answer 503 while other products continue.
 use axum::{
     extract::Request,
     http::StatusCode,
     response::{IntoResponse, Response},
     Router,
 };
-use std::sync::{Arc, RwLock};
+use std::{sync::Arc, time::Duration};
+use tokio::sync::watch;
 use tower::ServiceExt;
 
+/// How long a request waits for a starting product to install its router.
+/// As long as products' own waits for authority, and shorter than wallet
+/// clients' 20 s request timeouts.
+pub const STARTING_WAIT: Duration = Duration::from_secs(15);
+
+#[derive(Clone)]
+enum Serving {
+    Starting,
+    Installed(Router),
+    Withdrawn,
+}
+
 /// Where one product's wallet router is installed on the shared listener.
-#[derive(Clone, Default)]
-pub struct Slot(Arc<RwLock<Option<Router>>>);
+#[derive(Clone)]
+pub struct Slot(Arc<watch::Sender<Serving>>);
+
+impl Default for Slot {
+    fn default() -> Self {
+        Self(Arc::new(watch::channel(Serving::Starting).0))
+    }
+}
 
 impl Slot {
     /// Serve `router` for this product's namespaces. Requests already
     /// dispatched keep the router they started with.
     pub fn install(&self, router: Router) {
-        *self.0.write().unwrap() = Some(router);
+        self.0.send_replace(Serving::Installed(router));
     }
 
-    /// Stop dispatching new requests to this product.
+    /// Stop dispatching new requests to this product, including those still
+    /// waiting for it to start.
     pub fn withdraw(&self) {
-        *self.0.write().unwrap() = None;
+        self.0.send_replace(Serving::Withdrawn);
     }
 
     pub(crate) async fn forward(self, request: Request) -> Response {
-        let router = self.0.read().unwrap().clone();
+        let mut serving = self.0.subscribe();
+        let started = serving.wait_for(|serving| !matches!(serving, Serving::Starting));
+        let router = match tokio::time::timeout(STARTING_WAIT, started).await {
+            Ok(Ok(serving)) => match &*serving {
+                Serving::Installed(router) => Some(router.clone()),
+                _ => None,
+            },
+            _ => None,
+        };
         match router {
             Some(router) => match router.oneshot(request).await {
                 Ok(response) => response,
@@ -211,7 +241,34 @@ mod tests {
         })
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
+    async fn a_request_waits_for_a_starting_product_but_not_a_withdrawn_one() {
+        let mount = Mount {
+            product: "first",
+            paths: under(["/first/v1", "/v1/first"], &["/*operation"]),
+            slot: Slot::default(),
+        };
+        let slot = mount.slot.clone();
+        let shared = router(&[mount]).unwrap();
+        let waiting = tokio::spawn({
+            let shared = shared.clone();
+            async move { status_of(&shared, "/first/v1/init").await }
+        });
+        tokio::time::sleep(STARTING_WAIT / 2).await;
+        assert!(!waiting.is_finished(), "the product is still starting");
+        slot.install(product(&["/first/v1/init"]));
+        assert_eq!(waiting.await.unwrap(), StatusCode::OK);
+
+        slot.withdraw();
+        let started = tokio::time::Instant::now();
+        assert_eq!(
+            status_of(&shared, "/first/v1/init").await,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(started.elapsed(), Duration::ZERO);
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn only_installed_wallet_namespaces_are_served() {
         let first = Mount {
             product: "first",
@@ -224,7 +281,7 @@ mod tests {
             slot: Slot::default(),
         };
         let shared = router(&[first, second]).unwrap();
-        // Nothing is installed yet: wallet paths refuse, others are absent.
+        // Nothing installs: wallet paths refuse after the wait, others are absent.
         assert_eq!(
             status_of(&shared, "/first/v1/init").await,
             StatusCode::SERVICE_UNAVAILABLE
