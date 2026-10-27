@@ -476,3 +476,36 @@ fn anchor_batches_bind_one_snapshot_and_answer_every_anchor_once() {
         assert!(wrong.answers(&request, &current.genesis_hash).is_err());
     }
 }
+
+#[test]
+fn opening_an_artifact_whose_link_count_changed_is_not_a_confirmed_mismatch() {
+    let artifact = Artifact {
+        path: "shard/filter.bin".into(),
+        sha256: digest(b"filter"),
+        bytes: 6,
+        kind: Kind::RecentTable,
+    };
+    let changed: Error = Box::new(ObjectFileError::FileChanged("filter.bin".into()));
+    assert!(matches!(
+        validation::open_failure(&artifact, &changed),
+        IntegrityError::Unavailable(_)
+    ));
+    let unreadable: Error = Box::new(ObjectFileError::Io(io::ErrorKind::NotFound.into()));
+    assert!(matches!(
+        validation::open_failure(&artifact, &unreadable),
+        IntegrityError::Unavailable(_)
+    ));
+    let not_file: Error = Box::new(ObjectFileError::NotRegularFile("filter.bin".into()));
+    assert!(matches!(
+        validation::open_failure(&artifact, &not_file),
+        IntegrityError::Mismatch {
+            found_sha256: None,
+            ..
+        }
+    ));
+    let escaping: Error = "publisher artifact link leaves the object store".into();
+    assert!(matches!(
+        validation::open_failure(&artifact, &escaping),
+        IntegrityError::Mismatch { .. }
+    ));
+}

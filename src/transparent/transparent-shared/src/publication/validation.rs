@@ -189,12 +189,8 @@ impl Validation {
         if !safe_path(&artifact.path) {
             return Err(mismatch(None, "unsafe artifact path"));
         }
-        let (physical, mut file) = resolve(&self.root, &artifact.path).map_err(|error| {
-            match error.downcast_ref::<io::Error>() {
-                Some(error) => unavailable(error),
-                None => mismatch(None, &error.to_string()),
-            }
-        })?;
+        let (physical, mut file) =
+            resolve(&self.root, &artifact.path).map_err(|error| open_failure(artifact, &error))?;
         let expected = ObjectReference {
             sha256: artifact.sha256.clone(),
             bytes: artifact.bytes,
@@ -410,6 +406,30 @@ impl CheckedRuntimes {
     /// Add runtimes another check of this process loaded and self-checked.
     pub fn adopt(&mut self, other: CheckedRuntimes) {
         self.passed.extend(other.passed);
+    }
+}
+
+/// Why `artifact` could not be opened for hashing. No byte was read, so only a
+/// path that is not a stored regular file is a confirmed mismatch. A read
+/// error, or a hard link to the shared inode added or collected between
+/// naming and opening it (which changes its ctime), leaves it unavailable.
+pub(super) fn open_failure(artifact: &Artifact, error: &Error) -> IntegrityError {
+    let unavailable = |error: &dyn std::fmt::Display| {
+        IntegrityError::Unavailable(format!("{}: {error}", artifact.path))
+    };
+    if let Some(error) = error.downcast_ref::<io::Error>() {
+        return unavailable(error);
+    }
+    match error.downcast_ref::<ObjectFileError>() {
+        Some(error @ (ObjectFileError::Io(_) | ObjectFileError::FileChanged(_))) => {
+            unavailable(error)
+        }
+        _ => IntegrityError::Mismatch {
+            path: artifact.path.clone(),
+            expected_sha256: artifact.sha256.clone(),
+            found_sha256: None,
+            reason: error.to_string(),
+        },
     }
 }
 
