@@ -254,6 +254,7 @@ async fn unavailable_held<T>(read: impl Fn() -> Result<T, StatusCode>) -> Result
         crate::hold::WINDOW,
         |status: &StatusCode| *status == StatusCode::SERVICE_UNAVAILABLE,
         || std::future::ready(read()),
+        || StatusCode::SERVICE_UNAVAILABLE,
     )
     .await
 }

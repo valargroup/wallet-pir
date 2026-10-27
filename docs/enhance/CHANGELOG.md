@@ -3,8 +3,10 @@
 ## 0.0.1 — Unreleased
 
 - Wallet `init` waits at most its 15 s window for a publisher restart even when an
-  authority refresh stalls; a stalled retry answers the last refusal when the window
-  ends instead of waiting out the 120 s publisher request timeout.
+  authority refresh stalls. The first refresh and every retry are raced against the
+  time left in that window, so a refresh stuck behind the shared publisher client
+  or a slow publisher answers the last refusal when the window ends instead of
+  waiting out the 120 s request timeout.
 
 - A restarted publisher serves its last Enhance publication again after checking it,
   instead of leaving Enhance withdrawn until a new publication is built (up to 45 s

@@ -22,36 +22,49 @@ const WAITERS: usize = 512;
 static WAITING: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(WAITERS)));
 
 /// Run `attempt` until it succeeds, `retry` rejects its error, or `window` ends.
+///
+/// Every attempt, including the first, is raced against the time left in
+/// `window`. One that outlasts the window is dropped. The last refusal is
+/// returned, or `expired` when no attempt finished. A first refresh stuck
+/// behind the shared publisher client has no refusal yet.
 pub async fn until<T, E, F, A>(
     window: Duration,
     retry: impl Fn(&E) -> bool,
     mut attempt: A,
+    expired: impl FnOnce() -> E,
 ) -> Result<T, E>
 where
     A: FnMut() -> F,
     F: Future<Output = Result<T, E>>,
 {
-    let first = attempt().await;
-    let error = match first {
-        Err(error) if retry(&error) => error,
-        done => return done,
-    };
-    let Ok(_waiting) = WAITING.clone().try_acquire_owned() else {
-        return Err(error);
-    };
     let deadline = tokio::time::Instant::now() + window;
-    let mut last = error;
-    while tokio::time::Instant::now() + RETRY < deadline {
-        tokio::time::sleep(RETRY).await;
-        // A retry that stalls, such as on a slow authority refresh, ends with the
-        // window and answers the last refusal.
+    let mut waiting = None;
+    let mut last = None;
+    loop {
+        if tokio::time::Instant::now() >= deadline {
+            break;
+        }
         match tokio::time::timeout_at(deadline, attempt()).await {
+            // A refresh that stalls, such as behind the shared publisher client,
+            // ends with the window and answers the last refusal.
             Err(_) => break,
-            Ok(Err(error)) if retry(&error) => last = error,
+            Ok(Err(error)) if retry(&error) => {
+                if waiting.is_none() {
+                    let Ok(permit) = WAITING.clone().try_acquire_owned() else {
+                        return Err(error);
+                    };
+                    waiting = Some(permit);
+                }
+                last = Some(error);
+            }
             Ok(done) => return done,
         }
+        if tokio::time::Instant::now() + RETRY >= deadline {
+            break;
+        }
+        tokio::time::sleep(RETRY).await;
     }
-    Err(last)
+    Err(last.unwrap_or_else(expired))
 }
 
 #[cfg(test)]
@@ -72,6 +85,7 @@ mod tests {
                     Ok("answered")
                 }
             },
+            || "expired",
         )
         .await;
         assert_eq!(answer, Ok("answered"));
@@ -80,8 +94,13 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_refusal_that_lasts_still_refuses_after_the_window() {
         let started = tokio::time::Instant::now();
-        let answer: Result<(), _> =
-            until(WINDOW, |_: &&str| true, || async { Err("refused") }).await;
+        let answer: Result<(), _> = until(
+            WINDOW,
+            |_: &&str| true,
+            || async { Err("refused") },
+            || "expired",
+        )
+        .await;
         assert_eq!(answer, Err("refused"));
         assert!(started.elapsed() <= WINDOW);
         assert!(started.elapsed() >= WINDOW - Duration::from_secs(1));
@@ -101,10 +120,26 @@ mod tests {
                     std::future::pending().await
                 }
             },
+            || "expired",
         )
         .await;
         assert_eq!(answer, Err("refused"));
         assert!(started.elapsed() <= WINDOW);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_first_attempt_that_stalls_ends_with_the_window() {
+        let started = tokio::time::Instant::now();
+        let answer: Result<(), _> = until(
+            WINDOW,
+            |_: &&str| true,
+            || std::future::pending(),
+            || "expired",
+        )
+        .await;
+        assert_eq!(answer, Err("expired"));
+        assert!(started.elapsed() <= WINDOW);
+        assert!(started.elapsed() >= WINDOW - Duration::from_secs(1));
     }
 
     #[tokio::test(start_paused = true)]
@@ -117,6 +152,7 @@ mod tests {
                 calls.fetch_add(1, Ordering::SeqCst);
                 Err("gone")
             },
+            || "expired",
         )
         .await;
         assert_eq!(answer, Err("gone"));
