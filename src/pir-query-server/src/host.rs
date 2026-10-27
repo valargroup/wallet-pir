@@ -290,8 +290,8 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
     );
     let mut tasks = Tasks::default();
     tasks.own(&management);
-    // The one wallet-facing listener. Each product's namespaces answer 503
-    // until the product installs its wallet routes.
+    // The one wallet-facing listener. Each product's requests wait for it to
+    // install its wallet routes, and answer 503 if it does not in time.
     let mut slots: BTreeMap<&'static str, crate::public::Slot> = BTreeMap::new();
     let mut public = match config.public_listen {
         Some(addr) => {
