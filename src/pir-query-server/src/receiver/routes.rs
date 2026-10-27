@@ -459,7 +459,10 @@ mod tests {
         let inventory = query_url.replace("/query", "/inventory");
         let asked = tokio::spawn(async move { reqwest::get(inventory).await.unwrap().status() });
         tokio::time::sleep(Duration::from_millis(600)).await;
-        assert!(!asked.is_finished(), "nothing published yet, so the request waits");
+        assert!(
+            !asked.is_finished(),
+            "nothing published yet, so the request waits"
+        );
         let snapshot =
             Snapshot::build(common::manifest(MIN_ROWS), &[common::record(0, 1)]).unwrap();
         let publication = crate::receiver::tests::prepared::prepare_payments(snapshot).unwrap();
