@@ -560,7 +560,9 @@ impl Audit {
                     continue;
                 }
                 let excess = r.feed == Feed::ExcessRefunds.name();
-                if !excess && r.checked_at.is_none() {
+                // A confirmed excess refund needs no new answer after a candidate
+                // change, only its check recorded again.
+                if (!excess || r.refund_confirmed_at.is_some()) && r.checked_at.is_none() {
                     refund_changes.push((r.swap, RefundChange::Missing));
                 }
                 if excess
@@ -582,11 +584,17 @@ impl Audit {
 
     /// The rest of [`Self::settle`]: the network follow-ups.
     async fn follow_up(&mut self, store: &mut PayoutStore, mut followups: Followups) -> Result<()> {
+        // A refreshed swap with a new candidate restarts its grace, so its queued
+        // confirmation would answer for stale candidates.
+        let mut restarted = Vec::new();
         for refund in followups.refresh {
+            // The attempt counts even when it fails, so one swap cannot hold the batch.
+            store.settle_refunds(&[(refund.swap, RefundChange::Refreshed)], unix_now())?;
             match self.explorer.search(&refund).await {
                 Ok(candidates) => {
-                    store.merge_candidates(&refund.swap, &candidates, unix_now())?;
-                    store.settle_refunds(&[(refund.swap, RefundChange::Refreshed)], unix_now())?;
+                    if store.merge_candidates(&refund.swap, &candidates, unix_now())? {
+                        restarted.push(refund.swap);
+                    }
                 }
                 Err(error) => {
                     tracing::warn!(%error, "near refund refresh deferred");
@@ -594,6 +602,7 @@ impl Audit {
                 }
             }
         }
+        followups.confirm.retain(|r| !restarted.contains(&r.swap));
         // Oldest retry first, so swaps that keep failing cannot starve newer ones.
         followups
             .confirm
@@ -1997,5 +2006,133 @@ mod tests {
             0,
             "inspect each missing swap by hand"
         );
+    }
+
+    /// A confirmed excess refund that gains a candidate keeps its confirmation and,
+    /// once due again, is recorded as checked, so its feed's watermark advances.
+    #[test]
+    fn a_confirmed_excess_refund_advances_after_a_candidate_change() {
+        let dir = tempfile::tempdir().unwrap();
+        let (provider_path, index_path) = (
+            dir.path().join("providers.sqlite"),
+            dir.path().join(receiver_store::STORE_FILE),
+        );
+        drop(paid_index(&index_path));
+        let now = 2_000_000;
+        let first = now - 4 * 60 * 60;
+        let feed = Feed::ExcessRefunds.name();
+        let mut provider = PayoutStore::open(&provider_path).unwrap();
+        provider
+            .record_refunds(
+                feed,
+                &[refund(1, receiver(2), &[[8; 32], [9; 32]], first)],
+                first,
+                first,
+                first,
+            )
+            .unwrap();
+        provider
+            .settle_refunds(
+                &[(
+                    [1; 32],
+                    RefundChange::Confirmed(Confirmation::Refunded, None),
+                )],
+                first + 3600,
+            )
+            .unwrap();
+        assert_eq!(provider.checked_through(feed).unwrap(), Some(first));
+        let later = now - 2 * 60 * 60;
+        provider
+            .merge_candidates(&[1; 32], &[[10; 32]], later)
+            .unwrap();
+        let audit = audit(&provider_path, &index_path);
+        let (_, changes, followups) = audit.review(&provider, now).unwrap();
+        assert_eq!(changes, [([1; 32], RefundChange::Missing)]);
+        assert!(followups.confirm.is_empty());
+        provider.settle_refunds(&changes, now).unwrap();
+        assert_eq!(provider.checked_through(feed).unwrap(), Some(later));
+    }
+
+    /// A refresh that finds a new candidate drops the swap's queued confirmation, and
+    /// a failed refresh still counts as an attempt, so it waits an hour.
+    #[tokio::test]
+    async fn refreshes_record_attempts_and_restart_confirmation() {
+        use axum::{extract::Query, http::StatusCode, routing::get, Json, Router};
+        use std::sync::atomic::AtomicUsize;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let asked = Arc::new(AtomicUsize::new(0));
+        let counter = asked.clone();
+        let app = Router::new()
+            .route(
+                "/explorer",
+                get(
+                    |Query(query): Query<std::collections::HashMap<String, String>>| async move {
+                        match query["search"].as_str() {
+                            "deposit-1" => {
+                                Ok(Json(vec![serde_json::json!({"createdAtTimestamp": 5,
+                        "depositAddress": "deposit-1", "originChainTxHashes": [
+                            "7f79a9262c301e3da38907fdbfca663c1fcb04b6a890ea737c281fc2ff707e7f"]})]))
+                            }
+                            _ => Err(StatusCode::BAD_GATEWAY),
+                        }
+                    },
+                ),
+            )
+            .route(
+                "/status",
+                get(move || {
+                    counter.fetch_add(1, Ordering::SeqCst);
+                    async { Json(serde_json::json!({"swapDetails": {"refundedAmount": "0"}})) }
+                }),
+            );
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("providers.sqlite");
+        let mut provider = PayoutStore::open(&path).unwrap();
+        let now = unix_now();
+        provider
+            .record_refunds(
+                Feed::ExcessRefunds.name(),
+                &[
+                    refund(1, receiver(2), &[[8; 32], [9; 32]], 0),
+                    refund(2, receiver(2), &[[8; 32], [9; 32]], 0),
+                ],
+                now,
+                now - 7200,
+                now - 7200,
+            )
+            .unwrap();
+        let open = provider.open_refunds(0).unwrap();
+        let mut audit = Audit {
+            explorer: Explorer::at(format!("{origin}/explorer")),
+            status: Status::new(format!("{origin}/status")).unwrap(),
+            ..audit(&path, &path)
+        };
+        let followups = Followups {
+            confirm: open.clone(),
+            refresh: vec![open[0].clone()],
+        };
+        audit.follow_up(&mut provider, followups).await.unwrap();
+        // Swap 1 gained a candidate, so only swap 2 was confirmed.
+        assert_eq!(asked.load(Ordering::SeqCst), 1);
+        let refreshed = |provider: &PayoutStore, swap: u8| {
+            provider
+                .open_refunds(0)
+                .unwrap()
+                .into_iter()
+                .find(|r| r.swap[0] == swap)
+                .unwrap()
+        };
+        assert_eq!(refreshed(&provider, 1).candidates.len(), 3);
+        assert_eq!(refreshed(&provider, 1).confirm_last, None);
+        // A failed refresh still records its attempt.
+        let followups = Followups {
+            confirm: Vec::new(),
+            refresh: vec![open[1].clone()],
+        };
+        audit.follow_up(&mut provider, followups).await.unwrap();
+        assert!(refreshed(&provider, 2).refreshed_at.is_some());
+        server.abort();
     }
 }
