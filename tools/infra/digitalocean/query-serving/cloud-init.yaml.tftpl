@@ -50,7 +50,12 @@ write_files:
       ${hostname} {
         @wallet path /enhance/v1/* /status/v1/* /transparent/v1/* /v1/enhance/* /v1/status/* /v2/* /v1/filters/*
         handle @wallet {
-          reverse_proxy 127.0.0.1:8090
+          # A restart closes the port for a few seconds; wallets wait instead
+          # of getting 502.
+          reverse_proxy 127.0.0.1:8090 {
+            lb_try_duration 15s
+            lb_try_interval 250ms
+          }
         }
         handle /receiver/v1/* {
           respond "Receiver serving integration is not installed" 503

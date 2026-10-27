@@ -160,7 +160,9 @@ fn wallet_routes() -> Router<Service> {
         .route(
             "/inventory",
             get(|State(s): State<Service>| async move {
-                match s.publications.current() {
+                // Nothing is served for seconds after this server starts or the
+                // publisher restarts; the inventory names no view, so it waits.
+                match unavailable_held(|| s.publications.current()).await {
                     Ok(p) => json(p.head_bytes().to_vec()),
                     Err(status) => status.into_response(),
                 }
@@ -222,7 +224,7 @@ fn wallet_routes() -> Router<Service> {
         )
         .route("/query", post(query))
         .route("/block-filters/head", get(|State(s): State<Service>| async move {
-            match s.publications.filters() {
+            match unavailable_held(|| s.publications.filters()).await {
                 Ok(window) => ([(header::CACHE_CONTROL, "no-store")], Json(window.head().clone())).into_response(),
                 Err(status) => status.into_response(),
             }
@@ -244,6 +246,16 @@ fn wallet_routes() -> Router<Service> {
                 }
             }
         ))
+}
+
+/// `read`'s answer, re-read while it is 503 for up to [`crate::hold::WINDOW`].
+async fn unavailable_held<T>(read: impl Fn() -> Result<T, StatusCode>) -> Result<T, StatusCode> {
+    crate::hold::until(
+        crate::hold::WINDOW,
+        |status: &StatusCode| *status == StatusCode::SERVICE_UNAVAILABLE,
+        || std::future::ready(read()),
+    )
+    .await
 }
 
 /// A resident filter's encoding as a response body, holding its budget until sent.
@@ -434,6 +446,28 @@ mod tests {
             .await
             .unwrap();
         assert!(metrics.contains("pir_http_responses_total{endpoint=\"init\",code=\"4xx\"} 1"));
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn an_inventory_request_waits_for_the_first_publication() {
+        use zakura_pir_query_server::receiver::session::MIN_ROWS;
+        use zakura_pir_query_server::receiver::snapshot::Snapshot;
+        let publications = Publications::default();
+        let (query_url, task) =
+            serve(publications.clone(), Arc::new(Queue::new(1, 1, WAIT, true))).await;
+        let inventory = query_url.replace("/query", "/inventory");
+        let asked = tokio::spawn(async move { reqwest::get(inventory).await.unwrap().status() });
+        tokio::time::sleep(Duration::from_millis(600)).await;
+        assert!(
+            !asked.is_finished(),
+            "nothing published yet, so the request waits"
+        );
+        let snapshot =
+            Snapshot::build(common::manifest(MIN_ROWS), &[common::record(0, 1)]).unwrap();
+        let publication = crate::receiver::tests::prepared::prepare_payments(snapshot).unwrap();
+        assert!(publications.publish(publication, 0));
+        assert_eq!(asked.await.unwrap(), StatusCode::OK);
         task.abort();
     }
 

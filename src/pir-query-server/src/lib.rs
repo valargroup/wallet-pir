@@ -4,7 +4,7 @@
 pub mod config;
 #[cfg(feature = "enhance")]
 pub mod enhance;
-#[cfg(any(feature = "enhance", feature = "status"))]
+#[cfg(any(feature = "enhance", feature = "status", feature = "receiver"))]
 mod hold;
 mod host;
 pub mod public;
