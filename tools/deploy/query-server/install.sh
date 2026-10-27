@@ -414,7 +414,12 @@ $CADDY_MARKER
 $DOMAIN {
 	@wallet path /enhance/v1/* /status/v1/* /transparent/v1/* /receiver/v1/* /v1/enhance/* /v1/status/* /v1/receiver/* /v2/*
 	handle @wallet {
-		reverse_proxy $PUBLIC
+		# A restart closes the port for a few seconds; wallets wait instead of
+		# getting 502.
+		reverse_proxy $PUBLIC {
+			lb_try_duration 15s
+			lb_try_interval 250ms
+		}
 	}
 	handle {
 		respond 404
