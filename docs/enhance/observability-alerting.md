@@ -527,6 +527,10 @@ array of `{service, command, timeout_seconds}` records; the host drop-in
 [`pir-monitor-service-quality.conf`](../../tools/enhance/deploy/pir-monitor-service-quality.conf)
 sets it and loads the probes' node cookie. Commands are absolute
 argument arrays, timeouts are 1–45 seconds, and output is bounded and sanitized.
+Each probe runs once a minute. Three failed runs in a row raise its availability
+alert, and five successful runs in a row that took over 5 seconds raise its latency
+warning. A run's latency leaves out any `waited_seconds` its JSON line reports: the
+Receiver probe's wait for query nodes to serve a publication health already names.
 Build the Transparent native `quality-canary` separately from native Enhance
 features. Pin the fixture checksum and independently verify its canonical
 anchor. Never construct expected answers from the encrypted server response.

@@ -116,7 +116,7 @@ fn bytes<const N: usize>(hex: &str) -> Option<[u8; N]> {
 /// Runs the probe with the embedded mainnet fixture, prints its JSON line and returns
 /// whether every check passed.
 pub async fn run(args: Args) -> bool {
-    let (result, lookup) = until_caught_up(CATCH_UP, CATCH_UP_PAUSE, || {
+    let (result, lookup, waited) = until_caught_up(CATCH_UP, CATCH_UP_PAUSE, || {
         let args = args.clone();
         async move {
             let mut lookup = None;
@@ -130,7 +130,13 @@ pub async fn run(args: Args) -> bool {
         Ok(Some((category, detail))) => (false, Some(category), detail),
         Err(error) => (false, Some("request_failed"), error.to_string().into()),
     };
-    let mut output = json!({"passed": passed, "category": category, "detail": detail});
+    // The monitor leaves the catch-up wait out of the probe's latency.
+    let mut output = json!({
+        "passed": passed,
+        "category": category,
+        "detail": detail,
+        "waited_seconds": waited.as_secs_f64(),
+    });
     if let Some((queries, correct)) = lookup {
         output["phase"] = "live_encrypted_probe".into();
         output["queries"] = queries.into();
@@ -142,22 +148,27 @@ pub async fn run(args: Args) -> bool {
 
 /// Runs `attempt` again, `pause` after each, while it answers `report_unavailable` and
 /// another attempt can start within `window` of the first. Returns the last answer
-/// with its lookup record.
+/// with its lookup record, and how long after the first attempt the last one began.
 async fn until_caught_up<F, A>(
     window: std::time::Duration,
     pause: std::time::Duration,
     mut attempt: A,
-) -> (Result<Option<Failure>>, Option<(u32, bool)>)
+) -> (
+    Result<Option<Failure>>,
+    Option<(u32, bool)>,
+    std::time::Duration,
+)
 where
     A: FnMut() -> F,
     F: std::future::Future<Output = (Result<Option<Failure>>, Option<(u32, bool)>)>,
 {
     let started = tokio::time::Instant::now();
     loop {
-        let answer = attempt().await;
-        let catching_up = matches!(&answer.0, Ok(Some(("report_unavailable", _))));
+        let waited = started.elapsed();
+        let (answer, lookup) = attempt().await;
+        let catching_up = matches!(&answer, Ok(Some(("report_unavailable", _))));
         if !catching_up || started.elapsed() + pause > window {
-            return answer;
+            return (answer, lookup, waited);
         }
         tokio::time::sleep(pause).await;
     }
@@ -1698,7 +1709,8 @@ mod tests {
     }
 
     /// A report not yet available is probed again until the origin catches up, but
-    /// no attempt starts after the window; any other answer ends the run at once.
+    /// no attempt starts after the window; any other answer ends the run at once. The
+    /// wait is the time before the last attempt began.
     #[tokio::test(start_paused = true)]
     async fn a_report_not_yet_available_is_probed_again_within_the_window() {
         use std::time::Duration;
@@ -1706,7 +1718,7 @@ mod tests {
         let window = Duration::from_secs(15);
         let pause = Duration::from_secs(1);
         let mut attempts = 0;
-        let (answer, lookup) = until_caught_up(window, pause, || {
+        let (answer, lookup, waited) = until_caught_up(window, pause, || {
             attempts += 1;
             let caught_up = attempts == 3;
             async move {
@@ -1720,26 +1732,27 @@ mod tests {
         .await;
         assert!(answer.unwrap().is_none());
         assert_eq!((attempts, lookup), (3, Some((2, true))));
+        assert_eq!(waited, 2 * pause);
 
         let started = tokio::time::Instant::now();
         let mut attempts = 0;
-        let (answer, _) = until_caught_up(window, pause, || {
+        let (answer, _, waited) = until_caught_up(window, pause, || {
             attempts += 1;
             async { (unavailable(), None) }
         })
         .await;
         assert_eq!(answer.unwrap().unwrap().0, "report_unavailable");
-        assert_eq!(attempts, 16);
+        assert_eq!((attempts, waited), (16, window));
         assert!(started.elapsed() <= window);
 
         let mut attempts = 0;
-        let (answer, _) = until_caught_up(window, pause, || {
+        let (answer, _, waited) = until_caught_up(window, pause, || {
             attempts += 1;
             async { (Ok(Some(("answer_mismatch", Value::Null))), None) }
         })
         .await;
         assert_eq!(answer.unwrap().unwrap().0, "answer_mismatch");
-        assert_eq!(attempts, 1);
+        assert_eq!((attempts, waited), (1, Duration::ZERO));
     }
 
     /// The fixture's pinned receiver is checked against recovery before any request:

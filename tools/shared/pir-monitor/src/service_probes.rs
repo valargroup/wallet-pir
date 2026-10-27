@@ -28,6 +28,38 @@ pub struct Probe {
     pub consecutive_failures: u64,
     pub consecutive_slow: u64,
     pub category: String,
+    /// Of `duration_seconds`, the time the probe reported waiting for the service to
+    /// catch up with a new publication before the run it reports. Not query latency.
+    pub waited_seconds: f64,
+}
+impl Probe {
+    /// Count one run. A successful run is slow when it took over 5 s beyond the wait
+    /// it reported.
+    fn record(&mut self, category: String, duration_seconds: f64, waited_seconds: f64, now: u64) {
+        self.sampled_at = now;
+        self.duration_seconds = duration_seconds;
+        self.waited_seconds = waited_seconds.clamp(0., duration_seconds);
+        if category.is_empty() {
+            self.successes += 1;
+            self.consecutive_failures = 0;
+        } else {
+            self.failures += 1;
+            self.consecutive_failures += 1;
+        }
+        self.consecutive_slow =
+            if category.is_empty() && duration_seconds - self.waited_seconds > 5. {
+                self.consecutive_slow + 1
+            } else {
+                0
+            };
+        self.category = category;
+    }
+}
+/// What one probe run reported: its failure category, empty when it passed, and the
+/// catch-up wait it reported.
+struct Outcome {
+    category: String,
+    waited_seconds: f64,
 }
 pub type Shared = Arc<RwLock<BTreeMap<String, Probe>>>;
 /// Services a probe may report: Status, the v12 Transparent history, the receiver
@@ -71,34 +103,24 @@ pub fn start() -> Result<Shared> {
                 let result =
                     tokio::time::timeout(Duration::from_secs(config.timeout_seconds), run(&config))
                         .await;
-                let category = match result {
-                    Ok(Ok(c)) => c,
-                    Ok(Err(_)) => "probe_unavailable".into(),
-                    Err(_) => "deadline".into(),
+                let (category, waited) = match result {
+                    Ok(Ok(outcome)) => (outcome.category, outcome.waited_seconds),
+                    Ok(Err(_)) => ("probe_unavailable".into(), 0.),
+                    Err(_) => ("deadline".into(), 0.),
                 };
                 let mut data = output.write().await;
-                let value = data.get_mut(&config.service).unwrap();
-                value.sampled_at = unix_time();
-                value.duration_seconds = began.elapsed().as_secs_f64();
-                if category.is_empty() {
-                    value.successes += 1;
-                    value.consecutive_failures = 0;
-                } else {
-                    value.failures += 1;
-                    value.consecutive_failures += 1;
-                }
-                value.consecutive_slow = if category.is_empty() && value.duration_seconds > 5. {
-                    value.consecutive_slow + 1
-                } else {
-                    0
-                };
-                value.category = category;
+                data.get_mut(&config.service).unwrap().record(
+                    category,
+                    began.elapsed().as_secs_f64(),
+                    waited,
+                    unix_time(),
+                );
             }
         });
     }
     Ok(shared)
 }
-async fn run(config: &Config) -> Result<String> {
+async fn run(config: &Config) -> Result<Outcome> {
     use tokio::io::AsyncReadExt;
     let mut child = tokio::process::Command::new(&config.command[0])
         .args(&config.command[1..])
@@ -116,7 +138,10 @@ async fn run(config: &Config) -> Result<String> {
     let (out, err) = tokio::try_join!(read(Box::new(stdout)), read(Box::new(stderr)))?;
     if out.len() > 65536 || err.len() > 65536 {
         child.kill().await?;
-        return Ok("invalid_probe_output".into());
+        return Ok(Outcome {
+            category: "invalid_probe_output".into(),
+            waited_seconds: 0.,
+        });
     }
     let status = child.wait().await?;
     let text = String::from_utf8_lossy(&out);
@@ -124,12 +149,23 @@ async fn run(config: &Config) -> Result<String> {
         .lines()
         .rev()
         .find_map(|line| serde_json::from_str::<serde_json::Value>(line).ok());
+    let waited_seconds = value
+        .as_ref()
+        .and_then(|v| v["waited_seconds"].as_f64())
+        .filter(|w| w.is_finite())
+        .unwrap_or(0.);
+    let outcome = |category: &str| {
+        Ok(Outcome {
+            category: category.into(),
+            waited_seconds,
+        })
+    };
     if let Some(v) = value {
         if v["category"].as_str() == Some("answer_mismatch") {
-            return Ok("answer_mismatch".into());
+            return outcome("answer_mismatch");
         }
         if v["category"].as_str() == Some("oracle_invalid") {
-            return Ok("oracle_invalid".into());
+            return outcome("oracle_invalid");
         }
         if status.success()
             && (v["passed"].as_bool() == Some(true)
@@ -137,18 +173,18 @@ async fn run(config: &Config) -> Result<String> {
                     && v["correct"].as_u64() == v["queries"].as_u64()
                     && v["correct"].as_u64().is_some_and(|n| n > 0)))
         {
-            return Ok(String::new());
+            return outcome("");
         }
     }
     let err = String::from_utf8_lossy(&err);
-    Ok(if err.contains("differs from canonical block oracle") {
+    let category = if err.contains("differs from canonical block oracle") {
         "answer_mismatch"
     } else if err.contains("not canonical") || err.contains("raw block hash differs") {
         "oracle_invalid"
     } else {
         "request_failed"
-    }
-    .into())
+    };
+    outcome(category)
 }
 pub fn conditions(probes: &BTreeMap<String, Probe>, now: u64) -> Vec<Condition> {
     let mut result = Vec::new();
@@ -266,6 +302,24 @@ mod tests {
             .unwrap();
         assert_eq!(correctness.firing, Some(true));
         assert_eq!(correctness.resource, "txid");
+    }
+    /// A run counts as slow by the time it took beyond the catch-up wait it reported,
+    /// and a failure or a fast run ends a slow streak.
+    #[test]
+    fn a_reported_catch_up_wait_is_not_latency() {
+        let mut probe = Probe::default();
+        probe.record(String::new(), 14., 10., 1);
+        assert_eq!((probe.consecutive_slow, probe.waited_seconds), (0, 10.));
+        probe.record(String::new(), 14., 8., 2);
+        probe.record(String::new(), 6., 0., 3);
+        assert_eq!(probe.consecutive_slow, 2);
+        // A reported wait never exceeds the run it is part of.
+        probe.record(String::new(), 6., 60., 4);
+        assert_eq!((probe.consecutive_slow, probe.waited_seconds), (0, 6.));
+        probe.record(String::new(), 6., 0., 5);
+        probe.record("request_failed".into(), 6., 0., 6);
+        assert_eq!((probe.consecutive_slow, probe.consecutive_failures), (0, 1));
+        assert_eq!((probe.successes, probe.failures), (5, 1));
     }
     #[test]
     fn unavailable_oracle_cannot_recover_correctness_incident() {
