@@ -584,6 +584,35 @@ async fn tables_returning_after_a_publication_without_them_load_again() {
     server.abort();
 }
 
+/// A publication replacing a served one has its new tables prepared before it is
+/// served, so the first wallet query on it does not wait for that preparation.
+/// The first publication after a start stays lazy, so readiness does not wait for
+/// every table.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_replacing_publication_is_prepared_before_it_is_served() {
+    let root = tempfile::tempdir().unwrap();
+    let (origin, tls, server) = origin(root.path()).await;
+    let config = config(root.path(), &tls);
+    let publications = Publications::default();
+    let mut lifecycle = sync::synchronization(&config, publications.clone()).unwrap();
+    lifecycle.synchronize().await.unwrap();
+    let first = publications.current().unwrap().id();
+    assert_eq!(
+        publications.tables().loads(),
+        0,
+        "a start loads tables lazily"
+    );
+    origin.publish(0, 2);
+    lifecycle.synchronize().await.unwrap();
+    assert_ne!(publications.current().unwrap().id(), first);
+    assert_eq!(
+        publications.tables().loads(),
+        2,
+        "the new payment and witness tables are prepared before serving"
+    );
+    server.abort();
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn large_proofs_are_batched_and_negative_chunks_refute_only_their_view() {
     use pir_publication::ViewIdentity;

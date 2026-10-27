@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- A query server prepares the tables a new Receiver publication adds, usually the
+  shard the latest block extended, before it serves that publication. The first
+  lookup after each new block took about 7 s instead of about 3 s while the server
+  prepared the table inside that request; the old publication now serves for those
+  seconds instead. The first publication after a start still prepares its tables
+  on first use, so readiness does not wait for them.
+
 - The `receiver-probe` canary runs again, a second later, while the publisher's
   health names a newer publication than the one the origin served it, for up to
   15 s. After each new publication, health reports it 6 to 10 s before query nodes
