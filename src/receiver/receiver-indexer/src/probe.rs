@@ -39,8 +39,8 @@ pub struct Args {
     /// The receiver directory's public origin, which serves the wallet routes.
     #[arg(long)]
     origin: String,
-    /// The service's health route on the private network, such as
-    /// `http://10.70.0.11:18380/v1/receiver/health`; the public edge does not serve it.
+    /// The publisher's private health route, such as
+    /// `http://127.0.0.1:18380/operator/receiver/health` on the coordinator.
     #[arg(long)]
     health_url: Option<String>,
     /// An independent node's RPC endpoint. Repeat it for fallbacks: the nodes that
