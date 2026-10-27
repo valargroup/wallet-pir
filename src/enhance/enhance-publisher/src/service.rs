@@ -57,6 +57,8 @@ pub async fn run<E: PublisherExecutor + IngestionExecutor>(
         file.write_all(b"canonical-archive")
     })?;
     let mut tasks = Tasks::default();
+    // A publication built from a journal this start replaced is not served again.
+    let mut restore = true;
     match crate::rebuild::adopt_staged(&config.data_dir)? {
         crate::rebuild::JournalAdoption::None => {}
         crate::rebuild::JournalAdoption::Adopted {
@@ -65,7 +67,8 @@ pub async fn run<E: PublisherExecutor + IngestionExecutor>(
             changed_records,
             previous,
         } => {
-            tracing::info!(%receipt_id, height, changed_records, previous = %previous.display(), "adopted staged Enhance journal rebuild")
+            tracing::info!(%receipt_id, height, changed_records, previous = %previous.display(), "adopted staged Enhance journal rebuild");
+            restore = false;
         }
         crate::rebuild::JournalAdoption::Rejected { reason, moved_to } => {
             tracing::error!(%reason, moved_to = %moved_to.display(), "rejected staged Enhance journal rebuild")
@@ -106,6 +109,7 @@ pub async fn run<E: PublisherExecutor + IngestionExecutor>(
         },
         serving,
         shutdown,
+        restore,
     )
     .await?;
     if failed.load(std::sync::atomic::Ordering::Acquire) {

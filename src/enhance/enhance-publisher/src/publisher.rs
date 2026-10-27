@@ -54,7 +54,8 @@ pub struct EnhancePublisher {
 impl EnhancePublisher {
     /// Acquire the publisher's exclusive lifetime lock, validate saved floors,
     /// and reconcile retained publications. Restart durably withdraws authority;
-    /// consumers need a newly checked publication before they can serve it.
+    /// consumers need a newly checked publication before they can serve it, which
+    /// may be the previous one once [`Self::restore`] has checked it again.
     pub fn open(root: &Path, rpc: ZakuraClient) -> Result<Self, String> {
         Self::open_recovered(root, rpc)
     }
