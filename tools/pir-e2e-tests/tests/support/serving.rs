@@ -153,14 +153,16 @@ impl Roles {
         listen: &str,
         rpc: &str,
     ) -> Result<serde_json::Value, String> {
-        let durable = root.join("data/publication/publisher.json");
-        let minimum = if durable.exists() {
+        // A restart serves the last committed publication again once it checks out,
+        // so that generation or a later one is current after this start.
+        let current = root.join("data/publication/https/current.json");
+        let minimum = if current.exists() {
             let state: serde_json::Value =
-                serde_json::from_slice(&std::fs::read(durable).map_err(|e| e.to_string())?)
+                serde_json::from_slice(&std::fs::read(current).map_err(|e| e.to_string())?)
                     .map_err(|e| e.to_string())?;
-            state["next_generation"]
+            state["current"]["manifest"]["generation"]
                 .as_u64()
-                .ok_or("missing generation reservation")?
+                .unwrap_or(1)
         } else {
             1
         };

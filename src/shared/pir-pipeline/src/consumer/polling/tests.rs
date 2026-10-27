@@ -161,6 +161,48 @@ async fn continuous_sync_retries_ordinary_failures_and_returns_a_terminal_error(
     assert_eq!(manager.run().await, "fatal");
 }
 
+/// Fails as a restarting publisher would, `restarts` times, then fatally.
+struct Restarting(u32);
+impl SyncTask for Restarting {
+    type Report = ();
+    type Error = &'static str;
+    async fn synchronize(&mut self) -> Result<(), &'static str> {
+        self.0 = self.0.saturating_sub(1);
+        Err(if self.0 == 0 { "fatal" } else { "restarting" })
+    }
+    fn terminal(&self, error: &&'static str) -> bool {
+        *error == "fatal"
+    }
+    fn transient(&self, error: &&'static str) -> bool {
+        *error == "restarting"
+    }
+}
+#[tokio::test(start_paused = true)]
+async fn a_transient_failure_retries_after_a_second_until_it_lasts_too_long() {
+    let started = tokio::time::Instant::now();
+    assert_eq!(SyncManager::new(Restarting(6)).run().await, "fatal");
+    assert_eq!(started.elapsed(), TRANSIENT_RETRY * 5);
+    // Past the transient budget the ordinary backoff applies again.
+    let started = tokio::time::Instant::now();
+    assert_eq!(
+        SyncManager::new(Restarting(TRANSIENT_ATTEMPTS + 2))
+            .run()
+            .await,
+        "fatal"
+    );
+    assert!(started.elapsed() > TRANSIENT_RETRY * (TRANSIENT_ATTEMPTS + 5));
+    // A long restart followed by an ordinary failure waits the first backoff
+    // step, not one lengthened by the restart's retries.
+    let started = tokio::time::Instant::now();
+    assert_eq!(
+        SyncManager::new(Restarting(TRANSIENT_ATTEMPTS + 1))
+            .run()
+            .await,
+        "fatal"
+    );
+    assert!(started.elapsed() < TRANSIENT_RETRY * (TRANSIENT_ATTEMPTS + 20));
+}
+
 /// A stop requested during a pass lets that pass, with its durable writes,
 /// finish; the manager then returns without starting another pass. A stop
 /// during the wait between passes returns at once.

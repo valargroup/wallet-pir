@@ -35,6 +35,9 @@ pub enum Error {
     MissingPage,
     #[error("receiver directory format needs a newer client")]
     Unsupported,
+    /// A requested stop ended a long build before it finished.
+    #[error("Receiver stopped while building shards")]
+    Stopped,
     #[error(transparent)]
     Sql(#[from] rusqlite::Error),
     #[error(transparent)]

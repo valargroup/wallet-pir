@@ -214,6 +214,7 @@ pub fn conditions(probes: &BTreeMap<String, Probe>, now: u64) -> Vec<Condition> 
                 ),
                 threshold: threshold.into(),
                 hold_seconds: hold,
+                window_seconds: 0,
                 sample,
             });
         }

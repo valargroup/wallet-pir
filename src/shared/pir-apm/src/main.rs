@@ -67,6 +67,9 @@ enum Command {
 #[derive(Debug, Subcommand)]
 enum DeploymentOperation {
     Begin {
+        /// How long alerts stay paused unless the deployment finishes first.
+        #[arg(long, default_value_t = pir_apm::deployment::DEFAULT_SECONDS)]
+        seconds: u64,
         #[arg(required = true)]
         services: Vec<String>,
     },
@@ -94,8 +97,8 @@ async fn main() -> Result<()> {
         let mut store = pir_apm::incidents::Store::open(&state)?;
         let now = pir_apm::incidents::unix_time();
         let deployment = match operation {
-            DeploymentOperation::Begin { services } => {
-                store.begin_deployment(&id, services, now)?
+            DeploymentOperation::Begin { seconds, services } => {
+                store.begin_deployment(&id, services, seconds, now)?
             }
             DeploymentOperation::Finish { failed } => store.finish_deployment(&id, failed, now)?,
         };

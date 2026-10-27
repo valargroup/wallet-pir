@@ -426,6 +426,34 @@ mod tests {
         assert_eq!(store.sealed_shards().unwrap().len(), 1);
     }
 
+    /// A stop requested while a shard builds ends it inside the build, between one
+    /// segment's witness check and the next, rather than after the whole shard.
+    #[test]
+    fn a_stop_ends_a_shard_build_between_its_segments() {
+        let policy = Policy {
+            rows: 1,
+            payloads: 1000,
+            target: 1000,
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = store(dir.path(), &[30], Some(common::seeded_receiver(3)));
+        Sealer::new(policy).advance(&mut store, [1; 32]).unwrap();
+        let shard = store.sealed_shards().unwrap().remove(0);
+        assert_eq!(shard.segments, 3);
+        let tip = store.tip().unwrap();
+        let mut witnesses = crate::witness::Witnesses::default();
+        // Each segment asks before its companion, before its check and once per batch of
+        // checked records: the fourth ask is the second segment's first.
+        let asked = std::cell::Cell::new(0);
+        let stop = || {
+            asked.set(asked.get() + 1);
+            asked.get() == 4
+        };
+        let stopped = crate::shards::sealed(&mut store, &mut witnesses, &shard, &tip, 0, &stop);
+        assert!(matches!(stopped, Err(Error::Stopped)));
+        assert_eq!(asked.get(), 4);
+    }
+
     /// Every segment of an oversized shard places, a receiver paid only by the block's
     /// last payment is in exactly the last segment, and the shard's filter holds it.
     #[test]
@@ -443,7 +471,8 @@ mod tests {
         assert_eq!((shard.end_height, shard.segments), (100, 3));
         let tip = store.tip().unwrap();
         let mut witnesses = crate::witness::Witnesses::default();
-        let built = crate::shards::sealed(&mut store, &mut witnesses, &shard, &tip, 0).unwrap();
+        let built =
+            crate::shards::sealed(&mut store, &mut witnesses, &shard, &tip, 0, &|| false).unwrap();
         let counts: Vec<u64> = built
             .segments
             .iter()

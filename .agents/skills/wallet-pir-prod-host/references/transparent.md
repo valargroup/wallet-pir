@@ -22,9 +22,9 @@ cargo build --locked --release -p pir-query-server \
 The publisher example includes the four products of the existing combined fleet;
 derive the actual feature set from the installed roles. The query-server example
 is for Transparent roles only. Preserve the publisher artifact before another
-build and preserve the query artifact before feature-dependent checks. Assemble
-publisher archives through `tools/ci/release.py` using its current help and clean
-source identity; do not handcraft the archive manifest.
+build and preserve the query artifact before feature-dependent checks. Host builds
+are for diagnosis; deployable artifacts are the Release workflow's `build-<sha12>`
+releases, which `pir-deploy` installs.
 
 Read the installed configuration before choosing scope. If main includes an
 unselected product's protocol migration, preserve that product through an
@@ -34,23 +34,18 @@ unmodified main build or publish the composition as a PR reverting those product
 
 ## Publisher, then History, then tx-detail
 
-1. Prepare the supported `publisher-cutover/3` request. Preserve installed product
-   settings and wallet origins. Plan/preflight with the publisher archive and the
-   requested serving binary, then deploy the reviewed plan digest.
-2. For a publisher-only update, `preserve_serving: true` permits separate source
-   pins for existing serving roles. Every preserved serving role must assess as
-   `skip` with no changes. Supply its existing matching serving binary, not the
-   new Transparent-only query binary. The tool still journals an authorized
-   discovery-route update and verifies the preserved products.
-3. Check `/.well-known/pir-service-discovery` at the configured publisher HTTPS
+1. `pir-deploy --dry-run publisher <sha>`, then `pir-deploy publisher <sha>`. The
+   installed configuration, product settings and wallet origins stay as they are;
+   query roles keep serving.
+2. Check `/.well-known/pir-service-discovery` at the configured publisher HTTPS
    origin. The service and compatible major version must be correct. This route
    does not authorize exposing management or readiness listeners publicly.
-4. Use `transparent-binary-*` with separate `workers` requests for
+3. Use `transparent-binary-*` with separate `workers` requests for
    `transparent-history` and `transparent-display`. Capture the current controller
    and worker configuration/unit pins. Capture a baseline when required; use
    preflight with the actual binary and `--stage`, then deploy and check status.
    A plan with no binary can legitimately refuse an unstaged release.
-5. Let each operation run its pinned encrypted-answer probe. Record History
+4. Let each operation run its pinned encrypted-answer probe. Record History
    acceptance for each configured HTTPS origin and tx-detail acceptance at the
    existing `/v2/txid` origin. Retain the old binaries and original journals.
 
@@ -63,26 +58,15 @@ background work alone as a reason to restart the process.
 
 ## Recover an interrupted publisher operation
 
-Start with `publisher-cutover-status` and a short process/readiness check.
+Start with `pir-deploy status` and a short process/readiness check. A failed
+`pirctl deploy` has already restored the previous release; `pir-deploy rollback
+publisher` swaps back a release that started but misbehaves later.
 
-| Observed state | Supported action |
-| --- | --- |
-| Recorded predecessor stop interrupted; predecessor now stopped; configuration and staged binary unchanged; checker stays stopped | `publisher-cutover-continue` checks that exact journal state and completes installation. |
-| Candidate running; journal is `verifying` with no pending effect | `publisher-cutover-verify` finishes the current transaction without restarting the candidate. |
-| Restoration is required | `publisher-cutover-rollback` restores recorded prior bytes. `publisher-cutover-reconcile` also restores; it is not an activation resume. |
-
-Check the current command help and guards rather than broadening these cases.
 If shutdown is stuck, record PID, invocation, executable digest, elapsed time, and
-shutdown progress. Any bounded termination must be owned and journaled by the
-deployment tool against that exact invocation. Do not use an external signal to
-get around its production lock or invoke a rollback simply to force shutdown.
-
-`resume_load: false` keeps an already-stopped checker stopped. The optional
-`expected_disk_latch_sha256` permits only an exact, unchanged disk-only incident
-during that stopped-checker publisher repair; it neither clears the latch nor
-permits restarting the checker. Answer failures, memory incidents, changed
-latches, and different failures still refuse. A later checker repair must use
-the separate controlled operation and current worker pins.
+shutdown progress before acting. Do not use an external signal to get around the
+deploy lease or invoke a rollback simply to force shutdown. A stopped checker and
+its disk-capacity latch stay as they are through a deploy; repair the checker
+through its own controlled operation.
 
 ## Debug slow publication and disk growth
 

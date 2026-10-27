@@ -61,7 +61,7 @@ pub(super) fn manager(
 
 impl StatusPolling {
     async fn poll_deadline(&self, minimum: tokio::time::Instant) -> tokio::time::Instant {
-        // The manager selects exponential backoff for failures. Preserve it.
+        // The manager selects the wait after a failure. Preserve it.
         if !self.last_pass_succeeded || self.inner.context().adapter().poll_soon {
             return minimum;
         }
@@ -91,6 +91,9 @@ impl SyncTask for StatusPolling {
     }
     fn terminal(&self, error: &Error) -> bool {
         self.inner.terminal(error)
+    }
+    fn transient(&self, error: &Error) -> bool {
+        self.inner.transient(error)
     }
     async fn wait_until(&mut self, deadline: tokio::time::Instant) {
         tokio::time::sleep_until(self.poll_deadline(deadline).await).await;

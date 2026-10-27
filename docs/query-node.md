@@ -141,7 +141,7 @@ installed production inputs unchanged during application deployments.
 
 The one-time Query 01/02 additive provisioning commands and creation-only plan
 checker have been retired. Query 01's infrastructure declaration is removed;
-application releases use the shared `fleet-release-*` transaction. Historical
+application releases use [`pir-deploy`](operations.md#deploying-a-build). Historical
 provisioning receipts and their original operations packages remain available
 for inspection.
 
@@ -154,40 +154,27 @@ apply a broad fleet migration as part of an application release.
 
 ## Application deployment
 
-Dispatch the full-CI workflow with `query-candidate=true` on the pinned branch.
-It runs full qualification and also builds a CPU native binary with
-`enhance,status,transparent-history,transparent-detail,native-reinspiring`, renders
-the node settings and runs the binary's offline configuration check. It packages
-the query executable and operations release from the same revision. An artifact
-and an offline check do not establish dataset fit or live correctness.
+Every main commit publishes the build release `build-<sha12>`, whose
+`pir-query-server` carries every query product. Roll it onto the unified nodes
+with [`pir-deploy`](operations.md#deploying-a-build): `pir-deploy --dry-run unified
+<sha>` first, then `pir-deploy unified <sha>`. On each node `pirctl` runs the new
+binary's `--check` against the installed configuration, restarts the unit, waits for
+`/health` and runs the release's `pir-probe`, which sends one encrypted query per
+enabled product and compares the answers with pinned ones; a failure restores the
+previous release. Do not install units or copy executables to production by hand.
+An offline check does not establish dataset fit or live correctness.
 
-Add the candidate host and the optional `query-server` / `combined` role to the
-maintained inventory, with the example's settings replaced by verified live
-publication identities, complete holdings, capacities and trusted HTTPS CA paths.
-Keep the coordinator as the lock owner. Use the new operations package's existing
-`wallet-pir-deploy.py` commands for `plan`, `preflight --stage`, `deploy`, `status`
-and `rollback`, selecting service `query-server`. Use the exact candidate archive
-and source revision; inspect each subcommand's help for its inventory and artifact
-arguments. Do not install units or copy executables to production by hand.
-
-Configure `services.query-server.exact_check.products` with exactly four entries:
-`enhance`, `status`, `transparent_history`, and `transaction_details`. Each entry
-contains `host` (a known, non-retired inventory host), `argv` (the independent
-wallet client's command), and `timeout` (1–900 seconds). Retain the existing
-clients, fixtures and answer oracles, changing their wallet destination to the
-candidate HTTPS origin. Keep publisher and oracle destinations unchanged.
-Checks may run on different hosts; all their SSH identities are verified before
-deployment changes begin. The transaction commits only after every check passes;
-a failed check triggers rollback. Do not substitute readiness for decrypted
-answer verification or skip these checks to accept the candidate.
+A new node needs its rendered unit and configuration installed first and a
+`/etc/wallet-pir/pirctl.conf` line naming it (with `config=` and `probe=`/`products=`)
+before `pir-deploy` can roll it.
 
 The role renderer composes the product-owned renderers, checks listener collisions
 and disjoint state below `/srv/wallet-pir-query`, mounts CA files read-only, and
 returns `--config ... --check` for the actual binary before activation. The unit
 requires the mounted volume. Its shutdown does not force-kill admitted work at a
-timeout; a stalled drain must be reported by the deployment transaction.
+timeout; a stalled drain must be reported by the deploy.
 
-For a quick encrypted smoke check without the deployment transaction, build the
+For a quick encrypted smoke check outside a deploy, build the
 wallet clients with the production protocol (`native-reinspiring`; without it
 they refuse the live manifests) and compare against the existing endpoints:
 `enhance-pir-cli --server <origin> query <position>`, the ignored
@@ -198,8 +185,8 @@ they refuse the live manifests) and compare against the existing endpoints:
 source. Transparent compact filters (`/transparent/v1/filters/*`) are not
 served by the query binary and answer 404 on this node.
 
-After activation, retain transaction status and the exact rollback command.
-Verify independent encrypted answers for every configured product and archive
+After activation, `pir-deploy status` shows the release each node runs and
+`pir-deploy rollback unified` returns to the previous one. Verify independent encrypted answers for every configured product and archive
 range over the candidate HTTPS endpoint, then observe a replacement publication,
 withdrawal/recovery and restart. Confirm private routes are refused externally.
 Receiver remains an unmet all-products gate. Production endpoint cutover and

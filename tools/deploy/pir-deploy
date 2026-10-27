@@ -6,10 +6,11 @@
 #
 #   <ssh destination> <component> <group> [wave]
 #
-# group is publisher, unified, or a product (enhance, status, transparent, txid,
-# receiver). Lines with the same wave restart together; waves run in ascending order
+# group is publisher, unified, a product (enhance, status, transparent, txid,
+# receiver) or monitoring (APM and pir-monitor, deployed with `product monitoring`). Lines with the same wave restart together; waves run in ascending order
 # (default 1), so a product's workers can restart before its router. The publisher's
-# host also holds the deploy lease and the APM alert window.
+# host also holds the deploy lease and the APM alert window, which pauses alerts for
+# 10 minutes (an hour with --cold) or until the deploy ends.
 #
 # Usage:
 #   pir-deploy publisher <sha>                    the shared publisher only
@@ -27,13 +28,16 @@
 # --dry-run checks the mode without taking the lease or restarting anything: every
 # selected host unpacks the build, its binary accepts the host's config, and the
 # build's probe passes against the service running now; then it prints the waves.
+# Every deploy and dry run ends with one probe per product through the public origins
+# wallets use, run from the publisher's host (PIR_PUBLIC: "<origin>=<products> ...").
 # Environment: PIR_INVENTORY, PIR_SSH_CONFIG, PIR_SSH (default ssh), PIR_DISCOVERY,
-# PIR_RELEASES, PIR_OWNER (the lease holder's name; default user@host-pid).
+# PIR_RELEASES, PIR_PUBLIC, PIR_OWNER (the lease holder's name; default user@host-pid).
 set -euo pipefail
 
 INVENTORY=${PIR_INVENTORY:-$HOME/.config/wallet-pir/inventory}
 DISCOVERY=${PIR_DISCOVERY:-https://enhance-pir.valargroup.dev/.well-known/pir-service-discovery}
 RELEASES=${PIR_RELEASES:-https://github.com/valargroup/wallet-pir/releases/download}
+PUBLIC=${PIR_PUBLIC-https://enhance-pir.valargroup.dev=enhance,status https://transparent-pir.valargroup.dev=transparent_history,transaction_details https://receiver-pir.valargroup.dev=receiver}
 SSH=${PIR_SSH:-ssh}
 SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=10 -o ControlMaster=auto -o "ControlPath=/tmp/pir-%C" -o ControlPersist=120)
 [ -n "${PIR_SSH_CONFIG:-}" ] && SSH_OPTS=(-F "$PIR_SSH_CONFIG" "${SSH_OPTS[@]}")
@@ -130,7 +134,21 @@ begin() {
   fi
   remote "$CONTROL" lease take "$OWNER" "$([ -n "$COLD" ] && echo 4200 || echo 1200)" || exit 1
   trap 'finish $?' EXIT
-  remote "$CONTROL" alerts begin "$DEPLOY_ID" "$@" || echo "pir-deploy: alerts stay armed (APM refused the window)" >&2
+  remote "$CONTROL" alerts begin "$DEPLOY_ID" --seconds "$([ -n "$COLD" ] && echo 3600 || echo 600)" "$@" || echo "pir-deploy: alerts stay armed (APM refused the window)" >&2
+}
+
+# Probes every product through its public origin, all at once.
+public_probe() {
+  local sha=${1:-} t pair pids=() failed=0
+  [ -n "$PUBLIC" ] || return 0
+  t=$(date +%s)
+  for pair in $PUBLIC; do
+    remote "$CONTROL" public "${pair%%=*}" "${pair#*=}" $sha </dev/null 2>&1 | sed "s|^|[public] |" >&2 &
+    pids+=($!)
+  done
+  for pid in "${pids[@]}"; do wait "$pid" || failed=1; done
+  [ "$failed" = 0 ] || die "a public probe failed"
+  echo "== public probes passed in $(($(date +%s) - t))s"
 }
 
 dry_finish() {
@@ -188,10 +206,14 @@ case $mode in
     failed=$(run rollback "$entries")
     [ -z "$failed" ] || die "rollback failed on: $(tr '\n' ' ' <<<"$failed")" ;;
   status)
+    failed=$(mktemp)
     for host in $(awk '{print $1}' <<<"$ENTRIES" | sort -u); do
-      remote "$host" status 2>&1 | sed "s|^|[$host] |" &
+      { remote "$host" status </dev/null 2>&1 || echo "$host" >>"$failed"; } | sed "s|^|[$host] |" &
     done
-    wait ;;
+    wait
+    bad=$(paste -sd' ' - <"$failed")
+    rm -f "$failed"
+    [ -z "$bad" ] || die "status failed on: $bad" ;;
   self-update)
     [ $# -eq 2 ] || usage
     hosts=$(awk '{print $1}' <<<"$ENTRIES" | sort -u)
@@ -207,3 +229,5 @@ case $mode in
     echo "== pirctl at build-${2:0:12} on $(wc -l <<<"$hosts" | tr -d ' ') hosts in $(($(date +%s) - START))s" ;;
   *) usage ;;
 esac
+# Reading status or updating pirctl moves no release, so it probes nothing.
+case $mode in status | self-update) ;; *) public_probe "${sha:-}" ;; esac

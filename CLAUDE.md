@@ -20,7 +20,8 @@ Follow [AGENTS.md](AGENTS.md) for shared iteration and validation rules. Use
 final validation or CI. Optimized `release-fast` runs full-shard tests without
 deployment LTO. Preserve Cargo package/binary names when moving tools.
 
-Preserve the production workflow's legacy service rollback path.
+Binaries roll back with `pir-deploy rollback <group|host>` (`pirctl rollback
+<component>` on one host); keep that path working when changing deploy tooling.
 
 ## Documentation and evidence
 

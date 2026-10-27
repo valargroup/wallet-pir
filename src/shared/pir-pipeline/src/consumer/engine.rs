@@ -140,4 +140,7 @@ impl<C: Consumer> SyncTask for ConsumerEngine<C> {
     fn terminal(&self, error: &Error) -> bool {
         self.context.terminal(error)
     }
+    fn transient(&self, error: &Error) -> bool {
+        self.context.transient(error)
+    }
 }

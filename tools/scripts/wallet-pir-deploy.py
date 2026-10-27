@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Transactional deploys of Enhance PIR and Status PIR; see `--help`.
+"""Fleet data operations that are not binary rollouts; see `--help`.
+
+Binary rollouts use tools/deploy/pir-deploy, which runs tools/deploy/pirctl on
+each host.
 
 Run from the Enhance coordinator or a workstation with the production SSH
 access the inventory names. Mutating commands hold the production lock.

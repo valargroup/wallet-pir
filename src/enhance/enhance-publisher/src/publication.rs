@@ -21,7 +21,14 @@ use std::{
     fs::{self, File, OpenOptions},
     path::Path,
 };
-pub use verification::{verify_publication, PreparedPublication, VerificationStats};
+pub use verification::{
+    verify_publication, verify_publication_until, PreparedPublication, VerificationStats,
+};
+
+/// Asked between steps and while hashing; true ends preparation with [`STOPPED`].
+pub type Stop<'a> = &'a (dyn Fn() -> bool + Sync);
+/// The error a stopped preparation or verification returns.
+pub const STOPPED: &str = "Enhance publication stopped";
 
 /// Produce material for validated coverage, one domain at a time. The caller
 /// owns chain authority and supplies the recovery epoch of every domain.
@@ -43,7 +50,7 @@ pub fn prepare_publication(
     owner
         .try_lock()
         .map_err(|_| "publication preparation already owned")?;
-    let inventory = construct_publication(root, coverage, epochs, &mut read)?;
+    let inventory = construct_publication(root, coverage, epochs, &mut read, &|| false)?;
     let prepared = verify_publication(root, inventory)?;
     persist_inventory(root, prepared.inventory())?;
     Ok(prepared)
@@ -56,11 +63,12 @@ pub(crate) fn construct_publication(
     coverage: Coverage,
     epochs: &BTreeMap<u64, String>,
     mut read: impl FnMut(u64, usize) -> Result<Vec<u8>, String>,
+    stop: Stop,
 ) -> Result<Inventory, String> {
     validate_source(&coverage, epochs)?;
     fs::create_dir_all(root.join("objects")).map_err(|e| e.to_string())?;
     let objects = ObjectInstaller::open(root.join("objects")).map_err(|e| e.to_string())?;
-    let domains = preparation::prepare_domains(root, &objects, &coverage, epochs, &mut read)?;
+    let domains = preparation::prepare_domains(root, &objects, &coverage, epochs, &mut read, stop)?;
     let inventory = Inventory {
         version: VERSION,
         network: "main".into(),

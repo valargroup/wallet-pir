@@ -1,6 +1,8 @@
 //! Prepare each domain, reusing retained plans and installing immutable objects.
 use super::{
-    object_io::{install_object_bytes, install_packing_object, persist_metadata},
+    object_io::{
+        install_object_bytes, install_object_digest, install_packing_object, persist_metadata,
+    },
     read_metadata,
 };
 use crate::{prepared_packing, runtime, PackingBudget};
@@ -18,10 +20,14 @@ pub(super) fn prepare_domains(
     coverage: &Coverage,
     epochs: &BTreeMap<u64, String>,
     read: &mut impl FnMut(u64, usize) -> Result<Vec<u8>, String>,
+    stop: super::Stop,
 ) -> Result<Vec<Domain>, String> {
     let mut engine = runtime::Engine::new(&root.join("preparation"));
     let mut domains = Vec::new();
     for shard in &coverage.shards {
+        if stop() {
+            return Err(super::STOPPED.into());
+        }
         let mut plan = runtime::plan(shard.clone(), &mut *read)?;
         for unit in &mut plan.units {
             unit.recovery_epoch = epochs[&shard.id]
@@ -30,11 +36,16 @@ pub(super) fn prepare_domains(
         }
         let mut rows = Vec::new();
         for (spec, unit) in plan.shard.units.iter().zip(&plan.units) {
+            if stop() {
+                return Err(super::STOPPED.into());
+            }
             let bytes = runtime::unit_rows(&plan.shard, spec, &mut *read)?;
-            if hex::encode(Sha256::digest(&bytes)) != unit.content_sha256 {
+            // The rows' digest both checks them and names their object.
+            let sha256 = hex::encode(Sha256::digest(&bytes));
+            if sha256 != unit.content_sha256 {
                 return Err("canonical rows changed during publication preparation".into());
             }
-            rows.push(install_object_bytes(objects, &bytes)?);
+            rows.push(install_object_digest(objects, &bytes, sha256)?);
         }
         // A previously verified domain avoids hint and packing preparation.
         let key = digest(&plan);
@@ -48,12 +59,26 @@ pub(super) fn prepare_domains(
             domains.push(domain);
             continue;
         }
-        let (evaluation, _) = engine
-            .prepare(plan.clone(), &mut *read)
-            .map_err(|e| e.to_string())?;
+        // Building a changed shard takes seconds per unit: a stop ends it
+        // before the next unit's rows are read and between the later steps.
+        let checked = || match stop() {
+            true => Err(String::from(super::STOPPED)),
+            false => Ok(()),
+        };
+        let (evaluation, _) = match engine.prepare(plan.clone(), |start, count| {
+            checked()?;
+            read(start, count)
+        }) {
+            Ok(prepared) => prepared,
+            Err(_) if stop() => return Err(super::STOPPED.into()),
+            Err(error) => return Err(error.to_string()),
+        };
+        checked()?;
         let hint = evaluation.hint()?;
+        checked()?;
         let packing =
             runtime::Packing::new(shard.logical_rows, &hint, &PackingBudget::coordinator())?;
+        checked()?;
         let prepared = prepared_packing::persist(root, &packing)?;
         install_packing_object(
             objects,

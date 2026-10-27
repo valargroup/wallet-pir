@@ -2,6 +2,34 @@
 
 ## 0.0.1 — Unreleased
 
+- A restarted publisher serves its last Enhance publication again after checking it,
+  instead of leaving Enhance withdrawn until a new publication is built (up to 45 s
+  after a block with new records). The restart still withdraws it first, so leases
+  from the previous process stay void. It returns only if no recovery or domain fence
+  was raised and none of its sessions was revoked since it was published, its
+  inventory matches, every object hashes to its digest and its anchor block is still
+  canonical, and not after a start that adopted a rebuilt journal. Otherwise it stays
+  withdrawn, as before, until the next publication. A restore counts as the
+  publisher's last advancement, so publication monitoring keeps reading its metrics.
+
+- A restarted publisher serves Enhance again sooner. Verification hashes a
+  publication's objects on up to four threads instead of one, and preparation
+  hashes each unit's rows once instead of twice. On the production host, where
+  hashing is about 17 s of one core per publication, this shortens the gap after
+  every publisher start. Each committed publication logs how long it took to build
+  and verify and how much it hashed.
+
+- A publisher stop ends Enhance publication building and verification at the
+  next shard, unit or object, including between the units, hint and packing of a
+  changed shard, so a stop mid-preparation no longer waits up to 26 s.
+
+- Wallet `init` and Status `init` requests wait up to 15 s for a restarting
+  publisher's authority instead of answering 503 (or, for Status, 410) at once,
+  re-checking authority on every attempt. Enhance, Status and Receiver query roles
+  treat a publisher that does not answer, or whose proxy answers 502–504, as
+  restarting and re-poll it every second, for up to 30 tries, instead of backing
+  off for 10–40 s.
+
 - Load autonomous ingress router assignments from host JSON and enforce publisher
   compatibility before opening state or listeners. A confirmed major-version
   mismatch during synchronization stops the host with the discovery error;

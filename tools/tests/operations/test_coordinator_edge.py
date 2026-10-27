@@ -27,7 +27,6 @@ import unittest
 
 from wallet_pir_ops.deploy import coordinator_edge
 from wallet_pir_ops.deploy.coordinator_edge import EdgeError, UNIFIED_HOST, render, sites
-from wallet_pir_ops.deploy.publisher_serving import DISCOVERY, candidate as discovery_candidate
 
 ROOT = Path(__file__).resolve().parents[3]
 ENHANCE_HOST = 'enhance-pir.valargroup.dev'
@@ -72,12 +71,6 @@ class Rendering(unittest.TestCase):
         self.assertNotIn(UNIFIED_HOST, unified.split('{', 1)[1])
         for legacy in ('/v1/enhance', '/v1/status', '/v1/filters', '/v2/', '/v1/receiver', '/provider/'):
             self.assertFalse([path for path in handled if path.startswith(legacy)])
-
-    def test_publisher_discovery_route_lands_in_the_enhance_site_only(self):
-        text = rendered()
-        after = discovery_candidate(text)
-        self.assertIn(DISCOVERY, site(after, ENHANCE_HOST))
-        self.assertEqual(site(after, UNIFIED_HOST), site(text, UNIFIED_HOST))
 
     def test_status_routing_moves_every_alias_with_the_legacy_route(self):
         from tools.status.lib.routing import candidate

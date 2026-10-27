@@ -1,7 +1,8 @@
 name: Release
 
-# Builds the two production executables for every main commit and publishes
-# them as the GitHub release `build-<sha12>`. Hosts download their asset from
+# Builds the production executables, and the APM and external monitor that
+# watch them, for every main commit and publishes them as the GitHub release
+# `build-<sha12>`. Hosts download their asset from
 # that release with `pirctl prepare` (tools/deploy/pirctl); nothing is pushed to
 # a host from here. The query node installer keeps its own tagged releases
 # (release-query-server.yml).
@@ -104,9 +105,40 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  monitoring:
+    name: Build pir-apm and pir-monitor
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/rust-setup
+        with:
+          lane: release
+          scope: monitoring
+      - name: Build
+        run: cargo build --locked --release -p pir-apm -p pir-monitor --features pir-monitor/native-reinspiring
+      - name: Package
+        run: |
+          for package in pir-apm pir-monitor; do
+            out="$RUNNER_TEMP/$package"
+            mkdir -p "$out"
+            cp "$CARGO_TARGET_DIR/release/$package" "$out/"
+            printf '%s\n' "$GITHUB_SHA" > "$out/revision"
+            tar -C "$out" -czf "$RUNNER_TEMP/$package.tar.gz" .
+          done
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: monitoring
+          path: |
+            ${{ runner.temp }}/pir-apm.tar.gz
+            ${{ runner.temp }}/pir-monitor.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
   publish:
     name: Publish build release
-    needs: [build, probe]
+    needs: [build, probe, monitoring]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
@@ -127,7 +159,7 @@ jobs:
           # major with the live discovery document before a partial deploy.
           jq -s '{publisher: .[0], query_server: .[1]}' \
             pir-publisher.contract.json pir-query-server.contract.json > contract.json
-          files=(pir-publisher.tar.gz pir-query-server.tar.gz pir-probe.tar.gz contract.json pirctl)
+          files=(pir-publisher.tar.gz pir-query-server.tar.gz pir-probe.tar.gz pir-apm.tar.gz pir-monitor.tar.gz contract.json pirctl)
           sha256sum "${files[@]}" > SHA256SUMS
           tag="build-${GITHUB_SHA:0:12}"
           gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \

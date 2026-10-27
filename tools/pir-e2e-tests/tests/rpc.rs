@@ -299,7 +299,10 @@ async fn canonical_cli_ingests_rpc_rewinds_reorg_and_restarts_without_duplicatio
         &roles,
     )
     .await;
-    assert!(restarted.generation > first.generation);
+    assert_eq!(
+        restarted.generation, first.generation,
+        "a restart serves the checked previous publication again"
+    );
     assert_eq!(size(), 6, "restart must not duplicate records");
     state.selected.store(1, Ordering::SeqCst);
     state.tree_size.store(7, Ordering::SeqCst);

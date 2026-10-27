@@ -72,8 +72,18 @@ pub(super) fn install_object_bytes(
     objects: &ObjectInstaller,
     bytes: &[u8],
 ) -> Result<Object, String> {
+    install_object_digest(objects, bytes, hex::encode(Sha256::digest(bytes)))
+}
+
+/// [`install_object_bytes`] for bytes whose hex SHA-256, `sha256`, the caller has
+/// already computed.
+pub(super) fn install_object_digest(
+    objects: &ObjectInstaller,
+    bytes: &[u8],
+    sha256: String,
+) -> Result<Object, String> {
     let object = Object {
-        sha256: hex::encode(Sha256::digest(bytes)),
+        sha256,
         bytes: bytes.len() as u64,
     };
     if !object_exists(objects, &object)? {

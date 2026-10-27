@@ -89,6 +89,70 @@ impl Distribution {
             }
         }));
     }
+    /// After a restart, publish the previous process's last inventory again
+    /// under this process's recovery epoch, so query servers keep serving those
+    /// tables while the first pass rebuilds them; the rebuilt export then finds
+    /// them current. Only a publication of `history_revision` whose objects are
+    /// all still retained and whose anchors are still canonical is restored, and
+    /// query servers keep confirming those anchors through the authority check.
+    /// Returns whether it published.
+    pub async fn restore(
+        &self,
+        publications: &Publications,
+        history_revision: u64,
+    ) -> Result<bool, Error> {
+        let epoch = publications.epoch();
+        let (previous, recovery_epoch) = {
+            let authority = self.authority.lock().unwrap();
+            let current = authority.current();
+            match current.publication.clone() {
+                Some(previous)
+                    if !current.eligible
+                        && previous.descriptor.history_revision == history_revision
+                        && previous.descriptor.recovery_epoch < current.fence.recovery_epoch =>
+                {
+                    (previous, current.fence.recovery_epoch)
+                }
+                _ => return Ok(false),
+            }
+        };
+        let mut inventory: Inventory =
+            serde_json::from_reader(self.objects.open_retained(&previous.inventory.sha256)?)?;
+        inventory.recovery_epoch = recovery_epoch;
+        inventory.validate(crate::blocks::ironwood_activation())?;
+        for object in inventory.objects() {
+            self.objects.open_retained(&object.sha256)?;
+        }
+        self.rpc.check_network(inventory.genesis).await?;
+        for (height, expected) in inventory.anchors() {
+            if self.rpc.block_hash(u64::from(height)).await? != expected {
+                return Ok(false);
+            }
+        }
+        let bytes = serde_json::to_vec(&inventory)?;
+        let object = self.objects.store(&bytes)?;
+        let reference = inventory.reference(object.clone());
+        let mut objects = inventory.objects();
+        objects.push(object);
+        publications
+            .in_epoch(epoch, || -> Result<bool, Error> {
+                let mut authority = self.authority.lock().unwrap();
+                let current = authority.current();
+                // Another export or a withdrawal moved authority meanwhile.
+                if current.eligible || current.fence.recovery_epoch != recovery_epoch {
+                    return Ok(false);
+                }
+                let now = now_ms();
+                self.objects.retain_replacement(
+                    objects,
+                    now.saturating_add(self.retention_ms),
+                    now,
+                )?;
+                authority.apply(AuthorityTransition::Publish(reference))?;
+                Ok(true)
+            })
+            .unwrap_or(Ok(false))
+    }
     /// Export a pinned directory and independently advancing rolling hints.
     /// Objects never authorize themselves; the epoch guard protects final commit.
     pub async fn export<E: pir_pipeline::publisher::PublisherExecutor>(
@@ -103,6 +167,9 @@ impl Distribution {
             return Ok(());
         }
         let revision = publications.history_revision();
+        if directory.is_none() && self.serves_tables(revision) {
+            return Ok(());
+        }
         let recovery_epoch = self
             .authority
             .lock()
@@ -147,6 +214,18 @@ impl Distribution {
                 recovery_epoch,
             })
             .await
+    }
+    /// Whether the eligible publication serves tables of `revision`. A restarted
+    /// process restores its previous tables before it has built its own, and an
+    /// export without tables must not replace them meanwhile. Losing tables any
+    /// other way revokes them, which withdraws that publication first.
+    fn serves_tables(&self, revision: u64) -> bool {
+        let authority = self.authority.lock().unwrap();
+        let current = authority.current();
+        current.eligible
+            && current.publication.as_ref().is_some_and(|p| {
+                p.descriptor.directory.is_some() && p.descriptor.history_revision == revision
+            })
     }
     fn file(&self, path: &FilePath) -> Result<pir_publication::ObjectReference, Error> {
         let file = pir_publication::open_object_file(path, None)?;
@@ -548,6 +627,78 @@ mod tests {
             .is_err());
     }
 
+    /// While a restarted process has only block filters, its exports leave the
+    /// restored publication and its tables in place.
+    #[tokio::test]
+    async fn an_export_without_tables_keeps_restored_tables() {
+        use zakura_pir_publisher::receiver::snapshot::SnapshotPublisherExt as _;
+        use zakura_pir_query_server::receiver::{session::MIN_ROWS, snapshot::Snapshot};
+        let root = tempfile::tempdir().unwrap();
+        let genesis = Network::Mainnet.genesis_hash();
+        let activation = crate::blocks::ironwood_activation();
+        let mut manifest = common::manifest(MIN_ROWS);
+        manifest.genesis = genesis;
+        manifest.start_height = activation;
+        manifest.end_height = activation + 1;
+        let snapshot = Snapshot::build(manifest, &[]).unwrap();
+        let witnesses = crate::prepared::placeholder(&snapshot);
+        let mut durable = crate::durable::Durable::open(
+            root.path(),
+            Arc::new(receiver_pir_server::tables::Tables::new(4 << 30)),
+        )
+        .unwrap();
+        let segment = durable.segment(snapshot, witnesses).unwrap();
+        let publication = Arc::new(
+            receiver_pir_server::Publication::assemble(
+                genesis,
+                0,
+                vec![(false, vec![segment], None)],
+            )
+            .unwrap(),
+        );
+        // No node answers: keeping the restored tables needs no chain check.
+        let distribution = Distribution::open(
+            root.path().into(),
+            NodeClient::new("http://127.0.0.1:1".into(), None).unwrap(),
+            600,
+        )
+        .unwrap();
+        let inventory = distribution
+            .material(Some(publication), None, 0, 0)
+            .unwrap();
+        let object = distribution
+            .objects
+            .store(&serde_json::to_vec(&inventory).unwrap())
+            .unwrap();
+        distribution
+            .authority
+            .lock()
+            .unwrap()
+            .apply(AuthorityTransition::Publish(inventory.reference(object)))
+            .unwrap();
+        let restored = distribution.authority.lock().unwrap().current().clone();
+        let publications = Publications::default();
+        let filter = BlockFilter::build(
+            &genesis,
+            BlockId {
+                height: activation,
+                hash: [3; 32],
+            },
+            [0; 32],
+            &[],
+        )
+        .unwrap();
+        assert!(publications.publish_filters(
+            receiver_pir_server::blocks::BlockWindow::new(genesis, 0, vec![filter]).unwrap(),
+            0
+        ));
+        distribution
+            .export(&publications, &pir_pipeline::engine::PublisherEngine)
+            .await
+            .unwrap();
+        assert_eq!(*distribution.authority.lock().unwrap().current(), restored);
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn https_hints_reuse_objects_and_durable_withdrawals_fence_restarts() {
         let genesis = Network::Mainnet.genesis_hash();
@@ -790,6 +941,23 @@ mod tests {
             }
         };
         let first = export(Distribution::open(root.path().into(), rpc.clone(), 600).unwrap()).await;
+        // A restart serves its last tables again under its own recovery epoch,
+        // but only for the history revision they were built from, and once.
+        let restarted = Distribution::open(root.path().into(), rpc.clone(), 600).unwrap();
+        let publications = Publications::default();
+        restarted.attach(&publications);
+        let revision = first.descriptor.history_revision;
+        assert!(!restarted
+            .restore(&publications, revision + 1)
+            .await
+            .unwrap());
+        assert!(restarted.restore(&publications, revision).await.unwrap());
+        let current = restarted.authority.lock().unwrap().current().clone();
+        assert!(current.eligible);
+        let restored = current.publication.unwrap();
+        assert!(restored.descriptor.recovery_epoch > first.descriptor.recovery_epoch);
+        assert_eq!(restored.descriptor.filters, first.descriptor.filters);
+        assert!(!restarted.restore(&publications, revision).await.unwrap());
         // The restart offers no authority until it exports again; a query server
         // that saw that withdrawal never serves the earlier publication again.
         let second = export(Distribution::open(root.path().into(), rpc, 600).unwrap()).await;

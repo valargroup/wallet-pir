@@ -175,7 +175,83 @@ async fn local_publication_needs_no_consumers_and_never_reuses_prewithdrawal_wor
     let old_work = publisher.work(&journal).unwrap();
     assert!(old_work.is_none());
     drop(publisher);
+    let engine = || crate::host_engine::PublisherEngine;
+    // A restart withdraws the publication; one whose anchor cannot be checked stays so.
+    let unchecked = EnhancePublisher::open(
+        &publisher_root,
+        self::rpc(root.path(), "http://127.0.0.1:1"),
+    )
+    .unwrap();
+    assert!(!unchecked.distribution.durable_current().eligible);
+    assert!(unchecked
+        .restore(engine(), Default::default())
+        .await
+        .is_err());
+    assert!(!unchecked.distribution.durable_current().eligible);
+    drop(unchecked);
+    // Checked again, the same publication serves under the restart's withdrawal fence,
+    // so leases granted before the restart stay void, and its prefix needs no new work.
+    let publisher = EnhancePublisher::open(&publisher_root, rpc.clone()).unwrap();
+    assert!(publisher
+        .restore(engine(), Default::default())
+        .await
+        .unwrap());
+    let restored = publisher.distribution.durable_current();
+    assert!(restored.eligible);
+    assert!(publisher.state.lock().unwrap().last_advancement.is_some());
+    assert_eq!(restored.manifest, before_restart.manifest);
+    assert!(restored.withdrawal_revision > before_restart.withdrawal_revision);
+    assert!(publisher.work(&journal).unwrap().is_none());
+    assert!(!publisher
+        .restore(engine(), Default::default())
+        .await
+        .unwrap());
+    drop(publisher);
+    // A start that adopted a rebuilt journal never serves the previous publication.
+    let rebuilt = EnhancePublisher::open(&publisher_root, rpc.clone()).unwrap();
+    rebuilt.forgo_restore();
+    assert!(!rebuilt.restore(engine(), Default::default()).await.unwrap());
+    assert!(!rebuilt.distribution.durable_current().eligible);
+    drop(rebuilt);
+    // An object whose bytes changed keeps the publication withdrawn.
+    let objects = publisher_root.join("https").join("objects");
+    let changed = fs::read_dir(&objects)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .min_by_key(|path| fs::metadata(path).unwrap().len())
+        .unwrap();
+    let original = fs::read(&changed).unwrap();
+    let mut bytes = original.clone();
+    *bytes.last_mut().unwrap() ^= 1;
+    let mut permissions = fs::metadata(&changed).unwrap().permissions();
+    #[allow(clippy::permissions_set_readonly_false)]
+    permissions.set_readonly(false);
+    fs::set_permissions(&changed, permissions.clone()).unwrap();
+    fs::write(&changed, &bytes).unwrap();
+    let publisher = EnhancePublisher::open(&publisher_root, rpc.clone()).unwrap();
+    assert!(publisher
+        .restore(engine(), Default::default())
+        .await
+        .is_err());
+    assert!(!publisher.distribution.durable_current().eligible);
+    drop(publisher);
+    fs::write(&changed, &original).unwrap();
+    // A recovery fence raised after the publication keeps it withdrawn too.
+    let publisher = EnhancePublisher::open(&publisher_root, rpc.clone()).unwrap();
+    let current = publisher.distribution.durable_current();
+    publisher
+        .distribution
+        .withdraw(&enhance_shared::publication::Revocation {
+            recovery_epoch: current.recovery_epoch + 1,
+            sessions: current.revoked.clone(),
+        })
+        .unwrap();
+    drop(publisher);
     let publisher = EnhancePublisher::open(&publisher_root, rpc).unwrap();
+    assert!(publisher
+        .restore(engine(), Default::default())
+        .await
+        .is_err());
     assert!(!publisher.distribution.durable_current().eligible);
     assert!(
         publisher.distribution.durable_current().withdrawal_revision

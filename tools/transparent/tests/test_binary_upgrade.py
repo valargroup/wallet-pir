@@ -399,7 +399,7 @@ HISTORY_LISTEN, DISPLAY_LISTEN = '10.142.0.3:8096', '127.0.0.1:8098'
 
 
 class UnifiedOwner:
-    """The live topology after `publisher-cutover-*`: pir-publisher.service owns both products' controller duties.
+    """The live unified topology: pir-publisher.service owns both products' controller duties.
 
     The standalone controllers are stopped and disabled, the inventory names no
     product controller role, and the workers of both products keep their units.
@@ -468,7 +468,7 @@ class UnifiedOwner:
         for action, extra in (('preflight', ()), ('deploy', ('--skip-exact-check',))):
             code, lines = self.run_cli(action, '--binary', str(self.controller_binary), *extra)
             self.assertEqual(code, 1, lines)
-            self.assertTrue(any('publisher-cutover-*' in line for line in lines), lines)
+            self.assertTrue(any('pir-deploy publisher' in line for line in lines), lines)
         self.assertEqual(self.fake.probe_unit('coordinator', PUBLISHER)['exe_sha256'], sha256(b'pir-publisher'))
         self.publisher_untouched()
 
