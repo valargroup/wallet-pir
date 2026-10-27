@@ -2,6 +2,13 @@
 
 ## 0.0.1 — Unreleased
 
+- A restarted publisher serves Enhance again sooner. Verification hashes a
+  publication's objects on up to four threads instead of one, and preparation
+  hashes each unit's rows once instead of twice. On the production host, where
+  hashing is about 17 s of one core per publication, this shortens the gap after
+  every publisher start. Each committed publication logs how long it took to build
+  and verify and how much it hashed.
+
 - A publisher stop ends Enhance publication building and verification at the
   next shard, unit or object, including between the units, hint and packing of a
   changed shard, so a stop mid-preparation no longer waits up to 26 s.

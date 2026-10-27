@@ -9,6 +9,14 @@ enum Source {
     Inventory(Inventory),
     Prepared(PreparedPublication),
 }
+/// One publication's phase durations and verification work, for its commit log.
+#[derive(Default)]
+struct Timings {
+    started: Option<std::time::Instant>,
+    build: Option<std::time::Duration>,
+    verify: Option<std::time::Duration>,
+    hashed: publication::VerificationStats,
+}
 pub enum Material {
     Inventory(Inventory),
     Prepared(PreparedPublication),
@@ -21,6 +29,8 @@ pub struct EnhancePublication<'a> {
     manifest: Manifest,
     predecessor: Current,
     bind_material: bool,
+    /// When building and verifying started, and how long each took.
+    timings: Timings,
     _permit: Option<tokio::sync::OwnedSemaphorePermit>,
     _preparation: File,
 }
@@ -47,6 +57,7 @@ impl<'a> EnhancePublication<'a> {
             manifest,
             predecessor: distribution.durable_current(),
             bind_material: false,
+            timings: Timings::default(),
             _permit: None,
             _preparation: preparation,
         })
@@ -123,6 +134,7 @@ impl pir_pipeline::publisher::Publication for EnhancePublication<'_> {
         Ok(())
     }
     async fn build(&mut self) -> Result<Material, String> {
+        self.timings.started = Some(std::time::Instant::now());
         match self.source.take().expect("source consumed once") {
             Source::Journal(snapshot) => {
                 let root = self.distribution.root().to_path_buf();
@@ -159,7 +171,9 @@ impl pir_pipeline::publisher::Publication for EnhancePublication<'_> {
     async fn verify(&mut self, material: Material) -> Result<PreparedPublication, String> {
         let root = self.distribution.root().to_path_buf();
         let shutdown = self.shutdown.clone();
-        tokio::task::spawn_blocking(move || {
+        let verifying = std::time::Instant::now();
+        self.timings.build = self.timings.started.map(|started| verifying - started);
+        let prepared = tokio::task::spawn_blocking(move || {
             let stop = || shutdown.requested();
             match material {
                 Material::Inventory(inventory) => {
@@ -169,7 +183,10 @@ impl pir_pipeline::publisher::Publication for EnhancePublication<'_> {
             }
         })
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())??;
+        self.timings.verify = Some(verifying.elapsed());
+        self.timings.hashed = prepared.verification_stats();
+        Ok(prepared)
     }
     async fn assemble(&mut self, prepared: PreparedPublication) -> Result<Object, String> {
         let inventory = prepared.inventory();
@@ -209,6 +226,18 @@ impl pir_pipeline::publisher::Publication for EnhancePublication<'_> {
         // cannot reset the alert's clock.
         if let Some(owner) = self.owner {
             owner.state.lock().unwrap().last_advancement = Some(std::time::SystemTime::now());
+            let t = &self.timings;
+            tracing::info!(
+                height = self.manifest.anchor_height,
+                generation = self.manifest.generation,
+                build_seconds = t.build.unwrap_or_default().as_secs_f64(),
+                verify_seconds = t.verify.unwrap_or_default().as_secs_f64(),
+                total_seconds = t.started.map(|s| s.elapsed().as_secs_f64()),
+                hashed_files = t.hashed.files,
+                hashed_bytes = t.hashed.bytes,
+                reused_files = t.hashed.reused,
+                "Enhance publication committed"
+            );
         }
         Ok(())
     }
