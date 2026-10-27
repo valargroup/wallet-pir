@@ -28,6 +28,8 @@ struct PublisherRuntimeState {
     error: Option<String>,
     last_advancement: Option<std::time::SystemTime>,
     consecutive_failures: u64,
+    /// Whether [`EnhancePublisher::restore`] may still serve the previous publication.
+    restorable: bool,
 }
 
 /// A bounded work token pins the committed journal prefix and the withdrawal
@@ -65,6 +67,12 @@ impl EnhancePublisher {
     /// returned work before changing journal bytes.
     pub fn work(&self, journal: &RecordJournal) -> Result<Option<PublicationWork>, String> {
         self.reserve_work(journal)
+    }
+
+    /// Never serve the previous publication again in this process, as after adopting a
+    /// rebuilt journal whose records differ from the ones it was built from.
+    pub fn forgo_restore(&self) {
+        self.state.lock().unwrap().restorable = false;
     }
 
     pub fn distribution(&self) -> &PublicationDistribution {
