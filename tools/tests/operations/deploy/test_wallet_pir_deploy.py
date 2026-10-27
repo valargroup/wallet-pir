@@ -26,7 +26,7 @@ from fake_fleet import FakeFleet, sha256  # noqa: E402
 from wallet_pir_ops import release  # noqa: E402
 from wallet_pir_ops.deploy import descriptors, host_helper, units  # noqa: E402
 from wallet_pir_ops.deploy.engine import Deployer, DeployError  # noqa: E402
-from wallet_pir_ops.deploy.remote import HELPER, LockHeld, SSHExecutor  # noqa: E402
+from wallet_pir_ops.deploy.remote import HELPER, LockHeld, ProductionLock, SSHExecutor, production_lock  # noqa: E402
 from wallet_pir_ops.deploy.transaction import Journal  # noqa: E402
 
 class ImmutableWrapperSource(unittest.TestCase):
@@ -1269,6 +1269,65 @@ class LocalExecutor(SSHExecutor):
 
     def transport(self, host):
         return ['sh', '-c']
+
+
+class BinaryRolloutLockTests(unittest.TestCase):
+    """An operation refuses while `pir-deploy` holds the production lock through `pirctl hold`."""
+
+    def setUp(self):
+        from test_pirctl import FLOCK, PIRCTL, PRODUCTION_LOCK, write_executable
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(os.path.realpath(self.temp.name))
+        self.lock = self.root / PRODUCTION_LOCK
+        self.bin = self.root / 'bin'
+        self.bin.mkdir()
+        if not shutil.which('flock'):
+            write_executable(self.bin / 'flock', FLOCK)
+        self.env = dict(os.environ, PATH='%s:%s' % (self.bin, os.environ['PATH']), PIRCTL_ROOT=str(self.root))
+        self.rollout = subprocess.Popen([str(PIRCTL), 'hold', 'roman@mac-1'], env=self.env, stdin=subprocess.PIPE,
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.assertEqual(self.rollout.stdout.readline(), 'locked\n')
+        self.machine = self.root / 'machine-id'
+        self.machine.write_text('1' * 32 + '\n')
+
+    def tearDown(self):
+        self.rollout.kill()
+        self.rollout.communicate(timeout=10)
+        self.temp.cleanup()
+
+    def end_rollout(self):
+        self.rollout.communicate(timeout=10)
+        self.assertEqual(self.rollout.returncode, 0)
+
+    def test_an_operation_through_ssh_names_the_rollout_and_runs_after_it(self):
+        class Local(SSHExecutor):
+            def transport(self, host):
+                return ['sh', '-c']
+        env = mock.patch.dict(os.environ, PATH=self.env['PATH'])
+        inventory = dataclasses.make_dataclass('Inventory', ['lock'])({'type': 'remote', 'host': 'coordinator'})
+        with env, mock.patch('wallet_pir_ops.deploy.remote.LOCK_PATH', str(self.lock)):
+            with self.assertRaisesRegex(LockHeld, 'is held by pir-deploy roman@mac-1 since .*; wait for it to finish'):
+                with production_lock(inventory, Local(None)):
+                    self.fail('took a lock a binary rollout holds')
+            self.end_rollout()
+            with production_lock(inventory, Local(None)) as held:
+                held.verify()
+
+    def test_an_operation_on_the_coordinator_names_the_rollout_and_runs_after_it(self):
+        inventory = dataclasses.make_dataclass('Inventory', ['lock'])({'type': 'pinned_host', 'machine_id': '1' * 32})
+        with mock.patch.object(ProductionLock, 'PATH', self.lock), \
+                mock.patch.object(ProductionLock, 'MACHINE_ID', self.machine), \
+                mock.patch.object(ProductionLock, 'ROOT_UID', os.geteuid()):
+            # Callers that wait for the lock still see a BlockingIOError.
+            with self.assertRaisesRegex(BlockingIOError, 'is held by pir-deploy roman@mac-1 since'):
+                with production_lock(inventory, None):
+                    self.fail('took a lock a binary rollout holds')
+            self.end_rollout()
+            self.lock.write_text('pir-deploy stale since earlier\n')
+            with production_lock(inventory, None) as held:
+                held.verify()
+                # The operation clears any name an earlier holder left behind.
+                self.assertEqual(self.lock.read_text(), '')
 
 
 class MultiplexTests(unittest.TestCase):

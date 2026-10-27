@@ -31,6 +31,9 @@
 #                                         this host) through a public origin
 #   pirctl adopt    <component>           move a running unit onto this layout (no restart)
 #   pirctl lease    take <owner> <seconds> | drop <owner>     fleet-wide deploy lease
+#   pirctl hold     <owner>               hold the production lock until stdin closes
+#   pirctl fence                          refuse while a schema transaction is unfinished
+#                                         (reads the check's Python source on stdin)
 #   pirctl alerts   begin <id> [--seconds N] <names...> | finish <id> [--failed]
 #   pirctl self-update <sha>
 set -euo pipefail
@@ -42,6 +45,7 @@ PROC=${PIRCTL_PROC:-/proc}
 LOG=${PIRCTL_LOG:-$ROOT/var/log/pirctl.log}
 LOCK=${PIRCTL_LOCK:-$ROOT/run/lock/pirctl.lock}
 LEASE=$ROOT/run/wallet-pir/deploy.lease
+PRODUCTION_LOCK=$ROOT/run/lock/wallet-pir-production.lock
 RELEASES=${PIRCTL_RELEASES:-https://github.com/valargroup/wallet-pir/releases/download}
 READY_SECONDS=${PIRCTL_READY_SECONDS:-120}
 COLD_SECONDS=3600
@@ -333,6 +337,48 @@ lease() {
   esac
 }
 
+# Holds the coordinator's production lock, the one tools/scripts/wallet-pir-deploy.py
+# and the Transparent operations take, until stdin closes, so a binary rollout and
+# those operations never change the fleet at once. The lock file names its holder for
+# whoever is refused; other holders clear the name when they take the lock.
+hold() {
+  local owner=$1 holder
+  mkdir -p "$(dirname "$PRODUCTION_LOCK")"
+  # The Python side refuses a lock file that is not private to root.
+  (umask 077; : >>"$PRODUCTION_LOCK")
+  exec 8>>"$PRODUCTION_LOCK"
+  if ! flock -n 8; then
+    holder=$(head -c 300 "$PRODUCTION_LOCK" | tr '\n' ' ')
+    die "the production lock is held by ${holder:-a wallet-pir-deploy.py or Transparent operation}; wait for it to finish"
+  fi
+  printf 'pir-deploy %s since %s\n' "$owner" "$(date -u +%FT%TZ)" >"$PRODUCTION_LOCK"
+  log "production lock taken by $owner"
+  echo locked
+  # Only this shell holds the lock, so it ends with this shell even if cat outlives it.
+  cat >/dev/null 8>&- || true
+  : >"$PRODUCTION_LOCK"
+  log "production lock released by $owner"
+}
+
+# Runs the check wallet-pir-deploy.py makes before any change (its source arrives on
+# stdin, from tools/lib/wallet_pir_ops/schema_fence.py) against this host's records of
+# Transparent schema transactions, host actions and input staging. Read-only.
+fence() {
+  local reason
+  reason=$(python3 -I -c 'import sys, types
+fence = types.ModuleType("schema_fence")
+exec(compile(sys.stdin.read(), "schema_fence.py", "exec"), fence.__dict__)
+root = sys.argv[1]
+fence.HOST_ACTIONS = fence.Path(root + str(fence.HOST_ACTIONS))
+fence.INPUT_STAGING = fence.Path(root + str(fence.INPUT_STAGING))
+try:
+    fence.local_schema_fence(fence.Path(root + str(fence.SCHEMA_STATE)))
+except ValueError as error:
+    print(error)
+    sys.exit(1)' "$ROOT") || die "${reason:-the schema fence check failed}"
+  say "schema fence: no unfinished operation"
+}
+
 # Opens or closes APM's notification window through the running pir-apm, using its
 # own state path; the window closes by itself after the seconds begin names.
 alerts() {
@@ -364,7 +410,7 @@ shift
 mkdir -p "$(dirname "$LOCK")"
 exec 9>"$LOCK"
 case $command in
-  status|lease|alerts|public) ;;
+  status|lease|alerts|public|hold|fence) ;;
   *) flock -n 9 || die "another pirctl command is running on this host" ;;
 esac
 case $command in
@@ -378,6 +424,8 @@ case $command in
   public) public "$1" "$2" "${3:-}" ;;
   lease) lease "$@" ;;
   alerts) alerts "$@" ;;
+  hold) hold "$1" ;;
+  fence) fence ;;
   self-update) self_update "$1" ;;
   *) die "unknown command $command" ;;
 esac

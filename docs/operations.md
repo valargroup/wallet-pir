@@ -38,7 +38,9 @@ the components on that host.
 [`pir-deploy`](../tools/deploy/pir-deploy) runs `pirctl` over SSH, from a workstation
 or from the [Deploy workflow](../.github/workflows/deploy.yml). It reads an inventory
 kept outside the repository. Before it starts it takes a lease on the publisher host,
-so two deploys never overlap, and it opens APM's deployment window (see below):
+so two deploys never overlap, takes the production lock (see
+[One change at a time](#one-change-at-a-time)) and opens APM's deployment window
+(see below):
 
 | Mode | Command | What restarts |
 |---|---|---|
@@ -52,8 +54,8 @@ so two deploys never overlap, and it opens APM's deployment window (see below):
 Every host is prepared before anything restarts. If any component in a wave fails, the
 deploy stops: the components of that wave that had already moved are rolled back, and
 later waves never start. A partial mode refuses a release whose contract major differs
-from the live publisher's. `pir-deploy --dry-run <mode> ...` takes no lease and restarts
-nothing. On every selected host it unpacks the build, has the new binary accept the
+from the live publisher's. `pir-deploy --dry-run <mode> ...` takes no lease or lock and
+restarts nothing; it still refuses a fenced fleet. On every selected host it unpacks the build, has the new binary accept the
 host's config, and runs that build's `pir-probe` against the service running now. Then
 it prints the waves that would restart. Every deploy and dry run ends with one probe
 per product through the public origins wallets use (Enhance and Status through
@@ -104,6 +106,29 @@ keys are the `production` environment's `PIR_DEPLOY_INVENTORY`, `PIR_DEPLOY_SSH_
 and `PIR_DEPLOY_KNOWN_HOSTS` variables; the key is the `WALLET_PIR_DEPLOY_SSH_KEY`
 secret, whose public half every inventory host must authorize for root. A workstation
 deploy and a workflow deploy share the lease, so they never overlap.
+
+### One change at a time
+
+Every production change holds the coordinator's production lock
+`/run/lock/wallet-pir-production.lock` for its whole length, and none starts while a
+Transparent schema transaction, remote host action or input staging is unfinished
+(the fence, `tools/lib/wallet_pir_ops/schema_fence.py`). Binary rollouts by
+`pir-deploy` and the operations run by `tools/scripts/wallet-pir-deploy.py` and the
+Transparent tools all follow this rule, so they never run at once. The publisher's
+host is the coordinator, so `pir-deploy` takes the lock there with `pirctl hold` over
+an SSH session of its own, after its lease and before anything restarts. The session
+ends with the deploy, and the lock with it, even if `pir-deploy` dies. `pir-deploy`
+then sends the fence's source to `pirctl fence`, which runs it against the
+coordinator's records. It checks that the session is still alive before each wave.
+
+A refused tool names the holder when it knows it: `pirctl hold` writes
+`pir-deploy <owner> since <time>` into the lock file, and whoever takes the lock
+clears that name. A held lock makes `pir-deploy` stop with
+`the production lock is held by ...` before it changes anything, and makes a Python
+operation stop with `... is held by pir-deploy <owner> since <time>`. An unfinished
+transaction makes `pir-deploy` stop with the fence's reason; reconcile it with
+`wallet-pir-deploy.py` first. `pir-deploy status` and `self-update` take neither the
+lease nor the lock.
 
 ## Architecture and ownership
 
