@@ -45,6 +45,7 @@ pub fn sealed(
     shard: &SealedShard,
     tip: &Checkpoint,
     history_revision: u64,
+    stop: &dyn Fn() -> bool,
 ) -> Result<BuiltShard, Error> {
     let genesis = store.config().genesis;
     let parent = store.checkpoint(shard.start_height - 1)?;
@@ -83,7 +84,7 @@ pub fn sealed(
         let salts =
             (0..SALT_ATTEMPTS).map(|attempt| seal::salt(&parent.hash, index as u32, attempt));
         let snapshot = receiver_store::table(template.clone(), records, salts)?;
-        segments.push(build(store, witnesses, snapshot, tip)?);
+        segments.push(build(store, witnesses, snapshot, tip, stop)?);
     }
     let coverage = Coverage {
         start_height: shard.start_height,
@@ -111,6 +112,7 @@ pub fn recent(
     min_rows: u32,
     policy: &Policy,
     history_revision: u64,
+    stop: &dyn Fn() -> bool,
 ) -> Result<Built, Error> {
     let records = store.records(from, tip.height)?;
     let mut rows = u32::try_from((records.len() as u64 / 7 + 1).next_power_of_two())
@@ -143,20 +145,25 @@ pub fn recent(
             Err(error) => return Err(error),
         }
     };
-    build(store, witnesses, snapshot, tip)
+    halt(stop)?;
+    build(store, witnesses, snapshot, tip, stop)
 }
 
 /// Builds `snapshot`'s companion at `tip` and checks both: every record, and every final
-/// payload against its Ironwood shard's recorded root.
+/// payload against its Ironwood shard's recorded root. A `stop` ends it between steps
+/// and during the check, which takes seconds for a tip segment.
 fn build(
     store: &mut Store,
     witnesses: &mut Witnesses,
     snapshot: Snapshot,
     tip: &Checkpoint,
+    stop: &dyn Fn() -> bool,
 ) -> Result<Built, Error> {
     let leaves = leaves(&snapshot)?;
+    halt(stop)?;
     let (table, frozen) = companion(store, witnesses, &snapshot.manifest, &leaves, tip)?;
-    check(store, &leaves, &table)?;
+    halt(stop)?;
+    check(store, &leaves, &table, stop)?;
     Ok(Built {
         snapshot,
         witnesses: table,
@@ -180,9 +187,11 @@ pub fn rewitness(
     payments: &Manifest,
     leaves: &[(u64, Hash, u32)],
     tip: &Checkpoint,
+    stop: &dyn Fn() -> bool,
 ) -> Result<(witness::Table, Option<Checkpoint>), Error> {
     let (table, frozen) = companion(store, witnesses, payments, leaves, tip)?;
-    check(store, leaves, &table)?;
+    halt(stop)?;
+    check(store, leaves, &table, stop)?;
     Ok((table, frozen))
 }
 
@@ -212,10 +221,23 @@ fn companion(
     Ok((witnesses::table_at(m, &payloads, &context)?, frozen))
 }
 
+/// [`Error::Stopped`] once `stop` is true.
+fn halt(stop: &dyn Fn() -> bool) -> Result<(), Error> {
+    match stop() {
+        true => Err(Error::Stopped),
+        false => Ok(()),
+    }
+}
+
 /// Checks `table` against `leaves` and every final payload against the store's recorded
 /// root of its Ironwood shard.
-fn check(store: &Store, leaves: &[(u64, Hash, u32)], table: &witness::Table) -> Result<(), Error> {
-    for (shard, root) in verify::check_witnesses(leaves, table)? {
+fn check(
+    store: &Store,
+    leaves: &[(u64, Hash, u32)],
+    table: &witness::Table,
+    stop: &dyn Fn() -> bool,
+) -> Result<(), Error> {
+    for (shard, root) in verify::check_witnesses_until(leaves, table, stop)? {
         let shard = u32::try_from(shard).map_err(|_| Error::Malformed)?;
         if store.completed_shard(shard)?.map(|s| s.root) != Some(root) {
             return Err(Error::Coverage);

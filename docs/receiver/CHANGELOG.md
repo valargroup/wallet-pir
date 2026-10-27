@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- A publisher stop also ends the open tip shard's build, which checks every
+  witness against its shard root and took about 18 s each pass: the build asks for
+  a stop between its steps and every 256 checked records, so a stop during that
+  check no longer holds the publisher for up to 18 s.
+
 - A restarted publisher no longer replaces the Receiver publication it restored
   with one that has block filters but no tables while it rebuilds them, and query
   servers reuse the tables they already loaded when a publication names the same

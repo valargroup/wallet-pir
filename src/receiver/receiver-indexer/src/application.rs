@@ -69,8 +69,8 @@ pub struct State {
     sealer: Option<Sealer>,
     kept: Vec<Kept>,
     durable: Option<crate::durable::Durable>,
-    /// A requested stop ends shard building between shards; nothing a later
-    /// pass reuses is replaced until every shard is built.
+    /// A requested stop ends shard building between shards and inside a shard's
+    /// witness check; nothing a later pass reuses is replaced until every shard is built.
     stop: Option<pir_pipeline::service::Shutdown>,
 }
 
@@ -530,9 +530,10 @@ impl<'a> Collected<'a> {
         let mut layout = Vec::new();
         let (mut records, mut segments) = (0u64, 0usize);
         let mut next_kept = Vec::new();
+        let stopped = || stop.as_ref().is_some_and(|stop| stop.requested());
         for shard in sealed_shards.iter().map(Some).chain([None]) {
-            if stop.as_ref().is_some_and(|stop| stop.requested()) {
-                return Err("Receiver stopped while building shards".into());
+            if stopped() {
+                return Err(Error::Stopped.into());
             }
             let plan = match shard {
                 Some(shard) => {
@@ -570,7 +571,7 @@ impl<'a> Collected<'a> {
                                         .ok_or(Error::Malformed)?
                                         .directory;
                                     let (table, frozen) = crate::shards::rewitness(
-                                        store, witnesses, payments, &leaves, &tip,
+                                        store, witnesses, payments, &leaves, &tip, &stopped,
                                     )?;
                                     segment.leaves = Some(leaves);
                                     Part::Witness(segment, Box::new((table, frozen)))
@@ -583,8 +584,9 @@ impl<'a> Collected<'a> {
                             }
                         }
                         None => {
-                            let built =
-                                crate::shards::sealed(store, witnesses, shard, &tip, revision)?;
+                            let built = crate::shards::sealed(
+                                store, witnesses, shard, &tip, revision, &stopped,
+                            )?;
                             Plan {
                                 sealed: Some((built.shard, built.end)),
                                 parts: built
@@ -612,6 +614,7 @@ impl<'a> Collected<'a> {
                         args.min_rows,
                         sealer.policy(),
                         revision,
+                        &stopped,
                     )?;
                     Plan {
                         sealed: None,
