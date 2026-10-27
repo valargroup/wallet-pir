@@ -608,14 +608,16 @@ impl<'a> Collected<'a> {
                     }
                     let recent = crate::shards::recent(
                         store,
-                        witnesses,
                         from,
                         &tip,
                         args.min_rows,
                         sealer.policy(),
                         revision,
-                        &stopped,
                     )?;
+                    if stopped() {
+                        return Err(Error::Stopped.into());
+                    }
+                    let recent = crate::shards::build(store, witnesses, recent, &tip, &stopped)?;
                     Plan {
                         sealed: None,
                         parts: vec![Part::Fresh(Box::new(recent))],

@@ -178,7 +178,7 @@ impl VerificationPass {
         };
         let results: Vec<Result<Vec<_>, String>> = std::thread::scope(|scope| {
             let threads: Vec<_> = (0..HASHING_THREADS.min(fresh.len()))
-                .map(|_| scope.spawn(&hash))
+                .map(|_| scope.spawn(hash))
                 .collect();
             threads
                 .into_iter()

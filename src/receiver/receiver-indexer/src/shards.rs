@@ -100,25 +100,24 @@ pub fn sealed(
     })
 }
 
-/// The recent tier, the blocks from `from` through `tip`. Its payment table starts at
+/// The recent tier's payment table, the blocks from `from` through `tip`; [`build`]
+/// adds its companion. The table starts at
 /// half occupancy and grows by powers of two, retrying salts from the tip's hash as a
 /// single table always has; the sealer guarantees it places in `policy`'s pinned
 /// geometry, whose salts are the last resort.
 pub fn recent(
     store: &mut Store,
-    witnesses: &mut Witnesses,
     from: u32,
     tip: &Checkpoint,
     min_rows: u32,
     policy: &Policy,
     history_revision: u64,
-    stop: &dyn Fn() -> bool,
-) -> Result<Built, Error> {
+) -> Result<Snapshot, Error> {
     let records = store.records(from, tip.height)?;
     let mut rows = u32::try_from((records.len() as u64 / 7 + 1).next_power_of_two())
         .map_err(|_| Error::Capacity)?
         .max(min_rows);
-    let snapshot = loop {
+    loop {
         if rows > MAX_ROWS {
             let parent = store.checkpoint(from - 1)?;
             let template = Manifest {
@@ -137,22 +136,20 @@ pub fn recent(
                 data_sha256: [0; 32],
             };
             let salts = (0..SALT_ATTEMPTS).map(|attempt| seal::salt(&parent.hash, 0, attempt));
-            break receiver_store::table(template, records, salts)?;
+            return receiver_store::table(template, records, salts);
         }
         match store.snapshot_from(from, rows, history_revision) {
-            Ok(snapshot) => break snapshot,
+            Ok(snapshot) => return Ok(snapshot),
             Err(Error::Capacity) => rows *= 2,
             Err(error) => return Err(error),
         }
-    };
-    halt(stop)?;
-    build(store, witnesses, snapshot, tip, stop)
+    }
 }
 
 /// Builds `snapshot`'s companion at `tip` and checks both: every record, and every final
 /// payload against its Ironwood shard's recorded root. A `stop` ends it between steps
 /// and during the check, which takes seconds for a tip segment.
-fn build(
+pub fn build(
     store: &mut Store,
     witnesses: &mut Witnesses,
     snapshot: Snapshot,
