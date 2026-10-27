@@ -66,7 +66,9 @@ link without restarting it. It sets aside drop-ins that only repeat `ExecStart`.
 
 The Deploy workflow is dispatched by hand and runs on the coordinator's self-hosted
 runner, inside the private network. Its inputs mirror the command line (mode, target,
-sha, cold, breaking) and it is a dry run unless `dry_run` is unchecked. It runs
+sha, cold, breaking) and it is a dry run unless `dry_run` is unchecked. The sha may be
+any commit with a published `build-<sha12>` release, including a branch build; it
+warns when the commit is not on main. It runs
 `pir-deploy self-update <sha>` first, so every host's `pirctl` matches the build, and
 ends with `pir-deploy status`. The inventory, the SSH host aliases and the pinned host
 keys are the `production` environment's `PIR_DEPLOY_INVENTORY`, `PIR_DEPLOY_SSH_CONFIG`
