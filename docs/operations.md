@@ -65,7 +65,8 @@ shard being built, and the new process serves Receiver's last publication, table
 included, until it has rebuilt them; query servers reuse the tables they already
 loaded for it. Enhance's last publication is withdrawn at the start, which voids the
 old process's leases, and serves again a few seconds later once its objects hash
-correctly, its anchor is still on the chain and no fence was raised since (log line
+correctly, its anchor is still on the chain, no fence was raised since and this start
+adopted no rebuilt journal (log line
 `Enhance serves its previous publication again`, or `stays withdrawn` with the
 reason). `Enhance publication committed` gives each publication's build and verify
 times. Query
