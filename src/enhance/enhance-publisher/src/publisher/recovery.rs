@@ -19,6 +19,9 @@ use tokio::sync::Semaphore;
 
 /// Names the inventory of a publication [`EnhancePublisher::forgo_restore`] refused.
 const FORGONE_RESTORE: &str = "restore-forgone";
+/// Armed before a staged journal swap. Committed only once that swap replaces
+/// the live journal; a rejected swap deletes it.
+const FORGONE_PENDING: &str = "restore-forgone.pending";
 
 impl EnhancePublisher {
     pub(super) fn open_recovered(root: &Path, rpc: ZakuraClient) -> Result<Self, String> {
@@ -121,19 +124,102 @@ impl EnhancePublisher {
             _owner: Arc::new(owner),
         })
     }
-    /// Never serve the current publication again, in this process or after a restart,
-    /// as before adopting a rebuilt journal whose records may differ from the ones it
-    /// was built from. A later publication may be restored again.
+    /// Remember that adopting `receipt_id` would replace the journal this
+    /// publication was built from. The refusal is not in force until that swap
+    /// finishes: [`Self::settle_armed_forgo`] commits it, and
+    /// [`Self::disarm_forgo`] drops it when adoption keeps the live journal.
+    pub fn arm_forgo(&self, receipt_id: &str) -> Result<(), String> {
+        if !safe_receipt_id(receipt_id) {
+            return Err("rebuild receipt id is not a safe directory suffix".into());
+        }
+        let Some(object) = self.distribution.durable_current().inventory else {
+            return Ok(());
+        };
+        let record = format!("{}\n{receipt_id}\n", object.sha256);
+        self.write_refused(record.as_bytes(), FORGONE_PENDING)
+    }
+    /// The staged swap did not replace the live journal. Drop the armed
+    /// refusal; a refusal already committed by a finished swap stays.
+    pub fn disarm_forgo(&self) -> Result<(), String> {
+        self.remove_refused(FORGONE_PENDING)
+    }
+    /// Commit an armed refusal whose journal swap finished, including one whose
+    /// process died after the swap and before [`Self::forgo_restore`].
+    ///
+    /// The backup directory is the predecessor journal `adopt_staged` leaves
+    /// beside a live replacement. An interrupted swap has that backup and no
+    /// live journal yet, so it stays armed until adoption finishes or rejects.
+    /// A pending record whose swap neither finished nor is still staged was
+    /// rejected and is removed.
+    pub fn settle_armed_forgo(&self, data_dir: &Path) -> Result<(), String> {
+        let Some((hash, receipt_id)) = self.read_armed_forgo()? else {
+            return Ok(());
+        };
+        let replaced = data_dir
+            .join(format!("enhance.before-rebuild-{receipt_id}"))
+            .is_dir()
+            && data_dir.join("enhance").is_dir();
+        let still_staged = data_dir
+            .join(crate::rebuild::STAGED_DIR)
+            .join(crate::rebuild::RECEIPT_FILE)
+            .is_file();
+        if replaced {
+            self.write_refused(hash.as_bytes(), FORGONE_RESTORE)?;
+            self.remove_refused(FORGONE_PENDING)?;
+        } else if !still_staged {
+            self.remove_refused(FORGONE_PENDING)?;
+        }
+        Ok(())
+    }
+    /// Never serve the current publication again, in this process or after a restart.
+    /// Call only after a rebuilt journal has replaced the live one: its records may
+    /// differ from the ones this publication was built from. A later publication may
+    /// be restored again. A swap that has not finished is [`Self::arm_forgo`].
     pub fn forgo_restore(&self) -> Result<(), String> {
         self.state.lock().unwrap().restorable = false;
         let Some(object) = self.distribution.durable_current().inventory else {
             return Ok(());
         };
-        artifact::write_atomic(&self.root, FORGONE_RESTORE, |file| {
-            file.write_all(object.sha256.as_bytes())
-        })
-        .and_then(|_| File::open(&self.root)?.sync_all())
-        .map_err(|e| e.to_string())
+        self.write_refused(object.sha256.as_bytes(), FORGONE_RESTORE)?;
+        self.remove_refused(FORGONE_PENDING)
+    }
+    fn write_refused(&self, bytes: &[u8], name: &str) -> Result<(), String> {
+        artifact::write_atomic(&self.root, name, |file| file.write_all(bytes))
+            .and_then(|_| File::open(&self.root)?.sync_all())
+            .map_err(|e| e.to_string())
+    }
+    fn remove_refused(&self, name: &str) -> Result<(), String> {
+        let path = self.root.join(name);
+        if path.exists() {
+            fs::remove_file(&path).map_err(|e| e.to_string())?;
+            File::open(&self.root)
+                .map_err(|e| e.to_string())?
+                .sync_all()
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+    /// The armed inventory hash and receipt id, when the pending record is present
+    /// and well formed.
+    fn read_armed_forgo(&self) -> Result<Option<(String, String)>, String> {
+        let path = self.root.join(FORGONE_PENDING);
+        if !path.exists() {
+            return Ok(None);
+        }
+        let text = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        let mut lines = text.lines();
+        let hash = lines.next().unwrap_or("");
+        let receipt_id = lines.next().unwrap_or("");
+        if hash.len() == 64
+            && hash
+                .bytes()
+                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+            && safe_receipt_id(receipt_id)
+            && lines.next().is_none()
+        {
+            return Ok(Some((hash.to_string(), receipt_id.to_string())));
+        }
+        Err("armed Enhance restore refusal is corrupt".into())
     }
     /// Serve again the publication that was current when this publisher last stopped,
     /// once it is checked as a fresh publication would be. Opening withdrew it, so
@@ -227,6 +313,13 @@ impl EnhancePublisher {
         Ok(())
     }
 }
+fn safe_receipt_id(receipt_id: &str) -> bool {
+    !receipt_id.is_empty()
+        && receipt_id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+}
+
 fn persist_publisher_state(root: &Path, state: &PublisherState) -> Result<(), String> {
     let bytes = serde_json::to_vec(state).map_err(|e| e.to_string())?;
     if bytes.len() as u64 > enhance_shared::publication::METADATA_LIMIT {
