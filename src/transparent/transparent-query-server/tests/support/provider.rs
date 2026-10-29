@@ -1080,10 +1080,12 @@ async fn recent_query_survives_archive_deadline_after_acceptance() {
 }
 
 /// A later inventory skips only the native reload of runtimes whose exact
-/// bytes this process already self-checked; changed runtimes and segments
+/// bytes this process already self-checked, and the rehash of those whose
+/// files it hashed and are unchanged since; changed runtimes and segments
 /// are still refused.
 #[test]
 fn distribution_reuses_only_unchanged_checked_runtimes() {
+    use std::os::unix::fs::FileExt;
     use transparent_shared::publication::{CheckedRuntimes, Finalized, Kind};
     let dir = tempfile::tempdir().unwrap();
     let source = dir.path();
@@ -1093,6 +1095,9 @@ fn distribution_reuses_only_unchanged_checked_runtimes() {
         transparent_shared::runtime::prebuild::prepare_publication(&set, source, &[], &|| false)
             .unwrap();
     assert!(prepared.failures.is_empty());
+    // Hash evidence is kept only for files last modified before a settle
+    // interval preceding the read.
+    std::thread::sleep(std::time::Duration::from_millis(1100));
     let mut checked = CheckedRuntimes::default();
     let prepare = |checked: &mut CheckedRuntimes| {
         Finalized::prepare_reusing(source, &set, FIRST + 2, true, checked)
@@ -1107,8 +1112,10 @@ fn distribution_reuses_only_unchanged_checked_runtimes() {
         .collect();
     assert!(runtimes.len() > 1);
     assert_eq!((checked.loaded, checked.reused), (runtimes.len(), 0));
+    assert_eq!(checked.hashed, runtimes.len());
     let second = prepare(&mut checked).unwrap();
     assert_eq!((checked.loaded, checked.reused), (0, runtimes.len()));
+    assert_eq!(checked.hashed, 0, "unchanged checked runtimes are not reread");
     assert_eq!(second.sha256(), first.sha256());
     assert_eq!(
         second.sha256(),
@@ -1130,6 +1137,20 @@ fn distribution_reuses_only_unchanged_checked_runtimes() {
     assert!(Finalized::prepare_reusing(source, &set, FIRST + 1, true, &mut checked).is_err());
     prepare(&mut checked).unwrap();
     assert_eq!((checked.loaded, checked.reused), (0, runtimes.len()));
+    assert_eq!(checked.hashed, 0);
+
+    // A runtime changed in place keeps its inode and length, but not its
+    // stamp: it is hashed again, reloaded and refused.
+    let runtime = &runtimes[0];
+    let original = std::fs::read(runtime).unwrap();
+    let last = original.len() as u64 - 1;
+    let file = std::fs::File::options().write(true).open(runtime).unwrap();
+    file.write_all_at(&[original[last as usize] ^ 1], last).unwrap();
+    assert!(prepare(&mut checked).is_err());
+    file.write_all_at(&original[last as usize..], last).unwrap();
+    let restored = prepare(&mut checked).unwrap();
+    assert_eq!(restored.sha256(), first.sha256());
+    assert_eq!((checked.loaded, checked.reused, checked.hashed), (0, runtimes.len(), 1));
 
     // Damage every runtime in turn, so recovery cannot depend on which file
     // sorts first or where its validation falls in preparation traversal.
@@ -1162,4 +1183,9 @@ fn distribution_reuses_only_unchanged_checked_runtimes() {
     std::fs::write(&segment, original).unwrap();
     assert_eq!(prepare(&mut checked).unwrap().sha256(), first.sha256());
     assert_eq!((checked.loaded, checked.reused), (0, runtimes.len()));
+
+    // Evidence lives only in this process: a restart rehashes every runtime.
+    let mut restarted = CheckedRuntimes::default();
+    assert_eq!(prepare(&mut restarted).unwrap().sha256(), first.sha256());
+    assert_eq!(restarted.hashed, runtimes.len());
 }

@@ -449,9 +449,10 @@ impl Finalized {
     ) -> Result<Self, Error> {
         Self::prepare_holdings(root, set, recent_from_height, full, checked, stop)
     }
-    /// A table whose bytes `set` verified in this process, and whose file is
-    /// unchanged since, is listed with that verified digest instead of being
-    /// hashed again; any other file is hashed.
+    /// A table whose bytes `set` verified in this process, or a runtime whose
+    /// bytes this process hashed and the last inventory self-checked, is listed
+    /// with that digest while its file is unchanged since; any other file is
+    /// hashed.
     fn prepare_holdings(
         root: &Path,
         set: &ShardSet,
@@ -460,10 +461,11 @@ impl Finalized {
         checked: &mut CheckedRuntimes,
         stop: &(dyn Fn() -> bool + Sync),
     ) -> Result<Self, Error> {
-        let previous = &checked.passed;
         checked.loaded = 0;
         checked.reused = 0;
+        checked.hashed = 0;
         let mut passed = BTreeMap::new();
+        let mut evidence = BTreeMap::new();
         let recent = set
             .map
             .shards
@@ -565,6 +567,14 @@ impl Finalized {
                             segment,
                         );
                         let path = shipped.path(&key, shared, source.sha256());
+                        // Only bytes this process hashed and then loaded or
+                        // matched to a self-checked runtime carry evidence.
+                        let known = path
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                            .and_then(|name| checked.evidence.get(name))
+                            .cloned();
+                        let stamp = known.as_ref().map(|known| known.stamp);
                         if add(
                             path.clone(),
                             if local {
@@ -572,9 +582,9 @@ impl Finalized {
                             } else {
                                 Kind::ArchiveRuntime
                             },
-                            None,
+                            known,
                         )? {
-                            native.push((path, key, shared.clone(), source));
+                            native.push((path, key, shared.clone(), source, stamp));
                         }
                     }
                 }
@@ -583,14 +593,19 @@ impl Finalized {
         // Hash immutable artifacts on the existing bounded CPU pool. Native
         // handles stay open so the later self-check reads the inode just hashed.
         let mut runtimes = BTreeMap::new();
-        for (artifact, path, file) in hash_listed(root, pending, stop)? {
+        for (artifact, path, file, stamp) in hash_stamped(root, pending, stop)? {
             if let Some(expected) = sources.get(&path) {
                 if artifact.sha256 != *expected {
                     return Err("source segment differs from its manifest".into());
                 }
             }
             if let Some(file) = file {
-                runtimes.insert(path.clone(), (artifact.sha256.clone(), file));
+                let known = stamp.map(|stamp| Known {
+                    sha256: artifact.sha256.clone(),
+                    bytes: artifact.bytes,
+                    stamp,
+                });
+                runtimes.insert(path.clone(), (artifact.sha256.clone(), file, known));
             }
             if full || artifact.kind.local() {
                 files.insert(artifact.sha256.clone(), path);
@@ -598,16 +613,21 @@ impl Finalized {
             inventory.artifacts.push(artifact);
         }
         // Keep native loads sequential to bound resident runtime memory.
-        for (path, key, shared, source) in native {
+        for (path, key, shared, source, evidenced) in native {
             let name = path
                 .file_name()
                 .and_then(|name| name.to_str())
                 .ok_or("non-UTF8 runtime name")?
                 .to_owned();
-            let (sha256, file) = runtimes.remove(&path).ok_or("unhashed runtime")?;
+            let (sha256, file, known) = runtimes.remove(&path).ok_or("unhashed runtime")?;
+            // Listing from evidence returns exactly that stamp; a read whose
+            // file matched it would have been listed from evidence instead.
+            if evidenced.is_none() || known.as_ref().map(|known| known.stamp) != evidenced {
+                checked.hashed += 1;
+            }
             // The derived name binds parameters and source; the whole-file
             // digest binds the exact bytes checked by a previous inventory.
-            if previous.get(&name) == Some(&sha256) {
+            if checked.passed.get(&name) == Some(&sha256) {
                 checked.reused += 1;
             } else {
                 if stop() {
@@ -617,6 +637,9 @@ impl Finalized {
                     .self_check(&shared, &source.load()?)?;
                 checked.loaded += 1;
             }
+            if let Some(known) = known {
+                evidence.insert(name.clone(), known);
+            }
             passed.insert(name, sha256);
         }
         inventory.artifacts.sort_by(|a, b| a.path.cmp(&b.path));
@@ -625,6 +648,7 @@ impl Finalized {
         let bytes = serde_json::to_vec(&inventory)?;
         let sha256 = digest(&bytes);
         checked.passed = passed;
+        checked.evidence = evidence;
         Ok(Self {
             inventory,
             bytes,
@@ -638,13 +662,20 @@ impl Finalized {
 #[derive(Debug, Default)]
 pub struct CheckedRuntimes {
     pub(crate) passed: BTreeMap<String, String>,
+    /// History runtimes in `passed` whose listed digest this process hashed
+    /// from a file it can recognize unchanged by its settled stamp.
+    pub(crate) evidence: BTreeMap<String, Known>,
     /// Native runtimes loaded and self-checked by the last attempt.
     pub loaded: usize,
     /// Native runtimes matching earlier checked bytes in the last attempt.
     pub reused: usize,
+    /// History runtimes the last attempt read through SHA-256 rather than
+    /// listing with its evidence for the unchanged file.
+    pub hashed: usize,
 }
 
 /// A digest and length this process verified for a file with this stamp.
+#[derive(Clone, Debug)]
 pub(crate) struct Known {
     sha256: String,
     bytes: u64,
@@ -684,6 +715,19 @@ pub(crate) fn hash_listed(
     pending: Vec<(PathBuf, Kind, Option<Known>)>,
     stop: &(dyn Fn() -> bool + Sync),
 ) -> Result<Vec<(Artifact, PathBuf, Option<std::fs::File>)>, Error> {
+    Ok(hash_stamped(root, pending, stop)?
+        .into_iter()
+        .map(|(artifact, path, file, _)| (artifact, path, file))
+        .collect())
+}
+
+/// [`hash_listed`], also returning the settled stamp of each file whose
+/// listed digest describes it unchanged, as later `Known` evidence.
+fn hash_stamped(
+    root: &Path,
+    pending: Vec<(PathBuf, Kind, Option<Known>)>,
+    stop: &(dyn Fn() -> bool + Sync),
+) -> Result<Vec<(Artifact, PathBuf, Option<std::fs::File>, Option<FileStamp>)>, Error> {
     crate::runtime::build_pool().install(|| {
         pending
             .into_par_iter()
@@ -713,7 +757,7 @@ pub(crate) fn hash_listed(
                 let known = known
                     .as_ref()
                     .map(|k| (k.sha256.as_str(), k.bytes, k.stamp));
-                let (sha256, bytes) = listed_digest(&path, &mut file, known, stop)?;
+                let (sha256, bytes, stamp) = listed_digest(&path, &mut file, known, stop)?;
                 let opened =
                     matches!(kind, Kind::RecentRuntime | Kind::ArchiveRuntime).then_some(file);
                 Ok((
@@ -725,6 +769,7 @@ pub(crate) fn hash_listed(
                     },
                     path,
                     opened,
+                    stamp,
                 ))
             })
             .collect()
@@ -756,12 +801,15 @@ pub(crate) fn listed_hashes(dir: &Path) -> usize {
 /// The digest and length to list for `file`, opened at `path`: `known` when
 /// it was verified for this very file and the file is unchanged since, both
 /// as opened and as the path names it now; otherwise those of a full read.
+/// The stamp is returned only when that digest describes the file unchanged
+/// before and after the read, by a modification settled before it began.
 fn listed_digest(
     path: &Path,
     file: &mut std::fs::File,
     known: Option<(&str, u64, FileStamp)>,
     stop: &(dyn Fn() -> bool + Sync),
-) -> Result<(String, u64), Error> {
+) -> Result<(String, u64, Option<FileStamp>), Error> {
+    let started = std::time::SystemTime::now();
     let opened = file.metadata()?;
     if !opened.is_file() {
         return Err("artifact is not a regular file".into());
@@ -772,7 +820,7 @@ fn listed_digest(
             && named.as_ref().and_then(FileStamp::of) == Some(stamp)
             && opened.len() == bytes
         {
-            return Ok((sha256.to_string(), bytes));
+            return Ok((sha256.to_string(), bytes, Some(stamp)));
         }
     }
     #[cfg(test)]
@@ -790,7 +838,12 @@ fn listed_digest(
         }
         hash.update(&buffer[..read]);
     }
-    Ok((hex::encode(hash.finalize()), bytes))
+    let stamp = FileStamp::of(&opened);
+    let unchanged = stamp.is_some()
+        && FileStamp::of(&file.metadata()?) == stamp
+        && std::fs::symlink_metadata(path).ok().as_ref().and_then(FileStamp::of) == stamp;
+    let stamp = stamp.filter(|stamp| unchanged && stamp.settled_before(started));
+    Ok((hex::encode(hash.finalize()), bytes, stamp))
 }
 
 pub fn verify_file(path: &Path, expected: &Artifact) -> Result<(), Error> {
@@ -942,7 +995,7 @@ mod tests {
         let open = || std::fs::File::open(&path).unwrap();
         let before = listed_hashes(dir.path());
         let listed = listed_digest(&path, &mut open(), Some((&sha, 14, stamp)), &|| false).unwrap();
-        assert_eq!(listed, (sha.clone(), 14));
+        assert_eq!(listed, (sha.clone(), 14, Some(stamp)));
         assert_eq!(listed_hashes(dir.path()), before);
         // Same size, different bytes: the stamp no longer matches, so the
         // listed digest is that of the bytes now present.
@@ -954,7 +1007,8 @@ mod tests {
             .write_all_at(b"V", 0)
             .unwrap();
         let listed = listed_digest(&path, &mut open(), Some((&sha, 14, stamp)), &|| false).unwrap();
-        assert_eq!(listed, (digest(b"Verified table"), 14));
+        // Bytes modified within the settle interval give no evidence.
+        assert_eq!(listed, (digest(b"Verified table"), 14, None));
         assert_eq!(listed_hashes(dir.path()), before + 1);
         // A replaced path is another inode.
         std::fs::write(dir.path().join("next"), b"verified table").unwrap();

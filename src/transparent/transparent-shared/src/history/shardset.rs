@@ -329,7 +329,7 @@ impl FileStamp {
 
     /// Whether the last modification predates `instant` by more than the
     /// coarsest timestamp granularity a host filesystem uses.
-    fn settled_before(&self, instant: std::time::SystemTime) -> bool {
+    pub(crate) fn settled_before(&self, instant: std::time::SystemTime) -> bool {
         let Ok(since) = instant.duration_since(std::time::UNIX_EPOCH) else {
             return false;
         };
