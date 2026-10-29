@@ -34,6 +34,8 @@ pub enum Deferral {
     AuthorityAdvanced,
     /// The publisher is down or restarting; a deploy makes this a gap of seconds.
     PublisherUnavailable,
+    /// A valid publication is waiting for local capacity or another role.
+    AwaitingAdoption,
 }
 impl std::fmt::Display for Deferral {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -42,6 +44,7 @@ impl std::fmt::Display for Deferral {
             Self::SourceExpired => "Enhance source authority is absent or expired",
             Self::AuthorityAdvanced => "publisher authority advanced during the pass",
             Self::PublisherUnavailable => "publisher unavailable",
+            Self::AwaitingAdoption => "publication adoption pending",
         })
     }
 }
@@ -97,6 +100,23 @@ pub struct Pacing {
     failed: bool,
 }
 impl Pacing {
+    /// A completed pass can still be deferred. Keep recovery polling until
+    /// the role actually commits, including while its peers are catching up.
+    pub fn finish_pass(
+        &mut self,
+        role: &'static str,
+        result: Result<pir_pipeline::consumer::ConsumerPass<()>, Error>,
+    ) -> Result<Option<Deferral>, Error> {
+        self.finish(
+            role,
+            result.and_then(|pass| match pass {
+                pir_pipeline::consumer::ConsumerPass::Committed { .. } => Ok(()),
+                pir_pipeline::consumer::ConsumerPass::Deferred { .. } => {
+                    Err(Deferral::AwaitingAdoption.into())
+                }
+            }),
+        )
+    }
     /// Record one complete pass. A deferral becomes `Ok(Some(reason))`; a
     /// genuine failure is returned unchanged and ends any recovery window.
     pub fn finish(
@@ -934,7 +954,8 @@ mod tests {
     /// Drives the real manager loop through scripted passes under controlled
     /// time and records when each pass started, in milliseconds.
     struct Scripted {
-        outcomes: std::collections::VecDeque<Result<(), Error>>,
+        outcomes:
+            std::collections::VecDeque<Result<pir_pipeline::consumer::ConsumerPass<()>, Error>>,
         started: Arc<Mutex<Vec<tokio::time::Instant>>>,
         pacing: Pacing,
     }
@@ -955,7 +976,7 @@ mod tests {
                 .unwrap()
                 .push(tokio::time::Instant::now());
             let outcome = self.outcomes.pop_front().unwrap_or(Err(Stop.into()));
-            self.pacing.finish("test", outcome)
+            self.pacing.finish_pass("test", outcome)
         }
         async fn wait_until(&mut self, deadline: tokio::time::Instant) {
             tokio::time::sleep_until(self.pacing.deadline(deadline)).await;
@@ -967,6 +988,25 @@ mod tests {
 
     /// Whole seconds between consecutive pass starts (jitter is below one second).
     async fn gaps(outcomes: Vec<Result<(), Error>>) -> Vec<u64> {
+        pass_gaps(
+            outcomes
+                .into_iter()
+                .map(|outcome| outcome.map(|()| committed()))
+                .collect(),
+        )
+        .await
+    }
+
+    fn committed() -> pir_pipeline::consumer::ConsumerPass<()> {
+        pir_pipeline::consumer::ConsumerPass::Committed {
+            report: (),
+            handover: pir_pipeline::consumer::PeerHandover::Complete,
+        }
+    }
+
+    async fn pass_gaps(
+        outcomes: Vec<Result<pir_pipeline::consumer::ConsumerPass<()>, Error>>,
+    ) -> Vec<u64> {
         let started = Arc::new(Mutex::new(Vec::new()));
         let manager = pir_pipeline::consumer::polling::SyncManager::new(Scripted {
             outcomes: outcomes.into(),
@@ -987,6 +1027,19 @@ mod tests {
     }
     fn failed(message: &str) -> Result<(), Error> {
         Err(message.to_string().into())
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn waiting_for_adoption_keeps_recovery_polling_until_commit() {
+        use pir_pipeline::consumer::ConsumerPass;
+        let observed = pass_gaps(vec![
+            Err(Deferral::Withdrawn.into()),
+            Ok(ConsumerPass::Deferred { report: () }),
+            Ok(ConsumerPass::Deferred { report: () }),
+            Ok(committed()),
+        ])
+        .await;
+        assert_eq!(observed, [1, 1, 1, 5]);
     }
 
     #[tokio::test(start_paused = true)]

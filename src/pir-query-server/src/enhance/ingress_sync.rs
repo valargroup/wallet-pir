@@ -19,7 +19,7 @@ use enhance_shared::protocol::{
 };
 use pir_control::admission::{client_key, read_body, BodyError, ClientSlots};
 use pir_pipeline::{
-    consumer::{polling::SyncTask, ConsumerEngine},
+    consumer::{polling::SyncTask, ConsumerEngine, ConsumerPass},
     Input,
 };
 use pir_publication::VerifiedObjects;
@@ -629,7 +629,7 @@ impl ConsumerRole for IngressConsumer {
     }
 }
 impl Synchronizer {
-    pub async fn poll_once(&mut self) -> Result<(), Error> {
+    pub async fn poll_once(&mut self) -> Result<ConsumerPass<()>, Error> {
         let ingress = self.engine.context().role.ingress.clone();
         ingress.maintain().await;
         pir_pipeline::consumer::polling::maintain_during(
@@ -638,7 +638,6 @@ impl Synchronizer {
             || ingress.maintain(),
         )
         .await
-        .map(|_| ())
     }
 }
 impl SyncTask for Synchronizer {
@@ -646,7 +645,7 @@ impl SyncTask for Synchronizer {
     type Error = Error;
     async fn synchronize(&mut self) -> Result<Option<Deferral>, Error> {
         let result = self.poll_once().await;
-        self.pacing.finish("ingress", result)
+        self.pacing.finish_pass("ingress", result)
     }
     async fn wait_until(&mut self, deadline: tokio::time::Instant) {
         let ingress = self.engine.context().role.ingress.clone();
