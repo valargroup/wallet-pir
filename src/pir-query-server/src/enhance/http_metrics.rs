@@ -9,7 +9,8 @@ use axum::{
 use http_body::Body as HttpBody;
 use pir_observability::ObservedBody;
 use prometheus::{
-    Encoder, HistogramOpts, HistogramVec, IntCounter, IntCounterVec, Opts, Registry, TextEncoder,
+    Encoder, Histogram, HistogramOpts, HistogramTimer, HistogramVec, IntCounter, IntCounterVec,
+    Opts, Registry, TextEncoder,
 };
 use std::{
     sync::{Arc, Mutex},
@@ -20,6 +21,7 @@ use std::{
 pub(crate) struct HttpMetrics {
     registry: Registry,
     processing: HistogramVec,
+    publication_wait: Histogram,
     requests: IntCounterVec,
     upload: IntCounterVec,
     download: IntCounterVec,
@@ -31,6 +33,13 @@ pub(crate) struct HttpMetrics {
 impl Default for HttpMetrics {
     fn default() -> Self {
         let registry = Registry::new();
+        let publication_wait = Histogram::with_opts(HistogramOpts::new(
+            "enhance_init_publication_wait_seconds",
+            "Time initialization waits for currently authorized publication, including cancelled waits",
+        ).buckets(vec![0.001, 0.01, 0.05, 0.1, 0.5, 1., 2.5, 5., 10., 15., 30.])).unwrap();
+        registry
+            .register(Box::new(publication_wait.clone()))
+            .unwrap();
         let processing = HistogramVec::new(
             HistogramOpts::new(
                 "enhance_http_request_processing_duration_seconds",
@@ -86,6 +95,7 @@ impl Default for HttpMetrics {
             arrival_windows: Default::default(),
             registry,
             processing,
+            publication_wait,
             requests,
             upload,
             download,
@@ -97,6 +107,9 @@ impl Default for HttpMetrics {
     }
 }
 impl HttpMetrics {
+    pub(crate) fn publication_wait(&self) -> HistogramTimer {
+        self.publication_wait.start_timer()
+    }
     /// Initialize only routes served by this process, including idle counters.
     pub(crate) fn endpoint(&self, endpoint: &str) {
         self.arrivals.with_label_values(&[endpoint]);

@@ -11,6 +11,11 @@ pub struct View {
     pub map_sha256: Option<String>,
     /// The published anchor hash, when it is a 64-digit hex block hash.
     pub anchor_hash: Option<String>,
+    pub node_hash: Option<String>,
+    pub withdrawn: Option<bool>,
+    pub revision: Option<u64>,
+    /// Whether two complete operator observations named the same authority.
+    pub consistent: Option<bool>,
     /// The coordinator map read again after the origins.
     pub map_after: Option<String>,
     /// The map published before the current one, set by the sampling loop,
@@ -38,6 +43,8 @@ pub struct Origin {
 pub enum Finding {
     /// The coordinator's anchor is not on the node's chain.
     NoncanonicalAnchor,
+    /// The retained publication was deliberately fenced from serving.
+    Withdrawn,
     /// The coordinator published between the reads: not a disagreement.
     ObservationRace,
     /// An origin could not be read or returned no valid map.
@@ -51,6 +58,7 @@ impl Finding {
     fn text(self) -> &'static str {
         match self {
             Self::NoncanonicalAnchor => "noncanonical anchor",
+            Self::Withdrawn => "publication withdrawn; recovery in progress",
             Self::ObservationRace => "observation race",
             Self::FailedObservation => "failed observation",
             Self::LaggingOrigin => "lagging origin",
@@ -102,14 +110,26 @@ async fn observe(client: &reqwest::Client, origin: &str, index: usize, path: &st
 impl View {
     /// The reason origins do not agree, or `None` when they do or none are configured.
     pub fn finding(&self) -> Option<Finding> {
+        if self.consistent == Some(false) {
+            return Some(Finding::ObservationRace);
+        }
+        if self.consistent.is_none() {
+            return Some(Finding::FailedObservation);
+        }
         if self.canonical == Some(false) {
             return Some(Finding::NoncanonicalAnchor);
+        }
+        if self.withdrawn == Some(true) {
+            return Some(Finding::Withdrawn);
         }
         if self.origins.is_empty() || self.map_sha256.is_none() {
             return None;
         }
-        if self.map_after != self.map_sha256 {
+        if self.map_after.is_some() && self.map_after != self.map_sha256 {
             return Some(Finding::ObservationRace);
+        }
+        if self.map_after.is_none() {
+            return Some(Finding::FailedObservation);
         }
         if self.origins.iter().any(|o| o.map_sha256.is_none()) {
             return Some(Finding::FailedObservation);
@@ -133,12 +153,17 @@ impl View {
     pub fn evidence(&self) -> String {
         let map = |m: &Option<String>| m.clone().unwrap_or_else(|| "none".into());
         let mut text = format!(
-            "{}; expected map {} at anchor {} {}; coordinator after {}",
+            "{}; sample {}; expected map {} at anchor {} {}; node {}; withdrawn {:?}; revision {:?}; consistent {:?}; coordinator after {}",
             self.finding().map_or("origins agree", Finding::text),
+            self.sampled_at,
             map(&self.map_sha256),
             self.public_height
                 .map_or("unknown".into(), |h| h.to_string()),
             map(&self.anchor_hash),
+            map(&self.node_hash),
+            self.withdrawn,
+            self.revision,
+            self.consistent,
             map(&self.map_after),
         );
         for origin in &self.origins {
@@ -154,6 +179,65 @@ impl View {
             ));
         }
         text
+    }
+}
+/// Only complete observations can establish stability. A failed read is not a
+/// publication change, and a retained anchor alone does not prove it was served.
+#[derive(Clone, PartialEq, Eq)]
+struct Observation {
+    height: u64,
+    hash: String,
+    map: String,
+    revision: u64,
+    withdrawn: bool,
+}
+impl Observation {
+    fn parse(status: &Value) -> Option<Self> {
+        let value = &status["publication_observation"];
+        Some(Self {
+            height: value["height"].as_u64()?,
+            hash: hex64(&value["hash"])?,
+            map: hex64(&value["map_sha256"])?,
+            revision: value["revision"].as_u64()?,
+            withdrawn: value["withdrawn"].as_bool()?,
+        })
+    }
+}
+impl View {
+    fn conclude(&mut self, before: Option<Observation>, after: Option<Observation>) {
+        self.canonical = None;
+        self.origins_agree = None;
+        self.map_after = after.as_ref().map(|o| o.map.clone());
+        self.consistent = before.zip(after).map(|(a, b)| a == b);
+        if self.consistent != Some(true) {
+            return;
+        }
+        let matching = |o: &Origin| o.map_sha256.is_some() && o.map_sha256 == self.map_sha256;
+        let any_match = self.origins.iter().any(matching);
+        let all_match = !self.origins.is_empty() && self.origins.iter().all(matching);
+        // A successful public response confirms invalid serving even when the
+        // publisher says it withdrew. A refusal or transport error proves neither.
+        self.canonical = match (&self.anchor_hash, &self.node_hash) {
+            (Some(anchor), Some(node)) if anchor != node && any_match => Some(false),
+            (Some(anchor), Some(node))
+                if anchor == node && all_match && self.withdrawn == Some(false) =>
+            {
+                Some(true)
+            }
+            _ => None,
+        };
+        if self.withdrawn == Some(false) && !self.origins.is_empty() {
+            self.origins_agree = self
+                .origins
+                .iter()
+                .map(|o| {
+                    o.map_sha256
+                        .as_ref()
+                        .map(|map| Some(map) == self.map_sha256.as_ref())
+                })
+                .collect::<Option<Vec<_>>>()
+                .map(|matches| matches.into_iter().all(|v| v));
+        }
     }
 }
 /// The coordinator's published (height, block hash, map digest). A history
@@ -195,9 +279,16 @@ pub async fn check(client: &reqwest::Client, service: &Service) -> View {
     view.public_height = height;
     view.map_sha256 = map;
     view.anchor_hash = reference.and_then(|r| hex64(&Value::from(r)));
-    if let (Some(height), Some(reference), Ok(rpc_url), Ok(cookie_path)) = (
+    let before = Observation::parse(&first);
+    if let Some(observation) = &before {
+        view.public_height = Some(observation.height);
+        view.anchor_hash = Some(observation.hash.clone());
+        view.map_sha256 = Some(observation.map.clone());
+        view.revision = Some(observation.revision);
+        view.withdrawn = Some(observation.withdrawn);
+    }
+    if let (Some(height), Ok(rpc_url), Ok(cookie_path)) = (
         view.public_height,
-        reference,
         std::env::var("PIR_APM_CHAIN_RPC_URL"),
         std::env::var("PIR_APM_CHAIN_RPC_COOKIE"),
     ) {
@@ -210,7 +301,7 @@ pub async fn check(client: &reqwest::Client, service: &Service) -> View {
                     if let Ok(response) = rpc("getblockhash", serde_json::json!([height])).await {
                         if let Ok(v) = response.json::<Value>().await {
                             if v["error"].is_null() {
-                                view.canonical = v["result"].as_str().map(|s| s == reference);
+                                view.node_hash = hex64(&v["result"]);
                             }
                         }
                     }
@@ -232,23 +323,11 @@ pub async fn check(client: &reqwest::Client, service: &Service) -> View {
             view.origins
                 .push(observe(client, origin, index, &path).await);
         }
-        view.map_after = json(client, &status_url)
-            .await
-            .and_then(|v| published(&v, service.kind).2);
-        // A publication between reads is an observation gap, not a mismatch.
-        if view.map_sha256.is_some() && view.map_after == view.map_sha256 {
-            view.origins_agree = view
-                .origins
-                .iter()
-                .map(|o| {
-                    o.map_sha256
-                        .as_ref()
-                        .map(|m| Some(m) == view.map_sha256.as_ref())
-                })
-                .collect::<Option<Vec<_>>>()
-                .map(|v| v.into_iter().all(|b| b));
-        }
     }
+    let after = json(client, &status_url)
+        .await
+        .and_then(|v| Observation::parse(&v));
+    view.conclude(before, after);
     view
 }
 
@@ -277,6 +356,7 @@ mod tests {
             sampled_at: 1,
             public_height: Some(7),
             canonical: Some(true),
+            consistent: Some(true),
             map_sha256: Some("aa".repeat(32)),
             map_after: Some("aa".repeat(32)),
             previous_map: Some("bb".repeat(32)),
@@ -293,6 +373,53 @@ mod tests {
                 .collect(),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn only_stable_public_evidence_confirms_serving_or_recovery() {
+        let mut view = sampled(&[Some("aa"), Some("aa")]);
+        let observation = Observation {
+            height: 7,
+            hash: "dd".repeat(32),
+            map: "aa".repeat(32),
+            revision: 4,
+            withdrawn: false,
+        };
+        view.anchor_hash = Some(observation.hash.clone());
+        view.node_hash = Some(observation.hash.clone());
+        view.withdrawn = Some(false);
+        view.conclude(Some(observation.clone()), Some(observation.clone()));
+        assert_eq!(view.canonical, Some(true));
+        view.node_hash = Some("ee".repeat(32));
+        view.conclude(Some(observation.clone()), Some(observation.clone()));
+        assert_eq!(view.canonical, Some(false));
+
+        let mut withdrawn = observation.clone();
+        withdrawn.withdrawn = true;
+        withdrawn.revision += 1;
+        view.withdrawn = Some(true);
+        view.conclude(Some(withdrawn.clone()), Some(withdrawn.clone()));
+        assert_eq!(
+            view.canonical,
+            Some(false),
+            "successful invalid serving overrides a withdrawal claim"
+        );
+        for origin in &mut view.origins {
+            origin.http_status = Some(503);
+            origin.map_sha256 = None;
+        }
+        view.conclude(Some(withdrawn.clone()), Some(withdrawn.clone()));
+        assert_eq!(
+            view.canonical, None,
+            "withdrawal cannot recover an active invalid-serving incident"
+        );
+        assert_eq!(view.finding(), Some(Finding::Withdrawn));
+        view.conclude(Some(observation.clone()), Some(withdrawn));
+        assert_eq!(view.canonical, None);
+        assert_eq!(view.finding(), Some(Finding::ObservationRace));
+        view.conclude(Some(observation), None);
+        assert_eq!(view.canonical, None);
+        assert_eq!(view.finding(), Some(Finding::FailedObservation));
     }
 
     #[test]
@@ -317,7 +444,7 @@ mod tests {
         noncanonical.canonical = Some(false);
         assert_eq!(noncanonical.finding(), Some(Finding::NoncanonicalAnchor));
         let evidence = sampled(&[Some("aa"), None]).evidence();
-        assert!(evidence.starts_with("failed observation; expected map "));
+        assert!(evidence.starts_with("failed observation; sample 1; expected map "));
         assert!(evidence.contains("https://o1.example at 1: HTTP 200, HTTP failure"));
     }
 
@@ -365,6 +492,10 @@ mod tests {
                         async move {
                             axum::Json(serde_json::json!({
                                 "public_height": 7, "public_hash": "dd".repeat(32), "map_sha256": map,
+                                "publication_observation": {
+                                    "height": 7, "hash": "dd".repeat(32), "map_sha256": map,
+                                    "revision": 1, "withdrawn": false,
+                                },
                             }))
                         }
                     }),

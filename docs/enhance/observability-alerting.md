@@ -73,6 +73,26 @@ once per minute from a separate region, and monitors APM task progress.
   packing bytes and does not require the removed resident-object counter.
 - Unknown data cannot recover an incident. Recovery requires two distinct fresh
   healthy samples. Valid inventory changes retire incidents for removed targets.
+- Publication checks retain the published height/hash, node comparison hash,
+  authority revision, withdrawal state and timed public-origin observations.
+  A publication change across the reads is an inconsistent observation; a
+  failed or incomplete read is unknown. A stable noncanonical anchor is critical
+  only when a public origin actually returns its map. Deliberate withdrawal is
+  shown as recovery in progress and never clears an active invalid-serving
+  incident by itself.
+- Placement coverage distinguishes missing or stale samples, generation or
+  manifest disagreement, missing assignments and known withdrawal. The dashboard
+  and incident evidence show publisher/router generations and observation ages.
+  Process reachability does not establish permission to serve a publication.
+- Initialization latency includes time waiting for an authorized publication.
+  `enhance_init_publication_wait_seconds` records that wait separately, including
+  cancelled waits, and APM displays its five-minute p99 alongside total processing
+  latency. The existing processing histogram and alert thresholds are unchanged.
+  A brief fork withdrawal can therefore produce a latency alert after recovery:
+  the slow completed requests remain in the five-minute window while the latency
+  condition accumulates its existing 120-second hold. Compare sample times,
+  publication wait, withdrawal and placement evidence before attributing a later
+  latency alert to a new failure. Related evidence never suppresses another rule.
 - `/healthz` is HTTP liveness; `/readyz` is monitoring readiness. Public aggregate
   `/apm/monitor-status` includes collector/evaluator/delivery progress, incident
   state, direct chain observation, and delivery health, never credentials or

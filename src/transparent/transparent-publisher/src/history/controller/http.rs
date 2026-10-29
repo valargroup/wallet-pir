@@ -11,7 +11,19 @@ pub(super) async fn public_request(
     }
     let epoch = authority.0.epoch.load(Ordering::Acquire);
     if path == "/v1/status" {
-        let status = authority.0.status.read().unwrap().clone();
+        let observation = {
+            let _gate = authority.0.publication_gate.lock().unwrap();
+            let active = authority.0.active.read().unwrap();
+            serde_json::json!({
+                "height": active.publication.height,
+                "hash": active.publication.hash,
+                "map_sha256": active.publication.map_sha256,
+                "revision": authority.0.distribution_revision.load(Ordering::Acquire),
+                "withdrawn": authority.0.withdrawn.load(Ordering::Acquire),
+            })
+        };
+        let mut status = authority.0.status.read().unwrap().clone();
+        status["publication_observation"] = observation;
         return axum::Json(status).into_response();
     }
     if path == "/metrics" {

@@ -48,6 +48,7 @@ pub struct DashboardData {
     pub enhance_publication: Option<crate::placement::Published>,
     pub placement_success: Option<SystemTime>,
     pub placement_error: bool,
+    pub placement_unavailable: Option<crate::placement::Unavailable>,
     pub packing_enabled: bool,
     pub packing_routers: BTreeMap<String, crate::packing_fleet::PackingRouter>,
     pub packing_inventory_error: Option<String>,
@@ -100,6 +101,7 @@ impl DashboardData {
             enhance_publication: None,
             placement_success: None,
             placement_error: true,
+            placement_unavailable: Some(crate::placement::Unavailable::MissingSample),
             packing_enabled: false,
             packing_routers: BTreeMap::new(),
             packing_inventory_error: None,
@@ -473,6 +475,13 @@ fn entrypoint_apm(data: &DashboardData) -> String {
         };
         html.push_str(&format!("<tr><th>{label}</th><td>{}</td><td>{}</td><td>{}</td><td title=\"Arrivals in the last complete ten-second window, sampled every five seconds\">{arrivals}</td><td>{}</td><td>{}</td><td class=\"{}\">{}</td></tr>", latency(p50), latency(p90), latency(p99), rate(w.upload_per_second), rate(w.download_per_second), if fresh {"muted"} else {"warn"}, escape(&status)));
         html.push_str("<tr class=\"endpoint-history\"><td colspan=\"8\">");
+        if endpoint == "init" {
+            let wait = sample
+                .filter(|_| fresh)
+                .and_then(|s| s.stages.get("publication_wait"));
+            html.push_str(&format!("<p class=\"chart-legend\">Publication wait p99: {} · {} samples in the last 5 minutes. Included in initialization processing time; cancelled waits are also recorded.</p>",
+                latency(wait.and_then(|w| w.p99)), wait.map_or(0., |w| w.samples)));
+        }
         if endpoint == "query" {
             html.push_str("<table class=\"breakdown\"><caption>Successful queries · last 5 minutes</caption><thead><tr><th>Stage</th><th>p50</th><th>p90</th><th>p99</th></tr></thead><tbody>");
             for (stage, label) in [

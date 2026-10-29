@@ -578,14 +578,34 @@ impl ShippedRuntimes {
         self.0.load(key, shared, source_sha)
     }
 
-    /// [`Self::load`] from a handle the caller opened at [`Self::path`], so
-    /// the loaded bytes are those of the inode the caller already read.
+    /// Validate the embedded checksum before publisher preparation loads this
+    /// inode. Query-server reloads use the separate size-only received path.
+    /// The checksum covers preprocessing bytes that a correctness probe may
+    /// not exercise, as well as the database and public masks.
     pub fn load_file(
-        file: File,
+        mut file: File,
         key: &RuntimeKey,
         shared: &SharedParams,
         source_sha: &str,
     ) -> io::Result<TableRuntime> {
+        if !DiskCache::entry_bytes_range(shared).contains(&file.metadata()?.len()) {
+            return Err(invalid("runtime cache length mismatch"));
+        }
+        file.seek(SeekFrom::Start(0))?;
+        let mut header = [0u8; HEADER_BYTES as usize];
+        file.read_exact(&mut header)?;
+        let mut hash = Sha256::new();
+        let mut buffer = [0u8; 64 * 1024];
+        loop {
+            let count = file.read(&mut buffer)?;
+            if count == 0 {
+                break;
+            }
+            hash.update(&buffer[..count]);
+        }
+        if hash.finalize()[..] != header[32..] {
+            return Err(invalid("runtime cache checksum mismatch"));
+        }
         DiskCache::load_file(file, key, shared, source_sha)
     }
 

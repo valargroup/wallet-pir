@@ -275,14 +275,14 @@ async fn first_publication_preparation_defers_without_transport_backoff_or_servi
     }
 }
 
-async fn advance_during_authorization(
+async fn advance_during_authorization<T>(
     source: &publication_source::Published,
     generation: u64,
     poll: impl std::future::Future<
-        Output = Result<(), pir_query_server::enhance::synchronization::Error>,
+        Output = Result<T, pir_query_server::enhance::synchronization::Error>,
     >,
     withdraw: bool,
-) -> Result<(), pir_query_server::enhance::synchronization::Error> {
+) -> Result<T, pir_query_server::enhance::synchronization::Error> {
     let fault = source.scratch.path().join("fault");
     let entered = source.scratch.path().join("fault.entered");
     if entered.exists() {

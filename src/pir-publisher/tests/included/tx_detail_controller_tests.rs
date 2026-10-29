@@ -1186,6 +1186,33 @@ async fn a_background_withdrawal_during_activation_retries_without_halting() {
     use pir_pipeline::publisher::{Publication, Publisher};
     use std::future::Future;
     use std::task::Poll;
+    async fn observation(router: &axum::Router) -> Value {
+        use tower::ServiceExt;
+        let mut found = None;
+        for path in ["/", "/v1/status"] {
+            let response = router
+                .clone()
+                .oneshot(
+                    axum::http::Request::builder()
+                        .uri(path)
+                        .body(axum::body::Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), axum::http::StatusCode::OK);
+            let body = axum::body::to_bytes(response.into_body(), 1 << 20)
+                .await
+                .unwrap();
+            let value =
+                serde_json::from_slice::<Value>(&body).unwrap()["publication_observation"].clone();
+            if let Some(previous) = &found {
+                assert_eq!(&value, previous);
+            }
+            found = Some(value);
+        }
+        found.unwrap()
+    }
 
     let temp = tempfile::tempdir().unwrap();
     let (root, active, first) = prepared_root(temp.path()).await;
@@ -1213,6 +1240,18 @@ async fn a_background_withdrawal_during_activation_retries_without_halting() {
         .unwrap()
         .unwrap();
     let (distribution, node) = distribution_with_node(&root, temp.path()).await;
+    let cached_status = Arc::new(RwLock::new(
+        json!({"publication_observation": {"withdrawn": false}}),
+    ));
+    let status = status_router(
+        cached_status.clone(),
+        Default::default(),
+        distribution.clone(),
+    );
+    assert!(
+        observation(&status).await.is_null(),
+        "no publication is unknown, even with cached status"
+    );
     assert!(distribution
         .restore(
             crate::host_engine::PublisherEngine,
@@ -1221,6 +1260,13 @@ async fn a_background_withdrawal_during_activation_retries_without_halting() {
         )
         .await
         .unwrap());
+
+    let before = observation(&status).await;
+    assert_eq!(before["height"], active.tip);
+    assert_eq!(before["hash"], active.tip_hash);
+    assert_eq!(before["map_sha256"], active.map_sha256);
+    assert_eq!(before["withdrawn"], false);
+    cached_status.write().unwrap()["publication_observation"] = before.clone();
 
     let mut controller = Controller::open(
         &root,
@@ -1255,6 +1301,12 @@ async fn a_background_withdrawal_during_activation_retries_without_halting() {
     })
     .await
     .expect("background validation withdraws while activation waits");
+    let withdrawn = observation(&status).await;
+    assert_eq!(withdrawn["height"], before["height"]);
+    assert_eq!(withdrawn["hash"], before["hash"]);
+    assert_eq!(withdrawn["map_sha256"], before["map_sha256"]);
+    assert_eq!(withdrawn["withdrawn"], true);
+    assert!(withdrawn["revision"].as_u64().unwrap() > before["revision"].as_u64().unwrap());
     drop(journal);
     let error = committing.await.unwrap_err();
     assert!(matches!(
@@ -1285,6 +1337,13 @@ async fn a_background_withdrawal_during_activation_retries_without_halting() {
     assert!(distribution.checks().0 > 0);
     next.commit().await.unwrap();
     assert_eq!(ActiveRecord::load(&root).unwrap().tip, 8);
+    let after = observation(&status).await;
+    let activated = ActiveRecord::load(&root).unwrap();
+    assert_eq!(after["height"], activated.tip);
+    assert_eq!(after["hash"], activated.tip_hash);
+    assert_eq!(after["map_sha256"], activated.map_sha256);
+    assert_eq!(after["withdrawn"], false);
+    assert!(after["revision"].as_u64().unwrap() > withdrawn["revision"].as_u64().unwrap());
     assert!(!root.join(HALTED_FILE).exists());
     assert!(!preparation_file(&root).exists());
 

@@ -708,7 +708,17 @@ pub fn conditions(d: &DashboardData, now: u64, p: &Policy) -> Vec<Condition> {
                 .map(|l| l.samples >= p.latency_min_samples && l.p99.is_some_and(|v| v > budget)),
             latency
                 .and_then(|l| l.p99)
-                .map(|v| format!("p99 {v:.3}s"))
+                .map(|v| {
+                    let wait = e
+                        .filter(|_| valid)
+                        .and_then(|e| e.stages.get("publication_wait"));
+                    format!(
+                        "p99 {v:.3}s; publication wait p99 {:?}s ({} samples); {}",
+                        wait.and_then(|w| w.p99),
+                        wait.map_or(0., |w| w.samples),
+                        crate::placement::evidence(d, now)
+                    )
+                })
                 .unwrap_or_else(|| "unavailable".into()),
             format!("p99 > {budget}s, minimum {} samples", p.latency_min_samples),
             p.latency_hold_seconds,
@@ -826,7 +836,7 @@ pub fn conditions(d: &DashboardData, now: u64, p: &Policy) -> Vec<Condition> {
                 .map(|(active, published)| {
                     format!("serving generation {active}; publisher generation {published}")
                 })
-                .unwrap_or_else(|| "unavailable".into()),
+                .unwrap_or_else(|| crate::placement::evidence(d, now)),
             format!("serving generation behind publisher for {hold}s"),
             hold,
             coordinator_sample.min(epoch(d.placement_success)),
@@ -1299,7 +1309,11 @@ pub fn conditions(d: &DashboardData, now: u64, p: &Policy) -> Vec<Condition> {
                 source.clone(),
                 severity,
                 Some(!ok),
-                if ok { "fresh" } else { "unavailable" }.into(),
+                if source == "placement" || source.starts_with("domain_") {
+                    crate::placement::evidence(d, now)
+                } else {
+                    if ok { "fresh" } else { "unavailable" }.into()
+                },
                 format!("unavailable for {hold}s"),
                 hold,
                 sample,
@@ -1592,10 +1606,15 @@ pub async fn status(State(d): State<SharedDashboard>) -> Json<serde_json::Value>
         "placement": d.placement,
         "sampled_at": epoch(d.placement_success),
         "observation_available": fresh(epoch(d.placement_success),now) && !d.placement_error,
+        "unavailable_reason": d.placement_unavailable,
+        "evidence": crate::placement::evidence(&d, now),
+        "publisher_generation": d.enhance_publication.as_ref().map(|p| p.generation),
         "routers": d.packing_routers.iter().map(|(name, router)| {
             serde_json::json!({
                 "name": name,
                 "sampled_at": epoch(router.sample.success),
+                "age_seconds": router.sample.success.map(|at| now.saturating_sub(epoch(Some(at)))),
+                "generation": router.placement.as_ref().map(|p| p.generation),
                 "observation_available": fresh(epoch(router.sample.success),now) && router.sample.error.is_none(),
                 "handover": router.placement.as_ref().and_then(|report|report.handover.as_ref()),
             })
