@@ -164,9 +164,37 @@ struct Inner {
     /// Runtime preparation outcomes since this process started.
     runtime_preparations: AtomicU64,
     runtime_preparation_failures: AtomicU64,
+    /// Checks deferred until after activation, run by one owned validator.
+    validation: Validation,
 }
 #[derive(Clone)]
 pub struct Authority(Arc<Inner>);
+
+/// The inventory a prepared distribution listed, saved beside its candidate.
+/// A restart lists unchanged runtimes from it instead of rehashing them, and
+/// rehashes them in full only after it has started serving.
+const SAVED_INVENTORY: &str = "distribution-inventory.json";
+
+/// A publisher serves first and tests after: activation queues the runtime
+/// checks it deferred, and one validator task runs them. At most one job waits
+/// (a newer activation replaces it) and one runs; a result is reported only
+/// while its exact inventory is still the active one. A failure is reported,
+/// never a reason to stop, restart or withdraw the service.
+#[derive(Default)]
+struct Validation {
+    next: std::sync::Mutex<Option<ValidationJob>>,
+    wake: tokio::sync::Notify,
+    /// The candidate directory a running check reads; collection keeps it.
+    reading: std::sync::Mutex<Option<PathBuf>>,
+    /// Runtimes checked since the last preparation took this record.
+    passed: std::sync::Mutex<BTreeMap<String, String>>,
+}
+struct ValidationJob {
+    map_sha256: String,
+    inventory_sha256: String,
+    directory: PathBuf,
+    deferred: transparent_shared::publication::Deferred,
+}
 
 /// The fleet's membership record: `<state_dir>/membership.json` from the
 /// fleet adapter's config, if it names one.
@@ -348,6 +376,7 @@ pub async fn run_managed(
         checked_runtimes: Default::default(),
         runtime_preparations: AtomicU64::new(0),
         runtime_preparation_failures: AtomicU64::new(0),
+        validation: Default::default(),
     }));
     struct Fence(Authority);
     impl Drop for Fence {
@@ -391,13 +420,18 @@ pub async fn run_managed(
         result
     });
     tasks.own(&ingest);
+    let mut validator = tokio::spawn(validate(authority.clone()));
+    tasks.own(&validator);
     loop {
         if shutdown.requested() {
-            ingest.await??;
+            let ingested = ingest.await;
+            validator.await?;
+            ingested??;
             return Ok(());
         }
-        if server.is_finished() || ingest.is_finished() {
+        if server.is_finished() || ingest.is_finished() || validator.is_finished() {
             shutdown.request();
+            let _ = (&mut validator).await;
             if !ingest.is_finished() {
                 (&mut ingest).await??;
             }
@@ -768,6 +802,7 @@ struct HistoryCandidate {
     prepared_unix: f64,
     runtimes: Option<serde_json::Value>,
     prepared: serde_json::Value,
+    deferred: Option<transparent_shared::publication::Deferred>,
 }
 
 type HistorySeal = fn(&Geometry) -> DecoupledPolicy;
@@ -973,6 +1008,7 @@ async fn prepare_candidate(
     let mut candidate = read_public(directory.clone(), Vec::new())?;
     authority.0.status.write().unwrap()["candidate_height"] = height.into();
     let published_unix = unix_now();
+    let mut deferred = None;
     let runtimes = if config.ship_runtimes {
         match prepare_runtimes(config, authority, &directory, epoch).await {
             Err(_) if authority.0.shutdown.requested() => return stopped(),
@@ -995,35 +1031,53 @@ async fn prepare_candidate(
         let cutoff = config.recent_from;
         let full = config.http_only;
         let mut checked = std::mem::take(&mut *authority.0.checked_runtimes.lock().unwrap());
+        checked.record(&std::mem::take(
+            &mut *authority.0.validation.passed.lock().unwrap(),
+        ));
         let started = std::time::Instant::now();
         let stop = stop.clone();
         let (set, checked, distribution) = tokio::task::spawn_blocking(move || {
-            let result = transparent_shared::publication::Finalized::prepare_reusing_until(
+            // An unreadable record only costs the rehash it would have saved.
+            let saved = std::fs::read(root.join(SAVED_INVENTORY))
+                .ok()
+                .and_then(|bytes| {
+                    serde_json::from_slice::<transparent_shared::publication::Inventory>(&bytes)
+                        .ok()
+                });
+            let result = transparent_shared::publication::Finalized::prepare_deferring_until(
                 &root,
                 &set,
                 cutoff,
                 full,
                 &mut checked,
+                saved.as_ref(),
                 &stop,
-            );
+            )
+            .and_then(|(distribution, deferred)| {
+                publication::write_atomic(&root.join(SAVED_INVENTORY), distribution.bytes())?;
+                Ok((distribution, deferred))
+            });
             (set, checked, result)
         })
         .await?;
-        tracing::info!(
-            loaded = checked.loaded,
-            reused = checked.reused,
-            seconds = started.elapsed().as_secs_f64(),
-            "prepared distribution inventory"
-        );
         *authority.0.checked_runtimes.lock().unwrap() = checked;
         *authority.0.prepared_set.lock().unwrap() = Some(set);
-        candidate.distribution = Some(match distribution {
+        let (distribution, checks) = match distribution {
             Err(_) if authority.0.shutdown.requested() => return stopped(),
             Err(error) if error.is::<transparent_shared::publication::Stopped>() => {
                 return Err("candidate invalidated while preparing".into())
             }
             result => result?,
-        });
+        };
+        tracing::info!(
+            reused = authority.0.checked_runtimes.lock().unwrap().reused,
+            deferred = checks.len(),
+            restored = checks.restored(),
+            seconds = started.elapsed().as_secs_f64(),
+            "prepared distribution inventory"
+        );
+        candidate.distribution = Some(distribution);
+        deferred = Some(checks);
     }
     let mut request = serde_json::json!({"operation":"prepare","directory":directory,"map_sha256":candidate.publication.map_sha256,"recent_from":config.recent_from,"source_sha":config.source_sha});
     if runtimes.is_some() {
@@ -1081,6 +1135,7 @@ async fn prepare_candidate(
         prepared_unix,
         runtimes,
         prepared,
+        deferred,
     }))
 }
 
@@ -1100,6 +1155,7 @@ async fn activate_history(
         prepared_unix,
         runtimes,
         prepared,
+        deferred,
     } = ready;
     // The candidate is only evidence. Recheck at the owner boundary before
     // writing activation intent or changing any fleet authority.
@@ -1162,7 +1218,22 @@ async fn activate_history(
                 Ordering::Release,
             );
         }
+        let inventory_sha256 = candidate
+            .distribution
+            .as_ref()
+            .map(|d| d.sha256().to_string());
         *authority.0.active.write().unwrap() = Arc::new(candidate);
+        if let (Some(inventory_sha256), Some(deferred)) = (inventory_sha256, deferred) {
+            queue_validation(
+                authority,
+                ValidationJob {
+                    map_sha256: publication.map_sha256.clone(),
+                    inventory_sha256,
+                    directory: publication.directory.clone(),
+                    deferred,
+                },
+            );
+        }
         authority
             .0
             .invalidated_from
@@ -1230,6 +1301,132 @@ async fn activate_history(
         "activated warm publication"
     );
     Ok(())
+}
+
+/// Queue `job`, replacing any job still waiting, and report it pending.
+fn queue_validation(authority: &Authority, job: ValidationJob) {
+    authority.0.status.write().unwrap()["validation"] = serde_json::json!({
+        "state": "pending",
+        "map_sha256": job.map_sha256,
+        "inventory_sha256": job.inventory_sha256,
+        "checks": job.deferred.len(),
+        "restored": job.deferred.restored(),
+    });
+    *authority.0.validation.next.lock().unwrap() = Some(job);
+    authority.0.validation.wake.notify_one();
+}
+
+/// The validator: runs queued jobs until shutdown, then returns. Its blocking
+/// work is always awaited and ends between bounded reads once stop is asked.
+async fn validate(authority: Authority) {
+    loop {
+        tokio::select! {
+            biased;
+            _ = authority.0.shutdown.cancelled() => return,
+            _ = authority.0.validation.wake.notified() => {}
+        }
+        loop {
+            let job = authority.0.validation.next.lock().unwrap().take();
+            let Some(job) = job else { break };
+            run_validation(&authority, job).await;
+            if authority.0.shutdown.requested() {
+                return;
+            }
+        }
+    }
+}
+
+/// Whether `job` describes the active distribution exactly.
+fn validation_current(authority: &Authority, job: &ValidationJob) -> bool {
+    let active = authority.0.active.read().unwrap();
+    active.publication.map_sha256 == job.map_sha256
+        && active
+            .distribution
+            .as_ref()
+            .is_some_and(|d| d.sha256() == job.inventory_sha256)
+}
+
+async fn run_validation(authority: &Authority, job: ValidationJob) {
+    {
+        let mut reading = authority.0.validation.reading.lock().unwrap();
+        if !validation_current(authority, &job) {
+            return;
+        }
+        *reading = Some(job.directory.clone());
+    }
+    let skip = authority.0.validation.passed.lock().unwrap().clone();
+    let stop = {
+        let authority = authority.clone();
+        move || authority.0.shutdown.requested()
+    };
+    let started = std::time::Instant::now();
+    let (job, result, passed) = match tokio::task::spawn_blocking(move || {
+        let mut passed = BTreeMap::new();
+        let result = job.deferred.run(
+            &skip,
+            &mut |name, sha256| {
+                passed.insert(name.to_owned(), sha256.to_owned());
+            },
+            &stop,
+        );
+        (job, result, passed)
+    })
+    .await
+    {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            *authority.0.validation.reading.lock().unwrap() = None;
+            tracing::error!(%error, "publication validation task failed");
+            return;
+        }
+    };
+    *authority.0.validation.reading.lock().unwrap() = None;
+    // Passed checks bind exact bytes; they stay useful to a later inventory.
+    authority
+        .0
+        .validation
+        .passed
+        .lock()
+        .unwrap()
+        .extend(passed);
+    let state = match &result {
+        Err(error) if error.is::<transparent_shared::publication::Stopped>() => return,
+        Ok(()) => "passed",
+        Err(_) => "failed",
+    };
+    let _gate = authority.0.publication_gate.lock().unwrap();
+    let current = validation_current(authority, &job);
+    let mut status = authority.0.status.write().unwrap();
+    // A stale result never describes the successor that replaced it.
+    if !current
+        || status["validation"]["inventory_sha256"] != job.inventory_sha256.as_str()
+    {
+        tracing::info!(map_sha256 = job.map_sha256, state, "stale publication validation");
+        return;
+    }
+    let mut report = serde_json::json!({
+        "state": state,
+        "map_sha256": job.map_sha256,
+        "inventory_sha256": job.inventory_sha256,
+        "checks": job.deferred.len(),
+        "restored": job.deferred.restored(),
+        "seconds": started.elapsed().as_secs_f64(),
+    });
+    if let Err(error) = result {
+        tracing::error!(
+            alert = "transparent_publication_validation_failed",
+            %error,
+            map_sha256 = job.map_sha256,
+            inventory_sha256 = job.inventory_sha256,
+            "publication validation failed; still serving"
+        );
+        report["error"] = error.to_string().into();
+        // A restart rehashes these runtimes instead of relisting digests.
+        let _ = std::fs::remove_file(job.directory.join(SAVED_INVENTORY));
+    } else {
+        tracing::info!(%report, "publication validation passed");
+    }
+    status["validation"] = report;
 }
 
 fn unix_now() -> f64 {
@@ -1892,6 +2089,9 @@ fn collect_candidates(config: &Config, authority: &Authority) -> Result<(), BoxE
         .ok()
         .and_then(|b| serde_json::from_slice::<ActivePublication>(&b).ok())
         .map(|p| p.directory);
+    // Held until removal ends, so a check cannot start reading a directory
+    // this pass has chosen to remove.
+    let reading = authority.0.validation.reading.lock().unwrap();
     let mut unused: Vec<_> = std::fs::read_dir(&config.publication_root)?
         .filter_map(Result::ok)
         .filter(|e| {
@@ -1901,6 +2101,7 @@ fn collect_candidates(config: &Config, authority: &Authority) -> Result<(), BoxE
                     .is_some_and(|s| s.starts_with("candidate-"))
                 && e.path() != active
                 && pending.as_ref() != Some(&e.path())
+                && reading.as_ref() != Some(&e.path())
         })
         .collect();
     unused.sort_by_key(|e| std::cmp::Reverse(e.metadata().and_then(|m| m.modified()).ok()));
@@ -2232,6 +2433,7 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
             checked_runtimes: Default::default(),
             runtime_preparations: AtomicU64::new(0),
             runtime_preparation_failures: AtomicU64::new(0),
+            validation: Default::default(),
         }));
         let store = Arc::new(tokio::sync::Mutex::new(journal));
         let (notify, _) = tokio::sync::watch::channel(0);
@@ -2569,6 +2771,7 @@ print(json.dumps({'ok':True,'upstreams':[],'workers':{},'retained_publication':b
             checked_runtimes: Default::default(),
             runtime_preparations: AtomicU64::new(0),
             runtime_preparation_failures: AtomicU64::new(0),
+            validation: Default::default(),
         }));
         let store = Arc::new(tokio::sync::Mutex::new(journal));
         let (notify, _) = tokio::sync::watch::channel(0);
@@ -2931,6 +3134,7 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
                 checked_runtimes: Default::default(),
                 runtime_preparations: AtomicU64::new(0),
                 runtime_preparation_failures: AtomicU64::new(0),
+                validation: Default::default(),
             }))
         }
         /// Brings the journal to the node's tip, height four.

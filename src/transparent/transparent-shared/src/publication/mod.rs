@@ -409,6 +409,7 @@ impl Finalized {
             &mut CheckedRuntimes::default(),
             &|| false,
         )
+        .map(|(finalized, _)| finalized)
     }
     /// Finalize every table and runtime for autonomous full-coverage consumers.
     pub fn prepare_full(
@@ -424,6 +425,7 @@ impl Finalized {
             &mut CheckedRuntimes::default(),
             &|| false,
         )
+        .map(|(finalized, _)| finalized)
     }
     /// Finalize an inventory, reusing only native runtimes whose exact bytes
     /// this process already loaded and self-checked. Every artifact is rehashed.
@@ -435,6 +437,7 @@ impl Finalized {
         checked: &mut CheckedRuntimes,
     ) -> Result<Self, Error> {
         Self::prepare_holdings(root, set, recent_from_height, full, checked, &|| false)
+            .map(|(finalized, _)| finalized)
     }
     /// [`Self::prepare_reusing`], asking `stop` before each file it reads;
     /// once it answers true the preparation ends with [`Stopped`], nothing is
@@ -448,10 +451,42 @@ impl Finalized {
         stop: &(dyn Fn() -> bool + Sync),
     ) -> Result<Self, Error> {
         Self::prepare_holdings(root, set, recent_from_height, full, checked, stop)
+            .map(|(finalized, _)| finalized)
     }
-    /// A table whose bytes `set` verified in this process, and whose file is
-    /// unchanged since, is listed with that verified digest instead of being
-    /// hashed again; any other file is hashed.
+    /// [`Self::prepare_reusing_until`] for a publisher that serves before it
+    /// tests: runtimes this process has not already checked are listed, not
+    /// loaded, and returned as [`Deferred`] checks to run after activation.
+    ///
+    /// A runtime that `saved` (this directory's own earlier inventory for the
+    /// same map) lists with its path, kind and length is listed with that
+    /// digest instead of being read; the deferred check rehashes it in full.
+    /// A saved runtime whose length changed is refused, never relisted.
+    pub fn prepare_deferring_until(
+        root: &Path,
+        set: &ShardSet,
+        recent_from_height: u64,
+        full: bool,
+        checked: &mut CheckedRuntimes,
+        saved: Option<&Inventory>,
+        stop: &(dyn Fn() -> bool + Sync),
+    ) -> Result<(Self, Deferred), Error> {
+        let saved = match saved {
+            Some(saved) if saved.map_sha256 == set.map_digest => {
+                saved.validate(&set.map.network, &set.map.genesis_hash)?;
+                Some(saved)
+            }
+            _ => None,
+        };
+        Self::prepare_holdings_with(
+            root,
+            set,
+            recent_from_height,
+            full,
+            checked,
+            Some(saved),
+            stop,
+        )
+    }
     fn prepare_holdings(
         root: &Path,
         set: &ShardSet,
@@ -459,7 +494,35 @@ impl Finalized {
         full: bool,
         checked: &mut CheckedRuntimes,
         stop: &(dyn Fn() -> bool + Sync),
-    ) -> Result<Self, Error> {
+    ) -> Result<(Self, Deferred), Error> {
+        Self::prepare_holdings_with(root, set, recent_from_height, full, checked, None, stop)
+    }
+    /// A table whose bytes `set` verified in this process, and whose file is
+    /// unchanged since, is listed with that verified digest instead of being
+    /// hashed again; any other file is hashed. `defer` (with the saved
+    /// inventory it may hold) moves unchecked runtimes into [`Deferred`].
+    fn prepare_holdings_with(
+        root: &Path,
+        set: &ShardSet,
+        recent_from_height: u64,
+        full: bool,
+        checked: &mut CheckedRuntimes,
+        defer: Option<Option<&Inventory>>,
+        stop: &(dyn Fn() -> bool + Sync),
+    ) -> Result<(Self, Deferred), Error> {
+        let saved: BTreeMap<&str, &Artifact> = defer
+            .flatten()
+            .map(|saved| {
+                saved
+                    .artifacts
+                    .iter()
+                    .filter(|a| matches!(a.kind, Kind::RecentRuntime | Kind::ArchiveRuntime))
+                    .map(|a| (a.path.as_str(), a))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut deferred = Deferred::default();
+        let mut restored = Vec::new();
         let previous = &checked.passed;
         checked.loaded = 0;
         checked.reused = 0;
@@ -565,15 +628,23 @@ impl Finalized {
                             segment,
                         );
                         let path = shipped.path(&key, shared, source.sha256());
-                        if add(
-                            path.clone(),
-                            if local {
-                                Kind::RecentRuntime
-                            } else {
-                                Kind::ArchiveRuntime
-                            },
-                            None,
-                        )? {
+                        let kind = if local {
+                            Kind::RecentRuntime
+                        } else {
+                            Kind::ArchiveRuntime
+                        };
+                        let relative = path.strip_prefix(root)?.to_str().unwrap_or_default();
+                        if let Some(listed) = saved.get(relative).filter(|a| a.kind == kind) {
+                            let listed = (*listed).clone();
+                            // `add` checks the path and that the file is regular.
+                            if add(path.clone(), kind, None)? {
+                                if std::fs::metadata(&path)?.len() != listed.bytes {
+                                    return Err("runtime differs from its saved inventory".into());
+                                }
+                                restored.push(listed);
+                                native.push((path, key, shared.clone(), source));
+                            }
+                        } else if add(path.clone(), kind, None)? {
                             native.push((path, key, shared.clone(), source));
                         }
                     }
@@ -583,6 +654,8 @@ impl Finalized {
         // Hash immutable artifacts on the existing bounded CPU pool. Native
         // handles stay open so the later self-check reads the inode just hashed.
         let mut runtimes = BTreeMap::new();
+        let listed: BTreeSet<PathBuf> = restored.iter().map(|a| root.join(&a.path)).collect();
+        pending.retain(|(path, _, _)| !listed.contains(path));
         for (artifact, path, file) in hash_listed(root, pending, stop)? {
             if let Some(expected) = sources.get(&path) {
                 if artifact.sha256 != *expected {
@@ -597,6 +670,17 @@ impl Finalized {
             }
             inventory.artifacts.push(artifact);
         }
+        let restored: BTreeMap<PathBuf, Artifact> = restored
+            .into_iter()
+            .map(|artifact| {
+                let path = root.join(&artifact.path);
+                if full || artifact.kind.local() {
+                    files.insert(artifact.sha256.clone(), path.clone());
+                }
+                inventory.artifacts.push(artifact.clone());
+                (path, artifact)
+            })
+            .collect();
         // Keep native loads sequential to bound resident runtime memory.
         for (path, key, shared, source) in native {
             let name = path
@@ -604,12 +688,30 @@ impl Finalized {
                 .and_then(|name| name.to_str())
                 .ok_or("non-UTF8 runtime name")?
                 .to_owned();
-            let (sha256, file) = runtimes.remove(&path).ok_or("unhashed runtime")?;
+            let (sha256, file) = match restored.get(&path) {
+                Some(artifact) => (artifact.sha256.clone(), None),
+                None => {
+                    let (sha256, file) = runtimes.remove(&path).ok_or("unhashed runtime")?;
+                    (sha256, Some(file))
+                }
+            };
             // The derived name binds parameters and source; the whole-file
             // digest binds the exact bytes checked by a previous inventory.
             if previous.get(&name) == Some(&sha256) {
                 checked.reused += 1;
+            } else if defer.is_some() {
+                deferred.checks.push(DeferredCheck {
+                    rehash: restored.get(&path).map(|a| a.bytes),
+                    path,
+                    name,
+                    sha256,
+                    key,
+                    shared,
+                    source: source.clone(),
+                });
+                continue;
             } else {
+                let file = file.ok_or("unhashed runtime")?;
                 if stop() {
                     return Err(Box::new(Stopped));
                 }
@@ -625,12 +727,76 @@ impl Finalized {
         let bytes = serde_json::to_vec(&inventory)?;
         let sha256 = digest(&bytes);
         checked.passed = passed;
-        Ok(Self {
-            inventory,
-            bytes,
-            sha256,
-            files,
-        })
+        Ok((
+            Self {
+                inventory,
+                bytes,
+                sha256,
+                files,
+            },
+            deferred,
+        ))
+    }
+}
+
+/// Runtime checks a publisher listed without running: each restored digest
+/// is rehashed in full, then each runtime is loaded and self-checked against
+/// its verified source. Run after activation by one owned validator.
+#[derive(Default)]
+pub struct Deferred {
+    checks: Vec<DeferredCheck>,
+}
+struct DeferredCheck {
+    path: PathBuf,
+    name: String,
+    sha256: String,
+    /// The saved length of a digest listed without reading the file.
+    rehash: Option<u64>,
+    key: crate::runtime::RuntimeKey,
+    shared: std::sync::Arc<SharedParams>,
+    source: crate::history::shardset::SegmentSource,
+}
+impl Deferred {
+    pub fn len(&self) -> usize {
+        self.checks.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.checks.is_empty()
+    }
+    /// How many runtimes were listed from a saved inventory without reading.
+    pub fn restored(&self) -> usize {
+        self.checks.iter().filter(|c| c.rehash.is_some()).count()
+    }
+    /// Run every check not in `skip` (names already checked for the same
+    /// whole-file digest), one runtime at a time to bound resident memory,
+    /// asking `stop` before each file and bounded read. Calls `passed` with
+    /// each runtime that passed and returns at the first failure.
+    pub fn run(
+        &self,
+        skip: &BTreeMap<String, String>,
+        passed: &mut dyn FnMut(&str, &str),
+        stop: &(dyn Fn() -> bool + Sync),
+    ) -> Result<(), Error> {
+        for check in &self.checks {
+            if skip.get(&check.name) == Some(&check.sha256) {
+                continue;
+            }
+            if stop() {
+                return Err(Box::new(Stopped));
+            }
+            let mut file = crate::verification::open(&check.path)?;
+            if let Some(bytes) = check.rehash {
+                let listed = listed_digest(&check.path, &mut file, None, stop)?;
+                if listed != (check.sha256.clone(), bytes) {
+                    return Err(format!("runtime {} differs from its listed digest", check.name).into());
+                }
+                io::Seek::rewind(&mut file)?;
+            }
+            ShippedRuntimes::load_file(file, &check.key, &check.shared, check.source.sha256())?
+                .self_check(&check.shared, &check.source.load()?)?;
+            passed(&check.name, &check.sha256);
+        }
+        Ok(())
     }
 }
 /// Native material verified by this process, bounded to the last successful
@@ -642,6 +808,14 @@ pub struct CheckedRuntimes {
     pub loaded: usize,
     /// Native runtimes matching earlier checked bytes in the last attempt.
     pub reused: usize,
+}
+
+impl CheckedRuntimes {
+    /// Record runtimes a [`Deferred`] run checked, by name and digest.
+    pub fn record(&mut self, passed: &BTreeMap<String, String>) {
+        self.passed
+            .extend(passed.iter().map(|(name, sha256)| (name.clone(), sha256.clone())));
+    }
 }
 
 /// A digest and length this process verified for a file with this stamp.

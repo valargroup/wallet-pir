@@ -39,6 +39,7 @@ fn authority(directory: &Path, distribution: Option<Finalized>, rpc: NodeClient)
         checked_runtimes: Default::default(),
         runtime_preparations: AtomicU64::new(0),
         runtime_preparation_failures: AtomicU64::new(0),
+        validation: Default::default(),
     }))
 }
 
@@ -1394,4 +1395,145 @@ async fn cold_history_bootstrap_retry(
         consumer_root.join("active.json").exists(),
         "retry must durably activate the initial view"
     );
+}
+
+/// A restarted publisher lists runtimes from its saved inventory, serves the
+/// exact same inventory over HTTP while their checks are still pending, and
+/// only then rehashes and self-checks them. A same-length corruption fails
+/// validation without withdrawing the publication; a stale result never
+/// describes a successor; a changed saved runtime is refused before serving.
+#[tokio::test(flavor = "multi_thread")]
+async fn restored_history_serves_before_its_deferred_checks_run() {
+    use transparent_shared::publication::{CheckedRuntimes, Deferred, Inventory};
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path().join("publication");
+    manager_tests::copy_archive_publication(2, &directory);
+    let set = ShardSet::open(&directory, 0).unwrap();
+    let prepare = |saved: Option<&Inventory>| {
+        Finalized::prepare_deferring_until(
+            &directory,
+            &set,
+            2,
+            true,
+            &mut CheckedRuntimes::default(),
+            saved,
+            &|| false,
+        )
+    };
+    // The first preparation hashes every runtime and runs none of them.
+    let (first, deferred) = prepare(None).unwrap();
+    assert!(!deferred.is_empty());
+    assert_eq!(deferred.restored(), 0);
+    std::fs::write(directory.join(SAVED_INVENTORY), first.bytes()).unwrap();
+    let saved: Inventory =
+        serde_json::from_slice(&std::fs::read(directory.join(SAVED_INVENTORY)).unwrap()).unwrap();
+    // After a restart the saved digests are listed without reading the files,
+    // and the wire inventory is byte-for-byte the same.
+    let (restored, deferred) = prepare(Some(&saved)).unwrap();
+    assert_eq!(restored.bytes(), first.bytes());
+    assert_eq!(deferred.restored(), deferred.len());
+    let job = |deferred: Deferred| ValidationJob {
+        map_sha256: set.map_digest.clone(),
+        inventory_sha256: restored.sha256().to_string(),
+        directory: directory.clone(),
+        deferred,
+    };
+
+    let rpc = canonical_rpc(root.path(), &set).await;
+    let authority = authority(&directory, Some(restored.clone()), rpc.client.clone());
+    let tls = tls(root.path(), authority.clone()).await;
+    // The validator is deliberately not running: the check stays pending.
+    queue_validation(&authority, job(deferred));
+    let validation = || authority.0.status.read().unwrap()["validation"].clone();
+    assert_eq!(validation()["state"], "pending");
+    assert_eq!(validation()["inventory_sha256"], restored.sha256());
+    let mut manager = transparent_query_server::routing::manager::Manager::new(
+        config(&tls, root.path().join("consumer")),
+        transparent_query_server::config::ServiceConfig {
+            cache_bytes: 4 << 30,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap()
+    .with_full_holdings();
+    manager.poll_once().await.unwrap();
+    assert!(manager.live().is_some(), "served while validation is pending");
+    assert_eq!(validation()["state"], "pending");
+
+    // Now the held check runs and passes for exactly this inventory.
+    let pending = authority.0.validation.next.lock().unwrap().take().unwrap();
+    run_validation(&authority, pending).await;
+    assert_eq!(validation()["state"], "passed", "{}", validation());
+    assert_eq!(validation()["map_sha256"], set.map_digest.as_str());
+    assert_eq!(validation()["inventory_sha256"], restored.sha256());
+
+    // A saved inventory for another map lists nothing from it.
+    let mut other = saved.clone();
+    other.map_sha256 = "0".repeat(64);
+    assert_eq!(prepare(Some(&other)).unwrap().1.restored(), 0);
+
+    // A job for the current inventory that completes after a successor was
+    // queued never marks that successor.
+    let (_, deferred) = prepare(Some(&saved)).unwrap();
+    let older = job(deferred);
+    let successor = ValidationJob {
+        inventory_sha256: "f".repeat(64),
+        ..job(Deferred::default())
+    };
+    queue_validation(&authority, successor);
+    run_validation(&authority, older).await;
+    assert_eq!(validation()["state"], "pending");
+    assert_eq!(validation()["inventory_sha256"], "f".repeat(64));
+
+    // A same-length corruption of a restored runtime fails its full rehash;
+    // the publication stays served and the saved record is dropped.
+    let runtime = restored
+        .inventory()
+        .artifacts
+        .iter()
+        .find(|a| a.kind == Kind::ArchiveRuntime || a.kind == Kind::RecentRuntime)
+        .unwrap()
+        .path
+        .clone();
+    let mut bytes = std::fs::read(directory.join(&runtime)).unwrap();
+    let last = bytes.len() - 1;
+    bytes[last] ^= 1;
+    std::fs::write(directory.join(&runtime), &bytes).unwrap();
+    let (relisted, deferred) = prepare(Some(&saved)).unwrap();
+    assert_eq!(relisted.sha256(), restored.sha256(), "size-only restore");
+    queue_validation(&authority, job(deferred));
+    let pending = authority.0.validation.next.lock().unwrap().take().unwrap();
+    run_validation(&authority, pending).await;
+    assert_eq!(validation()["state"], "failed", "{}", validation());
+    assert!(validation()["error"]
+        .as_str()
+        .unwrap()
+        .contains("differs from its listed digest"));
+    assert!(!authority.0.withdrawn.load(Ordering::Acquire));
+    assert!(!directory.join(SAVED_INVENTORY).exists());
+    assert!(manager.poll_once().await.unwrap().unchanged);
+
+    // Minimal startup checks still refuse a changed or missing saved runtime.
+    bytes.pop();
+    std::fs::write(directory.join(&runtime), &bytes).unwrap();
+    let error = prepare(Some(&saved)).err().unwrap();
+    assert!(error.to_string().contains("saved inventory"), "{error}");
+    std::fs::remove_file(directory.join(&runtime)).unwrap();
+    assert!(prepare(Some(&saved)).is_err());
+}
+
+/// The owned validator returns promptly once the service is asked to stop.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_validator_ends_with_the_service() {
+    let root = tempfile::tempdir().unwrap();
+    let (directory, set) = publication_fixture(root.path(), 2, true);
+    let rpc = canonical_rpc(root.path(), &set).await;
+    let authority = authority(&directory, None, rpc.client.clone());
+    let validator = tokio::spawn(validate(authority.clone()));
+    authority.0.shutdown.request();
+    tokio::time::timeout(std::time::Duration::from_secs(30), validator)
+        .await
+        .expect("validator stops")
+        .unwrap();
 }
