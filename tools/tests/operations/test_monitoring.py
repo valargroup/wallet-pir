@@ -25,7 +25,7 @@ sys.path.insert(0, str(ROOT / 'tools/lib'))
 sys.path.insert(0, str(ROOT / 'tools/tests/operations/deploy'))
 from fake_fleet import FakeFleet  # noqa: E402
 from wallet_pir_ops import monitoring, monitoring_certs, monitoring_install, monitoring_roles  # noqa: E402
-from wallet_pir_ops.deploy import descriptors, remote, units  # noqa: E402
+from wallet_pir_ops.deploy import descriptors, remote, transaction, units  # noqa: E402
 
 SERVICES = descriptors.load_descriptors(ROOT / 'tools/deploy/services.toml')
 
@@ -309,6 +309,92 @@ class Certificates(unittest.TestCase):
         with fake.hold_lock('w1', '/run/lock/wallet-pir-production.lock'):
             with self.assertRaises(remote.LockHeld):
                 self.install(fake, self.NEW)
+
+    OBSERVERS = monitoring_roles.APM_OBSERVERS
+
+    def collector_host(self, active=True):
+        """An APM whose readiness reports the revision of the inventory it was started with."""
+        fake = FakeFleet()
+        fake.host('c1').units[monitoring_certs.COLLECTOR_UNIT] = {
+            'loaded': [('/etc/systemd/system/' + monitoring_certs.COLLECTOR_UNIT, '')],
+            'active': 'active' if active else 'inactive', 'pid': 0, 'exe': None}
+        fake.endpoints[('c1', monitoring_certs.COLLECTOR_READY)] = monitoring_certs.COLLECTOR_UNIT
+        fake.health_shapes[('c1', monitoring_certs.COLLECTOR_UNIT)] = lambda ready, exe: {
+            'ready': ready, 'revision': exe and json.loads(exe)['revision']}
+        fake._reload = lambda host: None
+        fake._start = lambda host, unit: fake.host(host).units[unit].update(
+            active='active', exe=fake.read(host, self.OBSERVERS))
+        return fake
+
+    def install_observers(self, fake, revision, ready_timeout=0):
+        installed = fake.read('c1', self.OBSERVERS)
+        lock = fake.hold_lock('c1', '/run/lock/wallet-pir-production.lock')
+        return monitoring_certs.install(
+            fake, lock, 'c1', {'observers.json': json.dumps({'revision': revision}).encode()},
+            state_dir=self.root / 'journal', directory='/etc/pir-apm', unit=monitoring_certs.COLLECTOR_UNIT,
+            ready=monitoring_certs.collector_ready(revision), restore_ready=monitoring_certs.collector_restore_ready,
+            identity={'previous_revision': installed and json.loads(installed)['revision'], 'revision': revision},
+            ready_timeout=ready_timeout, sleep=lambda _: None, mode=0o644)
+
+    def collector_journal(self):
+        return transaction.Journal.load(self.root / 'journal', 'monitoring-files-c1-etc-pir-apm')
+
+    def test_observer_rollback_verifies_the_previous_revision_not_the_new_one(self):
+        fake = self.collector_host()
+        self.install_observers(fake, 'sha256:a')
+        self.install_observers(fake, 'sha256:b')
+        lock = fake.hold_lock('c1', '/run/lock/wallet-pir-production.lock')
+        monitoring_certs.rollback(fake, lock, 'c1', state_dir=self.root / 'journal', directory='/etc/pir-apm',
+                                  restore_ready=monitoring_certs.collector_restore_ready, ready_timeout=0,
+                                  sleep=lambda _: None)
+        self.assertEqual(json.loads(fake.read('c1', self.OBSERVERS))['revision'], 'sha256:a')
+        self.assertEqual(self.collector_journal().status, 'rolled-back')
+        # A new inventory whose collection never succeeds is restored and verified on the old revision.
+        fake.unhealthy.add(('c1', json.dumps({'revision': 'sha256:c'})))
+        with self.assertRaisesRegex(RuntimeError, 'previous files restored'):
+            self.install_observers(fake, 'sha256:c')
+        self.assertEqual(json.loads(fake.read('c1', self.OBSERVERS))['revision'], 'sha256:a')
+        self.assertEqual(self.collector_journal().status, 'rolled-back')
+
+    def test_an_unverified_restoration_stays_open_and_reconcile_finishes_it(self):
+        fake = self.collector_host()
+        self.install_observers(fake, 'sha256:a')
+        fake.unhealthy.update({('c1', json.dumps({'revision': r})) for r in ('sha256:a', 'sha256:b')})
+        with self.assertRaisesRegex(RuntimeError, 'stays open for reconcile'):
+            self.install_observers(fake, 'sha256:b')
+        journal = self.collector_journal()
+        self.assertEqual((journal.status, journal.hosts[0]['phase']), ('restoring', 'restore-failed'))
+        lock = fake.hold_lock('c1', '/run/lock/wallet-pir-production.lock')
+        with self.assertRaises(RuntimeError):
+            monitoring_certs.reconcile(fake, lock, 'c1', state_dir=self.root / 'journal', directory='/etc/pir-apm',
+                                       restore_ready=monitoring_certs.collector_restore_ready, ready_timeout=0,
+                                       sleep=lambda _: None)
+        fake.unhealthy.clear()
+        lock = fake.hold_lock('c1', '/run/lock/wallet-pir-production.lock')
+        self.assertEqual(monitoring_certs.reconcile(
+            fake, lock, 'c1', state_dir=self.root / 'journal', directory='/etc/pir-apm',
+            restore_ready=monitoring_certs.collector_restore_ready, ready_timeout=0, sleep=lambda _: None),
+            journal.id)
+        self.assertEqual(self.collector_journal().status, 'rolled-back')
+        self.assertEqual(json.loads(fake.read('c1', self.OBSERVERS))['revision'], 'sha256:a')
+
+    def test_a_failed_first_install_leaves_no_files_and_the_unit_stopped_as_before(self):
+        fake = self.collector_host(active=False)
+        fake.unhealthy.add(('c1', json.dumps({'revision': 'sha256:a'})))
+        with self.assertRaisesRegex(RuntimeError, 'previous files restored'):
+            self.install_observers(fake, 'sha256:a')
+        self.assertIsNone(fake.read('c1', self.OBSERVERS))
+        self.assertEqual(fake.host('c1').units[monitoring_certs.COLLECTOR_UNIT]['active'], 'inactive')
+        self.assertEqual(self.collector_journal().status, 'rolled-back')
+        # Then a working first install commits, and its rollback stops the unit again.
+        fake.unhealthy.clear()
+        self.assertEqual(self.install_observers(fake, 'sha256:a'), ['observers.json'])
+        lock = fake.hold_lock('c1', '/run/lock/wallet-pir-production.lock')
+        monitoring_certs.rollback(fake, lock, 'c1', state_dir=self.root / 'journal', directory='/etc/pir-apm',
+                                  restore_ready=monitoring_certs.collector_restore_ready, ready_timeout=0,
+                                  sleep=lambda _: None)
+        self.assertIsNone(fake.read('c1', self.OBSERVERS))
+        self.assertEqual(fake.host('c1').units[monitoring_certs.COLLECTOR_UNIT]['active'], 'inactive')
 
     def test_collector_readiness_needs_the_installed_revision_not_plain_ok(self):
         fake = FakeFleet()
