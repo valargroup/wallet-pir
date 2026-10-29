@@ -457,15 +457,7 @@ fn service_rules(a: &mut Adder, svc: &ServiceView, view: &View, now: u64, p: &Po
             verdicts.push(("origins", publication.origins_agree));
         }
         for (key, verdict) in verdicts {
-            // Origin incidents retain the bounded, sanitized per-origin evidence.
-            let (observed, coverage) = if key == "origins" {
-                (publication.evidence(), publication.evidence())
-            } else {
-                (
-                    "Independent public publication check".into(),
-                    "Publication verification coverage".into(),
-                )
-            };
+            let (observed, coverage) = (publication.evidence(), publication.evidence());
             a.add(
                 format!("publication_{key}"),
                 name,
@@ -498,6 +490,18 @@ fn service_rules(a: &mut Adder, svc: &ServiceView, view: &View, now: u64, p: &Po
                 "verification unavailable for 45s",
             );
         }
+        a.add(
+            "publication_withdrawn",
+            name,
+            publication
+                .withdrawn
+                .filter(|_| publication_fresh && publication.consistent == Some(true)),
+            "warning",
+            0,
+            publication.sampled_at,
+            publication.evidence(),
+            "publication deliberately withdrawn while recovery prepares a canonical successor",
+        );
     }
     let coordinator = coordinator(svc.kind);
     let (worker_roles, prepare) = workers(svc.kind);
@@ -988,7 +992,7 @@ mod tests {
         // History-only rules never apply to the txid kind.
         assert!(!f.services["txid"]
             .iter()
-            .any(|c| c.key.contains("withdrawn")));
+            .any(|c| c.key == "quality.txid.withdrawn"));
         assert!(f.services["transparent"]
             .iter()
             .any(|c| c.key == "quality.transparent.inventory"));
@@ -1388,6 +1392,7 @@ mod tests {
         svc.publication = publication::View {
             sampled_at: 100,
             canonical: Some(true),
+            consistent: Some(true),
             origins_agree: Some(false),
             map_sha256: Some("aa".repeat(32)),
             map_after: Some("aa".repeat(32)),
@@ -1424,7 +1429,7 @@ mod tests {
         assert_eq!(origins.hold_seconds, 180, "a lagging origin is propagation");
         assert!(origins
             .observed
-            .starts_with("lagging origin; expected map aaaa"));
+            .starts_with("lagging origin; sample 100; expected map aaaa"));
         assert!(origins.observed.contains(&format!(
             "https://b.example at 99: HTTP 200, map {}",
             "bb".repeat(32)
@@ -1452,6 +1457,7 @@ mod tests {
         svc.publication = publication::View {
             sampled_at: 100,
             canonical: Some(true),
+            consistent: Some(true),
             origins_agree: Some(false),
             map_sha256: Some("aa".repeat(32)),
             map_after: Some("aa".repeat(32)),
@@ -1476,6 +1482,54 @@ mod tests {
             .unwrap();
         assert_eq!((origins.firing, origins.hold_seconds), (Some(true), 30));
         assert!(origins.observed.starts_with("map mismatch"));
+    }
+
+    #[test]
+    fn invalid_serving_survives_unknown_samples_and_restart_until_two_healthy_observations() {
+        let path =
+            std::env::temp_dir().join(format!("pir-publication-{}.sqlite", rand::random::<u64>()));
+        let mut svc = service("transparent", Kind::History);
+        svc.publication.canonical = Some(false);
+        svc.publication.sampled_at = 100;
+        svc.publication.consistent = Some(true);
+        let mut view = view(
+            vec![svc],
+            vec![("r", source("transparent", "recent-replica", 100, &[]))],
+        );
+        let evaluate = |store: &mut pir_apm::incidents::Store, view: &View, now| {
+            let families = conditions(view, now, &Policy::default());
+            let condition = families.services["transparent"]
+                .iter()
+                .find(|c| c.key == "quality.transparent.publication_canonical")
+                .unwrap();
+            assert_eq!(condition.hold_seconds, 0);
+            store
+                .evaluate(std::slice::from_ref(condition), now, false, "test", "")
+                .unwrap();
+        };
+        {
+            let mut store = pir_apm::incidents::Store::open(&path).unwrap();
+            evaluate(&mut store, &view, 100);
+            assert!(store.incidents().unwrap()[0].active);
+        }
+        let mut store = pir_apm::incidents::Store::open(&path).unwrap();
+        view.services[0].publication.canonical = None;
+        view.services[0].publication.withdrawn = Some(true);
+        view.services[0].publication.sampled_at = 110;
+        evaluate(&mut store, &view, 110);
+        assert!(store.incidents().unwrap()[0].active);
+        view.services[0].publication.canonical = Some(true);
+        view.services[0].publication.withdrawn = Some(false);
+        view.services[0].publication.sampled_at = 120;
+        for now in [120, 121, 122] {
+            evaluate(&mut store, &view, now);
+            assert!(store.incidents().unwrap()[0].active);
+        }
+        view.services[0].publication.sampled_at = 130;
+        evaluate(&mut store, &view, 130);
+        assert!(!store.incidents().unwrap()[0].active);
+        drop(store);
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]

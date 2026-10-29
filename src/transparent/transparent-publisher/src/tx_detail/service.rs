@@ -50,7 +50,8 @@ pub async fn run<E: pir_pipeline::publisher::PublisherExecutor + IngestionExecut
     let metrics = settings.metrics.clone();
     let mut owner = Tasks::default();
     let mut server = tokio::spawn(http.serve(config.status_listen, {
-        controller::status_router(status.clone(), metrics).merge(distribution.router())
+        controller::status_router(status.clone(), metrics, distribution.clone())
+            .merge(distribution.router())
     }));
     owner.own(&server);
     let mut controller = Controller::open(&config.root, store, source, settings)?;

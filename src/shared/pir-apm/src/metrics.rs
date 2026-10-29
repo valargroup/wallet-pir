@@ -674,19 +674,23 @@ pub fn parse_prometheus(
         }
         let mut sample = parse_line(line)
             .map_err(|error| format!("line {}: {error}", line_number.saturating_add(1)))?;
-        // Keep router stage distributions separate from public entrypoint metrics.
-        if let Some(suffix) = sample
+        // Explanatory stages never replace the public processing histogram.
+        let stage = sample
             .name
             .strip_prefix("enhance_query_stage_duration_seconds_")
-            .map(str::to_string)
-        {
-            let stage = sample.labels.get("stage").map(String::as_str).unwrap_or("");
-            if !matches!(stage, "worker" | "packing" | "total") {
-                continue;
-            }
-            sample
-                .labels
-                .insert("endpoint".into(), format!("query_stage_{stage}"));
+            .and_then(|suffix| {
+                let stage = sample.labels.get("stage")?.as_str();
+                matches!(stage, "worker" | "packing" | "total")
+                    .then(|| (suffix.to_string(), format!("query_stage_{stage}")))
+            })
+            .or_else(|| {
+                sample
+                    .name
+                    .strip_prefix("enhance_init_publication_wait_seconds_")
+                    .map(|suffix| (suffix.to_string(), "init_publication_wait".into()))
+            });
+        if let Some((suffix, endpoint)) = stage {
+            sample.labels.insert("endpoint".into(), endpoint);
             match suffix.as_str() {
                 "bucket" => set_histogram_bucket(&mut endpoints, &sample, |v| &mut v.processing)?,
                 "count" => set_histogram_value(
@@ -1150,6 +1154,10 @@ enhance_http_request_processing_duration_seconds_bucket{endpoint="query",le="+In
 enhance_http_request_processing_duration_seconds_sum{endpoint="query"} 2
 enhance_http_request_processing_duration_seconds_count{endpoint="query"} 10
 enhance_http_processing_in_flight{endpoint="query"} 2
+enhance_init_publication_wait_seconds_bucket{le="1"} 7
+enhance_init_publication_wait_seconds_bucket{le="+Inf"} 8
+enhance_init_publication_wait_seconds_count 8
+enhance_init_publication_wait_seconds_sum 2
 enhance_snapshot_anchor_height 123
 enhance_snapshot_generation 124
 nf_snapshot_ignored 1
@@ -1190,6 +1198,9 @@ process_start_time_seconds 1787880000
         assert_eq!(query.processing.sum, 2.0);
         assert_eq!(query.processing.count, 10.0);
         assert_eq!(query.processing_in_flight, 2.0);
+        let waiting = &parsed.endpoints["init_publication_wait"].processing;
+        assert_eq!((waiting.count, waiting.sum), (8., 2.));
+        assert_eq!(waiting.buckets.len(), 2);
         assert_eq!(
             parsed.snapshot_gauges["enhance_snapshot_anchor_height"],
             123.0
