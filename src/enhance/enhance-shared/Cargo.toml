@@ -10,7 +10,7 @@ publish = false
 # Restore the larger ordinary-domain test campaigns during full qualification.
 qualification-tests = []
 default = []
-native-reinspiring = ["pir-serving/native-reinspiring", "dep:zakura-pir-query-server", "dep:reinspiring", "dep:rand_chacha", "ipir-sp/native-reinspiring"]
+native-reinspiring = ["pir-serving/native-reinspiring", "dep:zakura-pir-query-server", "dep:reinspiring", "dep:rand_chacha", "dep:rayon", "ipir-sp/native-reinspiring"]
 cuda = ["dep:pir-cuda", "pir-cuda/cuda"]
 # Wallet-side query preparation, transport and decoding for diagnostics and wire tests.
 client = ["dep:zakura-pir-client", "dep:reqwest"]
@@ -25,6 +25,7 @@ pir-runtime = { path = "../../shared/pir-runtime" }
 pir-serving = { path = "../../shared/pir-serving" }
 reinspiring = { version = "=0.1.3-rc.1", optional = true }
 rand_chacha = { version = "0.3", optional = true }
+rayon = { version = "1.10", optional = true }
 base64 = "0.22"
 bytes = "1"
 clap = { version = "4", features = ["derive", "env"] }

@@ -3,6 +3,7 @@ use crate::packing_budget::{Charge, PackingBudget};
 use crate::{native as n, protocol::*};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use ipir_sp::{server::CrsBlock, YpirSchemeParams};
+use rayon::prelude::*;
 use reinspiring::native::NativePreprocessed;
 use sha2::{Digest, Sha256};
 
@@ -21,8 +22,10 @@ impl NativePacking {
             return Err("native hint block count".into());
         }
         let setup = n::packing_setup();
+        // The six independent blocks retain their wire order. Use the existing
+        // Rayon pool so nested transforms share the same bounded worker set.
         let pre = hint
-            .iter()
+            .par_iter()
             .map(|b| NativePreprocessed::build_two_mask(&setup, &b.rows))
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?;
