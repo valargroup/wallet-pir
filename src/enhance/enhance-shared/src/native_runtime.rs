@@ -127,3 +127,77 @@ impl NativePacking {
         Ok(out)
     }
 }
+
+#[cfg(all(test, feature = "qualification-tests", target_os = "linux"))]
+mod memory_tests {
+    use super::*;
+
+    /// Run alone in a fresh Linux test process: the process high-water mark
+    /// includes every test in that process. Full-width coefficients exercise
+    /// the deployed matrices with two resident predecessors during replacement.
+    #[test]
+    #[ignore = "isolated deployed-size memory qualification"]
+    fn native_replacement_peak_fits_its_memory_reservations() {
+        use rand_chacha::{
+            rand_core::{RngCore, SeedableRng},
+            ChaCha20Rng,
+        };
+        use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+        let budget = PackingBudget::coordinator();
+        let peak = AtomicU64::new(0);
+        let finished = AtomicBool::new(false);
+        struct Finish<'a>(&'a AtomicBool);
+        impl Drop for Finish<'_> {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::Relaxed);
+            }
+        }
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                while !finished.load(Ordering::Relaxed) {
+                    peak.fetch_max(budget.charged_bytes(), Ordering::Relaxed);
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+            });
+            let _finish = Finish(&finished);
+            let mut rng = ChaCha20Rng::from_seed([73; 32]);
+            let hint = (0..n::COLS / n::D)
+                .map(|_| CrsBlock {
+                    rows: (0..n::D)
+                        .map(|_| (0..n::D).map(|_| rng.next_u64() & (n::Q - 1)).collect())
+                        .collect(),
+                })
+                .collect::<Vec<_>>();
+            let result = (|| -> Result<(), String> {
+                let mut resident = Vec::new();
+                for _ in 0..3 {
+                    let packing = NativePacking::new(32768, &hint, &budget)?;
+                    packing.write_prepared(&mut std::io::sink())?;
+                    resident.push(packing);
+                }
+                Ok(())
+            })();
+            finished.store(true, Ordering::Relaxed);
+            result.unwrap();
+        });
+        let status = std::fs::read_to_string("/proc/self/status").unwrap();
+        let rss = status
+            .lines()
+            .find_map(|line| {
+                line.strip_prefix("VmHWM:")
+                    .and_then(|s| s.split_whitespace().next())
+                    .map(|s| s.parse::<u64>().unwrap() * 1024)
+            })
+            .unwrap();
+        let charged = peak.load(Ordering::Relaxed);
+        let fixture_bytes = (n::COLS * n::D * 8) as u64;
+        eprintln!("native replacement peak: rss_bytes={rss}, charged_bytes={charged}, fixture_bytes={fixture_bytes}");
+        assert_eq!(
+            budget.charged_bytes(),
+            0,
+            "all preparations release their reservations"
+        );
+        assert!(rss <= charged + fixture_bytes + 256 * 1024 * 1024,
+            "resident packing and temporary workspaces exceed their charge plus fixture and process overhead");
+    }
+}
