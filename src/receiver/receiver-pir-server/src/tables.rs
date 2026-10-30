@@ -1,15 +1,18 @@
-//! A byte-budgeted cache of prepared PIR tables over durable sources.
+//! A byte-budgeted cache of prepared P8 tables and served objects over durable sources.
 //!
-//! A [`Source`] names one payment or witness table: its session manifest and public
-//! setup, which inventories and the public route need, and a loader that rebuilds its
-//! prepared state, normally from files on disk. Prepared state is resident only while
-//! [`Tables`] caches it or a query uses it. Every resident table counts against one
-//! budget until its last user drops it, whether the cache still holds it or evicted it
-//! during an in-flight query, so retained inventories and running queries share it.
+//! A [`Source`] names one directory or companion table: its session and public setup,
+//! which inventories and the public route need, and a loader that rebuilds its prepared
+//! state, normally from files on disk. Directories and companions prepare
+//! independently. A load is charged its kind's preparation peak ([`peak_bytes`]) inside
+//! the blocking work that runs it, before it starts, so a caller that stops waiting
+//! frees nothing while the worker runs. Once prepared, the charge shrinks to the table's
+//! [`resident_bytes`] and stays until the last owner drops it, whether the cache still
+//! holds it or evicted it during an in-flight query.
 //!
-//! A [`FilterSource`] does the same for a sealed shard's receiver filter: every inventory
-//! naming the filter shares one source, and its bytes are read from disk into the same
-//! budget only while a request serves them or the cache keeps them.
+//! An [`ObjectSource`] does the same for a sealed shard's receiver filter or a
+//! segment's choice object: every inventory naming it shares one source, and its bytes
+//! are read from disk into the same budget only while a request serves them or the
+//! cache keeps them.
 use std::{
     collections::HashMap,
     sync::{
@@ -17,32 +20,47 @@ use std::{
         Arc, Mutex,
     },
 };
-use zakura_pir_query_server::receiver::server::{Server, WitnessServer};
 use zakura_pir_query_server::receiver::session::Error;
-use zakura_pir_query_server::receiver::session::Manifest;
-use zakura_pir_query_server::receiver::session::WitnessManifest;
+use zakura_pir_query_server::receiver::Table as _;
 use zakura_pir_query_server::receiver::{
-    shards::ShardFilter,
-    snapshot::{MAX_ROWS, ROW_BYTES},
-    Hash,
+    self, server::Server, ChoiceRef, Companion, Directory, Kind, Session, DIRECTORY_ROWS,
+    MAX_COMPANION_ROWS, ROW_BYTES,
 };
+use zakura_pir_query_server::receiver::{shards::ShardFilter, Hash};
 
-/// The smallest budget that can always load a table cold once queries in flight finish:
-/// a witness table prepares beside its payment table's server, so a cold witness load
-/// holds both, each at the largest supported geometry.
-pub const MIN_BUDGET: usize = 2 * resident_bytes(MAX_ROWS);
+/// Bytes a prepared P8 table keeps beside its scan copy, at most: its two packing
+/// blocks' preprocessing and public setup. Measured with `examples/measure.rs`
+/// (53 to 71 MB at 2,048 to 65,536 rows; `docs/receiver/README.md`).
+const FIXED_BYTES: usize = 72 << 20;
+/// Bytes preparation holds beyond the rows and their scan copy, at most: the hint and
+/// the analysis that builds the preprocessing (at most about 300 MB, measured).
+const SCRATCH_BYTES: usize = 320 << 20;
 
-/// The bytes a `rows`-row table's prepared state is budgeted at: the rows, their 16-bit
-/// scan copy and the preprocessed hint, about three times the rows.
-pub const fn resident_bytes(rows: u32) -> usize {
-    3 * rows as usize * ROW_BYTES
+/// The bytes preparing a `kind` table of `rows` rows holds at its peak: the rows read
+/// from disk and the scan copy made from them, a companion's directory, which its
+/// load reads to check it, and the preparation scratch.
+pub const fn peak_bytes(kind: Kind, rows: u32) -> usize {
+    let directory = match kind {
+        Kind::Directory => 0,
+        Kind::Companion => DIRECTORY_ROWS as usize * ROW_BYTES,
+    };
+    2 * rows as usize * ROW_BYTES + directory + SCRATCH_BYTES
 }
 
-/// Refuses a public setup `public` that is not `rows` rows' length with SHA-256 `digest`,
-/// the setup a session manifest binds.
-fn check_public(public: &[u8], digest: &Hash, rows: u32) -> Result<(), Error> {
+/// The bytes a prepared table of `rows` rows keeps: its scan copy and fixed parts.
+pub const fn resident_bytes(rows: u32) -> usize {
+    rows as usize * ROW_BYTES + FIXED_BYTES
+}
+
+/// The smallest budget that can always prepare a table cold once queries in flight
+/// finish: the largest directory resident beside the largest companion's preparation.
+pub const MIN_BUDGET: usize =
+    resident_bytes(DIRECTORY_ROWS) + peak_bytes(Kind::Companion, MAX_COMPANION_ROWS);
+
+/// Refuses a public setup that is not P8's length with the digest `session` binds.
+fn check_public(public: &[u8], digest: &Hash) -> Result<(), Error> {
     use sha2::Digest;
-    match public.len() == zakura_pir_query_server::receiver::native::public_bytes(rows)?
+    match public.len() == receiver::native::public_bytes()
         && sha2::Sha256::digest(public)[..] == digest[..]
     {
         true => Ok(()),
@@ -53,114 +71,91 @@ fn check_public(public: &[u8], digest: &Hash, rows: u32) -> Result<(), Error> {
 /// A table's prepared state.
 #[derive(Clone)]
 pub enum Loaded {
-    Payments(Server),
-    Witnesses(WitnessServer),
+    Directory(Server<Directory>),
+    Companion(Server<Companion>),
 }
 
 impl Loaded {
     /// The session ID it answers under.
     fn id(&self) -> Hash {
         match self {
-            Loaded::Payments(s) => s.id(),
-            Loaded::Witnesses(s) => s.id(),
+            Loaded::Directory(s) => s.id(),
+            Loaded::Companion(s) => s.id(),
+        }
+    }
+
+    /// Answers one encrypted query for this table's session.
+    fn respond(&self, body: &[u8]) -> Result<Vec<u8>, Error> {
+        match self {
+            Loaded::Directory(s) => s.respond(body),
+            Loaded::Companion(s) => s.respond(body),
         }
     }
 }
 
-/// What a source's loader rebuilds its table from. A table it needs in turn, such as a
-/// companion's payment table, comes from the same cache, so a full budget is
-/// [`LoadError::Busy`] rather than a failed load.
-type Load = dyn Fn(&Tables) -> Result<Loaded, LoadError> + Send + Sync;
+/// A table's session as an inventory lists it.
+#[derive(Clone)]
+pub enum Described {
+    Directory(Session<Directory>),
+    Companion(Session<Companion>),
+}
 
-/// One table's identity, public setup and loader. Cloning shares the loader.
+/// What a source's loader rebuilds its table from.
+type Load = dyn Fn() -> Result<Loaded, Error> + Send + Sync;
+
+/// One table's identity, public setup and loader.
 pub struct Source {
     id: Hash,
-    rows: u32,
     public: Arc<[u8]>,
-    manifest: Described,
-    /// Whether the loader holds prepared state in memory, outside the budget.
-    held: bool,
+    session: Described,
     load: Box<Load>,
 }
 
-/// A source's session manifest.
-enum Described {
-    Payments(Manifest),
-    Witnesses(WitnessManifest),
-}
-
 impl Source {
-    /// A payment table described by `manifest` with `public` setup, rebuilt by `load`.
-    /// The loaded server must answer under the manifest's session ID. A `public` that is
-    /// not the setup the manifest binds is refused.
-    pub fn payments(
-        manifest: Manifest,
+    /// A directory with `session` and `public` setup, rebuilt by `load`, which must
+    /// answer under the session's ID. A `public` the session does not bind is refused.
+    pub fn directory(
+        session: Session<Directory>,
         public: Vec<u8>,
-        load: impl Fn() -> Result<Server, Error> + Send + Sync + 'static,
+        load: impl Fn() -> Result<Server<Directory>, Error> + Send + Sync + 'static,
     ) -> Result<Self, Error> {
-        check_public(&public, &manifest.public_digest, manifest.directory.rows)?;
+        check_public(&public, &session.public_digest)?;
         Ok(Self {
-            id: manifest.id()?,
-            rows: manifest.directory.rows,
+            id: session.id()?,
             public: public.into(),
-            manifest: Described::Payments(manifest),
-            held: false,
-            load: Box::new(move |_| Ok(Loaded::Payments(load()?))),
+            session: Described::Directory(session),
+            load: Box::new(move || Ok(Loaded::Directory(load()?))),
         })
     }
 
-    /// A companion witness table described by `manifest` with `public` setup, bound to
-    /// the payment table `payments`; `load` supplies its table, which is prepared beside
-    /// that payment table's server. A `public` that is not the setup the manifest binds
-    /// is refused.
-    pub fn witnesses(
-        manifest: WitnessManifest,
+    /// A companion with `session` and `public` setup, rebuilt by `load` as
+    /// [`Self::directory`] is.
+    pub fn companion(
+        session: Session<Companion>,
         public: Vec<u8>,
-        payments: Arc<Source>,
-        load: impl Fn() -> Result<zakura_pir_query_server::receiver::witness::Table, Error>
-            + Send
-            + Sync
-            + 'static,
+        load: impl Fn() -> Result<Server<Companion>, Error> + Send + Sync + 'static,
     ) -> Result<Self, Error> {
-        check_public(&public, &manifest.public_digest, manifest.table.rows)?;
+        check_public(&public, &session.public_digest)?;
         Ok(Self {
-            id: manifest.id()?,
-            rows: manifest.table.rows,
+            id: session.id()?,
             public: public.into(),
-            manifest: Described::Witnesses(manifest),
-            held: false,
-            load: Box::new(move |tables| {
-                let resident = tables.get(&payments)?;
-                let server = resident.payments().ok_or(Error::Malformed)?;
-                Ok(Loaded::Witnesses(WitnessServer::new(load()?, server)?))
-            }),
+            session: Described::Companion(session),
+            load: Box::new(move || Ok(Loaded::Companion(load()?))),
         })
     }
 
     /// A source over already prepared state held in memory, for tables with no durable
     /// copy: the cache can drop its entry, but this source keeps the state alive.
     pub fn memory(loaded: Loaded) -> Self {
-        let (id, rows, public, manifest) = match &loaded {
-            Loaded::Payments(s) => (
-                s.id(),
-                s.manifest().directory.rows,
-                s.public().to_vec(),
-                Described::Payments(s.manifest().clone()),
-            ),
-            Loaded::Witnesses(s) => (
-                s.id(),
-                s.manifest().table.rows,
-                s.public().to_vec(),
-                Described::Witnesses(s.manifest().clone()),
-            ),
+        let (session, public) = match &loaded {
+            Loaded::Directory(s) => (Described::Directory(s.session().clone()), s.public()),
+            Loaded::Companion(s) => (Described::Companion(s.session().clone()), s.public()),
         };
         Self {
-            id,
-            rows,
+            id: loaded.id(),
             public: public.into(),
-            manifest,
-            held: true,
-            load: Box::new(move |_| Ok(loaded.clone())),
+            session,
+            load: Box::new(move || Ok(loaded.clone())),
         }
     }
 
@@ -169,9 +164,29 @@ impl Source {
         self.id
     }
 
-    /// The table's row count, which fixes its query length.
+    /// The bytes preparing this table is charged at its peak; see [`peak_bytes`].
+    fn peak(&self) -> usize {
+        match &self.session {
+            Described::Directory(s) => peak_bytes(Kind::Directory, s.manifest.rows()),
+            Described::Companion(s) => peak_bytes(Kind::Companion, s.manifest.rows()),
+        }
+    }
+
+    /// The table's row count, which fixes a full query's length.
     pub fn rows(&self) -> u32 {
-        self.rows
+        match &self.session {
+            Described::Directory(s) => s.manifest.rows(),
+            Described::Companion(s) => s.manifest.rows(),
+        }
+    }
+
+    /// The only shorter prefix a query may cover: a companion's `query_rows`, or the
+    /// directory's rows.
+    pub fn query_rows(&self) -> u32 {
+        match &self.session {
+            Described::Directory(s) => s.manifest.query_rows(),
+            Described::Companion(s) => s.manifest.query_rows(),
+        }
     }
 
     /// The public setup clients download once per session.
@@ -179,77 +194,81 @@ impl Source {
         &self.public
     }
 
-    /// The payment session manifest, if this is a payment table.
-    pub fn payment_manifest(&self) -> Option<&Manifest> {
-        match &self.manifest {
-            Described::Payments(m) => Some(m),
-            Described::Witnesses(_) => None,
+    /// The directory session, if this is a directory.
+    pub fn directory_session(&self) -> Option<&Session<Directory>> {
+        match &self.session {
+            Described::Directory(s) => Some(s),
+            Described::Companion(_) => None,
         }
     }
 
-    /// The witness session manifest, if this is a companion table.
-    pub fn witness_manifest(&self) -> Option<&WitnessManifest> {
-        match &self.manifest {
-            Described::Witnesses(m) => Some(m),
-            Described::Payments(_) => None,
+    /// The companion session, if this is a companion.
+    pub fn companion_session(&self) -> Option<&Session<Companion>> {
+        match &self.session {
+            Described::Companion(s) => Some(s),
+            Described::Directory(_) => None,
         }
-    }
-
-    /// Bytes it keeps resident outside the budget: its prepared state if held in memory.
-    pub fn held_bytes(&self) -> usize {
-        match self.held {
-            true => self.resident_bytes(),
-            false => 0,
-        }
-    }
-
-    /// The bytes its prepared state is budgeted at; see [`resident_bytes`].
-    pub fn resident_bytes(&self) -> usize {
-        resident_bytes(self.rows)
     }
 }
 
-/// One sealed shard filter's digest, encoded length and receiver count, which
-/// inventories list, and a loader that reads its encoding, normally from disk.
-pub struct FilterSource {
+/// What a served object is, which fixes how its loaded bytes are checked.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ObjectKind {
+    /// A sealed shard's receiver filter.
+    Filter,
+    /// A segment's choice object.
+    Choice,
+}
+
+/// One served object's digest, encoded length and count (a filter's receivers, a
+/// choice object's keys), which inventories list, and a loader that reads its
+/// encoding, normally from disk.
+pub struct ObjectSource {
+    kind: ObjectKind,
     digest: Hash,
     bytes: u32,
-    receivers: u64,
-    /// The encoding held outside the cache, for a filter with no durable copy.
-    held: Option<Arc<[u8]>>,
+    count: u64,
     load: Box<dyn Fn() -> Result<Vec<u8>, Error> + Send + Sync>,
 }
 
-impl FilterSource {
-    /// A filter with `digest`, `bytes` long and naming `receivers`, whose encoding `load`
-    /// reads. A load that does not decode to that digest and length fails.
-    pub fn stored(
+impl ObjectSource {
+    /// A filter with `digest`, `bytes` long and naming `receivers`, whose encoding
+    /// `load` reads. A load that does not decode to that digest and length fails.
+    pub fn filter(
         digest: Hash,
         bytes: u32,
         receivers: u64,
         load: impl Fn() -> Result<Vec<u8>, Error> + Send + Sync + 'static,
     ) -> Self {
         Self {
+            kind: ObjectKind::Filter,
             digest,
             bytes,
-            receivers,
-            held: None,
+            count: receivers,
             load: Box::new(load),
         }
     }
 
-    /// A source over `filter`'s encoding held in memory, for a filter with no durable
-    /// copy; those bytes stay resident outside the budget.
-    pub fn memory(filter: &ShardFilter) -> Self {
-        let held: Arc<[u8]> = filter.bytes().into();
-        let encoding = held.clone();
+    /// The choice object `reference` names, whose encoding `load` reads. A load whose
+    /// SHA-256 or length differs fails.
+    pub fn choice(
+        reference: &ChoiceRef,
+        load: impl Fn() -> Result<Vec<u8>, Error> + Send + Sync + 'static,
+    ) -> Self {
         Self {
-            digest: filter.digest(),
-            bytes: filter.bytes().len() as u32,
-            receivers: filter.receivers(),
-            held: Some(held),
-            load: Box::new(move || Ok(encoding.to_vec())),
+            kind: ObjectKind::Choice,
+            digest: reference.digest,
+            bytes: reference.bytes,
+            count: reference.keys.into(),
+            load: Box::new(load),
         }
+    }
+
+    /// A source over a choice object held in memory, for one with no durable copy;
+    /// those bytes stay resident outside the budget.
+    pub fn memory_choice(reference: &ChoiceRef, bytes: &[u8]) -> Self {
+        let held: Arc<[u8]> = bytes.into();
+        Self::choice(reference, move || Ok(held.to_vec()))
     }
 
     /// The digest that names it.
@@ -262,47 +281,69 @@ impl FilterSource {
         self.bytes
     }
 
-    /// The receivers it was built from.
-    pub fn receivers(&self) -> u64 {
-        self.receivers
+    /// A filter's receivers or a choice object's keys.
+    pub fn count(&self) -> u64 {
+        self.count
     }
 
-    /// Bytes it keeps resident outside the budget: its encoding if held in memory.
-    pub fn held_bytes(&self) -> usize {
-        self.held.as_ref().map_or(0, |h| h.len())
+    /// Whether `encoding` is this object.
+    fn matches(&self, encoding: &[u8]) -> bool {
+        use sha2::Digest;
+        encoding.len() == self.bytes as usize
+            && match self.kind {
+                ObjectKind::Filter => {
+                    ShardFilter::decode(encoding).is_ok_and(|f| f.digest() == self.digest)
+                }
+                ObjectKind::Choice => sha2::Sha256::digest(encoding)[..] == self.digest[..],
+            }
     }
 }
 
-/// A prepared table or filter encoding in use or cached, counted against the budget
-/// until dropped.
-pub struct Resident {
-    content: Content,
+/// Bytes counted against a budget until dropped.
+struct Charge {
     bytes: usize,
     live: Arc<AtomicUsize>,
+}
+
+impl Charge {
+    /// Lowers the charge to `bytes`, releasing the rest.
+    fn shrink(&mut self, bytes: usize) {
+        if bytes < self.bytes {
+            self.live.fetch_sub(self.bytes - bytes, Ordering::SeqCst);
+            self.bytes = bytes;
+        }
+    }
+}
+
+impl Drop for Charge {
+    /// Releases the charge.
+    fn drop(&mut self) {
+        self.live.fetch_sub(self.bytes, Ordering::SeqCst);
+    }
+}
+
+/// A preparation's peak charge, reserved before preparing a table outside the cache
+/// and held until the table is cached or the preparation stops; see
+/// [`Tables::reserve_peak`].
+pub struct Reservation(Charge);
+
+/// A prepared table or object encoding in use or cached, charged until dropped.
+pub struct Resident {
+    content: Content,
+    charge: Charge,
 }
 
 /// What a resident entry holds.
 enum Content {
     Table(Box<Loaded>),
-    Filter(Box<[u8]>),
+    Object(Box<[u8]>),
 }
 
 impl Resident {
-    /// The payment server, if this is a payment table.
-    pub fn payments(&self) -> Option<&Server> {
+    /// The object encoding, if this is a filter or choice object.
+    pub fn object(&self) -> Option<&[u8]> {
         match &self.content {
-            Content::Table(table) => match table.as_ref() {
-                Loaded::Payments(s) => Some(s),
-                Loaded::Witnesses(_) => None,
-            },
-            Content::Filter(_) => None,
-        }
-    }
-
-    /// The filter encoding, if this is a filter.
-    pub fn filter(&self) -> Option<&[u8]> {
-        match &self.content {
-            Content::Filter(bytes) => Some(bytes),
+            Content::Object(bytes) => Some(bytes),
             Content::Table(_) => None,
         }
     }
@@ -310,19 +351,9 @@ impl Resident {
     /// Answers one encrypted query for this table's session.
     pub fn respond(&self, body: &[u8]) -> Result<Vec<u8>, Error> {
         match &self.content {
-            Content::Table(table) => match table.as_ref() {
-                Loaded::Payments(s) => s.respond(body),
-                Loaded::Witnesses(s) => s.respond(body),
-            },
-            Content::Filter(_) => Err(Error::Malformed),
+            Content::Table(table) => table.respond(body),
+            Content::Object(_) => Err(Error::Malformed),
         }
-    }
-}
-
-impl Drop for Resident {
-    /// Releases its share of the budget.
-    fn drop(&mut self) {
-        self.live.fetch_sub(self.bytes, Ordering::SeqCst);
     }
 }
 
@@ -346,6 +377,13 @@ impl From<LoadError> for Error {
     }
 }
 
+/// A cache key: a table's session ID, or an object's digest and kind.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Key {
+    Table(Hash),
+    Object(ObjectKind, Hash),
+}
+
 /// The least recently used entries first out, within one byte budget.
 pub struct Tables {
     budget: usize,
@@ -356,18 +394,15 @@ pub struct Tables {
     loading: Mutex<HashMap<Key, Arc<Mutex<()>>>>,
 }
 
-/// A cache key: a table's session ID, or a filter's digest (`true`).
-type Key = (Hash, bool);
-
-/// Cached entries by session ID, or by digest for a filter (`true`), with their last use.
+/// Cached entries with their last use.
 #[derive(Default)]
 struct Entries {
-    tables: HashMap<(Hash, bool), (Arc<Resident>, u64)>,
+    tables: HashMap<Key, (Arc<Resident>, u64)>,
     clock: u64,
 }
 
 impl Tables {
-    /// A cache keeping at most `budget` bytes of prepared tables resident.
+    /// A cache keeping at most `budget` bytes charged.
     pub fn new(budget: usize) -> Self {
         Self {
             budget,
@@ -383,87 +418,93 @@ impl Tables {
         self.budget
     }
 
-    /// Bytes of prepared tables resident now, cached or in use.
+    /// Bytes charged now: preparations running and entries cached or in use.
     pub fn resident(&self) -> usize {
         self.live.load(Ordering::SeqCst)
     }
 
-    /// How many tables a loader has rebuilt.
+    /// How many tables or objects a loader has rebuilt.
     pub fn loads(&self) -> u64 {
         self.loads.load(Ordering::SeqCst)
     }
 
-    /// `source`'s prepared table, loading it if it is not cached. Loading first evicts the
-    /// least recently used idle tables until it fits. Tables in use are never evicted,
-    /// since they keep their bytes until their queries finish: if evicting every idle
-    /// table could not make room, the load is [`LoadError::Busy`] and nothing is evicted.
+    /// `source`'s prepared table, preparing it if it is not cached. Call it from the
+    /// blocking work that serves the request. Preparing first evicts the least
+    /// recently used idle entries until its [`peak_bytes`] fit. Entries in use are
+    /// never evicted: if evicting every idle one could not make room, the load is
+    /// [`LoadError::Busy`] and nothing is evicted.
     pub fn get(&self, source: &Source) -> Result<Arc<Resident>, LoadError> {
-        let key = (source.id, false);
+        let key = Key::Table(source.id);
         if let Some(found) = self.touch(&key) {
             return Ok(found);
         }
         self.once(key, || {
-            self.reserve(source.resident_bytes())?;
-            let bytes = source.resident_bytes();
-            let loaded = match (source.load)(self) {
-                Ok(loaded) if loaded.id() == source.id => loaded,
-                failed => {
-                    self.live.fetch_sub(bytes, Ordering::SeqCst);
-                    return Err(failed.err().unwrap_or(Error::Malformed.into()));
-                }
-            };
+            let mut charge = self.reserve(source.peak())?;
+            let loaded = (source.load)()?;
+            if loaded.id() != source.id {
+                return Err(Error::Malformed.into());
+            }
+            charge.shrink(resident_bytes(source.rows()));
             self.loads.fetch_add(1, Ordering::SeqCst);
-            Ok(self.cache(key, Content::Table(Box::new(loaded)), bytes))
+            Ok(self.cache(key, Content::Table(Box::new(loaded)), charge))
         })
     }
 
-    /// `source`'s filter encoding, reading it if it is not cached, within the budget as
-    /// [`Self::get`] loads a table. An encoding that does not decode to the source's digest
-    /// and length fails to load.
-    pub fn filter(&self, source: &FilterSource) -> Result<Arc<Resident>, LoadError> {
-        let key = (source.digest, true);
+    /// `source`'s encoding, reading it if it is not cached, within the budget as
+    /// [`Self::get`] prepares a table. An encoding that is not the source's fails.
+    pub fn object(&self, source: &ObjectSource) -> Result<Arc<Resident>, LoadError> {
+        let key = Key::Object(source.kind, source.digest);
         if let Some(found) = self.touch(&key) {
             return Ok(found);
         }
-        self.once(key, || self.read_filter(source))
+        self.once(key, || {
+            let charge = self.reserve(source.bytes as usize)?;
+            let encoding = (source.load)()?;
+            if !source.matches(&encoding) {
+                return Err(Error::Malformed.into());
+            }
+            self.loads.fetch_add(1, Ordering::SeqCst);
+            Ok(self.cache(key, Content::Object(encoding.into()), charge))
+        })
     }
 
-    /// Reads, checks and caches `source`'s encoding; see [`Self::filter`].
-    fn read_filter(&self, source: &FilterSource) -> Result<Arc<Resident>, LoadError> {
-        let key = (source.digest, true);
-        let bytes = source.bytes as usize;
-        self.reserve(bytes)?;
-        let loaded = (source.load)().and_then(|encoding| {
-            let filter = ShardFilter::decode(&encoding)?;
-            match filter.digest() == source.digest && encoding.len() == bytes {
-                true => Ok(encoding),
-                false => Err(Error::Malformed),
+    /// Reserves the [`peak_bytes`] of preparing a `kind` table of `rows` rows outside
+    /// the cache, evicting as [`Self::get`] does. While tables in use leave no room it
+    /// retries until `wait` has passed, then is [`LoadError::Busy`]. Blocking: call it
+    /// from the blocking work that prepares, so the charge lasts as long as that work
+    /// even if the request that started it is cancelled.
+    pub fn reserve_peak(
+        &self,
+        kind: Kind,
+        rows: u32,
+        wait: std::time::Duration,
+    ) -> Result<Reservation, LoadError> {
+        let deadline = std::time::Instant::now() + wait;
+        loop {
+            match self.reserve(peak_bytes(kind, rows)) {
+                Err(LoadError::Busy) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                reserved => return reserved.map(Reservation),
             }
-        });
-        let encoding = match loaded {
-            Ok(encoding) => encoding,
-            Err(error) => {
-                self.live.fetch_sub(bytes, Ordering::SeqCst);
-                return Err(error.into());
-            }
-        };
-        self.loads.fetch_add(1, Ordering::SeqCst);
-        Ok(self.cache(key, Content::Filter(encoding.into()), bytes))
+        }
     }
 
-    /// Caches `loaded`, prepared already for `source`, evicting as [`Self::get`] does.
-    /// A table that does not fit beside those in use is still returned and counted, so
-    /// a publication's own tables never fail to serve; the budget sheds cached tables
-    /// first.
-    pub fn insert(&self, source: &Source, loaded: Loaded) -> Arc<Resident> {
-        if let Some(found) = self.touch(&(source.id, false)) {
-            return found;
-        }
-        let bytes = source.resident_bytes();
-        if self.reserve(bytes).is_err() {
-            self.live.fetch_add(bytes, Ordering::SeqCst);
-        }
-        self.cache((source.id, false), Content::Table(Box::new(loaded)), bytes)
+    /// Caches `loaded`, prepared already for `source` under `reservation`, whose charge
+    /// shrinks to the table's [`resident_bytes`].
+    pub fn insert(
+        &self,
+        source: &Source,
+        loaded: Loaded,
+        reservation: Reservation,
+    ) -> Arc<Resident> {
+        let mut charge = reservation.0;
+        charge.shrink(resident_bytes(source.rows()));
+        self.cache(
+            Key::Table(source.id),
+            Content::Table(Box::new(loaded)),
+            charge,
+        )
     }
 
     /// The entry for `key`, running `load` only if no concurrent caller is loading it:
@@ -490,32 +531,35 @@ impl Tables {
         result
     }
 
-    /// The cached entry for `id`, marked used.
-    fn touch(&self, id: &(Hash, bool)) -> Option<Arc<Resident>> {
+    /// The cached entry for `key`, marked used.
+    fn touch(&self, key: &Key) -> Option<Arc<Resident>> {
         let mut entries = self.entries.lock().unwrap();
         entries.clock += 1;
         let clock = entries.clock;
-        let (resident, used) = entries.tables.get_mut(id)?;
+        let (resident, used) = entries.tables.get_mut(key)?;
         *used = clock;
         Some(resident.clone())
     }
 
-    /// Counts `bytes` against the budget, evicting the least recently used idle entries to
-    /// make room; see [`Self::get`].
-    fn reserve(&self, bytes: usize) -> Result<(), LoadError> {
+    /// Charges `bytes` against the budget, evicting the least recently used idle
+    /// entries to make room; see [`Self::get`].
+    fn reserve(&self, bytes: usize) -> Result<Charge, LoadError> {
         let mut entries = self.entries.lock().unwrap();
         loop {
             let live = self.live.load(Ordering::SeqCst);
             if live + bytes <= self.budget {
                 self.live.fetch_add(bytes, Ordering::SeqCst);
-                return Ok(());
+                return Ok(Charge {
+                    bytes,
+                    live: self.live.clone(),
+                });
             }
             let idle = |resident: &Arc<Resident>| Arc::strong_count(resident) == 1;
             let freeable: usize = entries
                 .tables
                 .values()
                 .filter(|(resident, _)| idle(resident))
-                .map(|(resident, _)| resident.bytes)
+                .map(|(resident, _)| resident.charge.bytes)
                 .sum();
             if live.saturating_sub(freeable) + bytes > self.budget {
                 return Err(LoadError::Busy);
@@ -525,11 +569,11 @@ impl Tables {
                 .iter()
                 .filter(|(_, (resident, _))| idle(resident))
                 .min_by_key(|(_, (_, used))| *used)
-                .map(|(id, _)| *id);
+                .map(|(key, _)| *key);
             match oldest {
                 // Dropping the cache's only reference frees an idle entry at once.
-                Some(id) => {
-                    let evicted = entries.tables.remove(&id);
+                Some(key) => {
+                    let evicted = entries.tables.remove(&key);
                     drop(entries);
                     drop(evicted);
                     entries = self.entries.lock().unwrap();
@@ -539,21 +583,21 @@ impl Tables {
         }
     }
 
-    /// Records `content` under `id`, its `bytes` already counted.
-    fn cache(&self, id: (Hash, bool), content: Content, bytes: usize) -> Arc<Resident> {
-        let resident = Arc::new(Resident {
-            content,
-            bytes,
-            live: self.live.clone(),
-        });
+    /// Records `content` under `key` with its `charge`, or marks used and returns the
+    /// entry already cached there.
+    fn cache(&self, key: Key, content: Content, charge: Charge) -> Arc<Resident> {
+        let resident = Arc::new(Resident { content, charge });
         let mut entries = self.entries.lock().unwrap();
         entries.clock += 1;
         let clock = entries.clock;
-        match entries.tables.get(&id) {
-            // A concurrent load won; drop this copy and its count.
-            Some((found, _)) => found.clone(),
+        match entries.tables.get_mut(&key) {
+            // A concurrent load won; drop this copy and its charge.
+            Some((found, used)) => {
+                *used = clock;
+                found.clone()
+            }
             None => {
-                entries.tables.insert(id, (resident.clone(), clock));
+                entries.tables.insert(key, (resident.clone(), clock));
                 resident
             }
         }
@@ -561,126 +605,4 @@ impl Tables {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use zakura_pir_query_server::receiver::session::MIN_ROWS;
-    use zakura_pir_query_server::receiver::snapshot::Snapshot;
-
-    /// A minimum-geometry payment table shared with the empty publication fixtures.
-    fn snapshot(salt: u8) -> Snapshot {
-        crate::empty_snapshot(salt)
-    }
-
-    /// A payment source over `snapshot` that prepares it on every load.
-    fn payments(snapshot: Snapshot) -> Arc<Source> {
-        let server = crate::prepared::payments(snapshot.clone()).unwrap();
-        Arc::new(
-            Source::payments(
-                server.manifest().clone(),
-                server.public().to_vec(),
-                move || crate::prepared::payments(snapshot.clone()),
-            )
-            .unwrap(),
-        )
-    }
-
-    /// A placeholder companion source beside `payments`, built from `snapshot`.
-    fn witnesses(snapshot: &Snapshot, payments: Arc<Source>) -> Source {
-        let table = crate::prepared::placeholder(snapshot);
-        let server = crate::prepared::payments(snapshot.clone()).unwrap();
-        let prepared = crate::prepared::companion(table.clone(), &server).unwrap();
-        Source::witnesses(
-            prepared.manifest().clone(),
-            prepared.public().to_vec(),
-            payments,
-            move || Ok(table.clone()),
-        )
-        .unwrap()
-    }
-
-    /// Concurrent misses for one filter read it once and share the cached copy.
-    #[test]
-    fn concurrent_filter_misses_load_once() {
-        use zakura_pir_query_server::receiver::shards::{Coverage, ShardFilter};
-        let coverage = Coverage {
-            start_height: 100,
-            end_height: 101,
-            end_hash: [3; 32],
-        };
-        let filter =
-            ShardFilter::build([1; 32], 0, coverage, &[crate::common::receiver()]).unwrap();
-        let reads = Arc::new(AtomicUsize::new(0));
-        let source = Arc::new(FilterSource::stored(
-            filter.digest(),
-            filter.bytes().len() as u32,
-            filter.receivers(),
-            {
-                let (reads, encoding) = (reads.clone(), filter.bytes().to_vec());
-                move || {
-                    reads.fetch_add(1, Ordering::SeqCst);
-                    std::thread::sleep(std::time::Duration::from_millis(100));
-                    Ok(encoding.clone())
-                }
-            },
-        ));
-        let tables = Arc::new(Tables::new(1 << 30));
-        let loads: Vec<_> = (0..8)
-            .map(|_| {
-                let (tables, source) = (tables.clone(), source.clone());
-                std::thread::spawn(move || tables.filter(&source).unwrap())
-            })
-            .collect();
-        let loaded: Vec<_> = loads.into_iter().map(|l| l.join().unwrap()).collect();
-        assert_eq!(reads.load(Ordering::SeqCst), 1);
-        assert!(loaded.iter().all(|l| Arc::ptr_eq(l, &loaded[0])));
-        assert_eq!(tables.resident(), filter.bytes().len());
-        assert!(tables.loading.lock().unwrap().is_empty());
-    }
-
-    /// A load that idle tables cannot make room for is `Busy` without evicting the tables
-    /// in use, so they stay cached for their next query; an idle one is evicted instead.
-    #[test]
-    fn a_full_budget_never_evicts_tables_in_use() {
-        let tables = Tables::new(2 * resident_bytes(MIN_ROWS));
-        let (one, two, three) = (
-            payments(snapshot(1)),
-            payments(snapshot(2)),
-            payments(snapshot(3)),
-        );
-        let (first, second) = (tables.get(&one).unwrap(), tables.get(&two).unwrap());
-        let loads = tables.loads();
-        assert!(matches!(tables.get(&three), Err(LoadError::Busy)));
-        assert!(Arc::ptr_eq(&tables.get(&one).unwrap(), &first));
-        assert!(Arc::ptr_eq(&tables.get(&two).unwrap(), &second));
-        assert_eq!(tables.loads(), loads);
-        drop(second);
-        assert!(tables.get(&three).is_ok());
-        assert!(Arc::ptr_eq(&tables.get(&one).unwrap(), &first));
-        assert_eq!(tables.loads(), loads + 1);
-        assert!(tables.resident() <= tables.budget());
-    }
-
-    /// At a budget of exactly its geometry's pair, a cold witness load evicts an idle
-    /// table and succeeds; a table in use leaves no room, which is `Busy` (a retry), not a
-    /// failed load, and the same load succeeds once that query finishes.
-    #[test]
-    fn a_cold_witness_load_fits_the_pair_budget_and_waits_for_queries() {
-        let tables = Tables::new(2 * resident_bytes(MIN_ROWS));
-        let (one, other) = (snapshot(1), snapshot(2));
-        let unrelated = payments(other);
-        tables.get(&unrelated).unwrap();
-        let paid = payments(one.clone());
-        let companion = witnesses(&one, paid.clone());
-        let resident = tables.get(&companion).unwrap();
-        assert!(resident.payments().is_none());
-        assert!(tables.resident() <= tables.budget());
-        drop(resident);
-        // A query holding the unrelated table leaves room for one table, not the pair.
-        let tables = Tables::new(2 * resident_bytes(MIN_ROWS));
-        let held = tables.get(&unrelated).unwrap();
-        assert!(matches!(tables.get(&companion), Err(LoadError::Busy)));
-        assert_eq!(tables.resident(), resident_bytes(MIN_ROWS));
-        drop(held);
-        assert!(tables.get(&companion).is_ok());
-    }
-}
+mod tests;

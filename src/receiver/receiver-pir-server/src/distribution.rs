@@ -4,14 +4,16 @@ use pir_publication::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use zakura_pir_query_server::receiver::{blocks, inventory, session, Hash};
+use zakura_pir_query_server::receiver::inventory;
+use zakura_pir_query_server::receiver::{self, native::public_bytes, DIRECTORY_ROWS, ROW_BYTES};
+use zakura_pir_query_server::receiver::{blocks, Hash};
 
 pub const PREFIX: &str = "/provider/receiver/v1/";
 pub const SCHEMA: &str = "receiver-prepared-distribution-v1";
 pub const METADATA_LIMIT: u64 = 128 * 1024 * 1024;
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 pub type Current = PublicationEnvelope<Descriptor>;
-/// All anchors one immutable view depends on, including its witness contexts.
+/// All anchors one immutable view depends on, including its companion contexts.
 pub type Subject = Vec<(u32, Hash)>;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -23,20 +25,20 @@ pub struct Descriptor {
     /// The publisher's recovery epoch when it exported this publication. A
     /// restarted publisher opens a new epoch, so the same tables published
     /// again name a new publication rather than the one query servers saw
-    /// withdrawn while it restarted. Publishers before this field send none.
-    #[serde(default)]
+    /// withdrawn while it restarted.
     pub recovery_epoch: u64,
 }
 
-/// Table bytes and setup already checked and prepared by the publisher.
+/// Table bytes, choice object and setups already checked and prepared by the publisher.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Segment {
-    pub publication: session::Publication,
-    pub payments: ObjectReference,
-    pub payment_public: ObjectReference,
-    pub witnesses: ObjectReference,
-    pub witness_public: ObjectReference,
+    pub publication: receiver::Publication,
+    pub directory: ObjectReference,
+    pub directory_public: ObjectReference,
+    pub choice: ObjectReference,
+    pub companion: ObjectReference,
+    pub companion_public: ObjectReference,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -52,8 +54,12 @@ pub struct Directory {
 #[serde(deny_unknown_fields)]
 pub struct Filters {
     pub head: blocks::Head,
-    /// Consecutive bounded wallet batch encodings, each a separate object.
-    pub batches: Vec<ObjectReference>,
+    /// Consecutive encoded ranges from the head's first height through its tip, each a
+    /// separate object of at most [`blocks::MAX_RANGE_BYTES`].
+    pub ranges: Vec<ObjectReference>,
+    /// Every block's hash from the head's first height through its tip, concatenated,
+    /// so a response can end at any height.
+    pub hashes: ObjectReference,
 }
 
 /// Hints may be published before the first directory, and advance without
@@ -68,8 +74,7 @@ pub struct Inventory {
     /// The publisher's recovery epoch when it exported this inventory. A
     /// restarted publisher opens a new epoch, so the same tables published
     /// again name a new publication rather than the one query servers saw
-    /// withdrawn while it restarted. Publishers before this field send none.
-    #[serde(default)]
+    /// withdrawn while it restarted.
     pub recovery_epoch: u64,
 }
 pub fn scope(genesis: Hash, activation: u32) -> PublicationScope {
@@ -93,16 +98,18 @@ impl Inventory {
         if let Some(directory) = &self.directory {
             for segment in &directory.segments {
                 objects.extend([
-                    segment.payments.clone(),
-                    segment.payment_public.clone(),
-                    segment.witnesses.clone(),
-                    segment.witness_public.clone(),
+                    segment.directory.clone(),
+                    segment.directory_public.clone(),
+                    segment.choice.clone(),
+                    segment.companion.clone(),
+                    segment.companion_public.clone(),
                 ]);
             }
             objects.extend(directory.filters.iter().cloned());
         }
         if let Some(filters) = &self.filters {
-            objects.extend(filters.batches.iter().cloned());
+            objects.extend(filters.ranges.iter().cloned());
+            objects.push(filters.hashes.clone());
         }
         objects
     }
@@ -139,56 +146,36 @@ impl Inventory {
                 .flat_map(|s| &s.segments)
                 .zip(&directory.segments)
             {
-                if named.payments.id()? != segment.publication.payments.id()?
-                    || named.witnesses.id()? != segment.publication.witnesses.id()?
+                let p = &segment.publication;
+                if named.directory.id()? != p.directory.id()?
+                    || named.companion.id()? != p.companion.id()?
                 {
                     return Err("Receiver session binding differs".into());
                 }
-                let rows = &segment.publication;
+                let (d, c) = (&p.directory, &p.companion);
+                let public = public_bytes() as u64;
                 for (object, digest, expected) in [
                     (
-                        &segment.payments,
-                        rows.payments.directory.data_sha256,
-                        u64::from(rows.payments.directory.rows) * 4096,
+                        &segment.directory,
+                        d.manifest.data_sha256,
+                        u64::from(DIRECTORY_ROWS) * ROW_BYTES as u64,
+                    ),
+                    (&segment.directory_public, d.public_digest, public),
+                    (
+                        &segment.choice,
+                        d.manifest.choice.digest,
+                        u64::from(d.manifest.choice.bytes),
                     ),
                     (
-                        &segment.witnesses,
-                        rows.witnesses.table.data_sha256,
-                        u64::from(rows.witnesses.table.rows) * 4096,
+                        &segment.companion,
+                        c.manifest.data_sha256,
+                        u64::from(c.manifest.rows) * ROW_BYTES as u64,
                     ),
-                    (
-                        &segment.payment_public,
-                        rows.payments.public_digest,
-                        zakura_pir_query_server::receiver::native::public_bytes(
-                            rows.payments.directory.rows,
-                        )? as u64,
-                    ),
-                    (
-                        &segment.witness_public,
-                        rows.witnesses.public_digest,
-                        zakura_pir_query_server::receiver::native::public_bytes(
-                            rows.witnesses.table.rows,
-                        )? as u64,
-                    ),
+                    (&segment.companion_public, c.public_digest, public),
                 ] {
                     object.validate(expected)?;
                     if object.bytes != expected || object.sha256 != hex::encode(digest) {
                         return Err("Receiver object differs from its session commitment".into());
-                    }
-                }
-                for (object, expected) in [
-                    (
-                        &segment.payments,
-                        u64::from(rows.payments.directory.rows) * 4096,
-                    ),
-                    (
-                        &segment.witnesses,
-                        u64::from(rows.witnesses.table.rows) * 4096,
-                    ),
-                ] {
-                    object.validate(expected)?;
-                    if object.bytes != expected {
-                        return Err("Receiver table length differs".into());
                     }
                 }
             }
@@ -211,18 +198,22 @@ impl Inventory {
         }
         if let Some(filters) = &self.filters {
             filters.head.validate(&self.genesis)?;
+            let heights = u64::from(filters.head.tip.height - filters.head.first) + 1;
             if filters.head.revision != self.history_revision
-                || filters.batches.is_empty()
-                || filters.batches.len() > 24192
+                || filters.ranges.is_empty()
+                // A `usize` bound always fits in `u64` on supported targets.
+                || heights > crate::blocks::MAX_WINDOW_BLOCKS as u64
+                || filters.ranges.len() as u64 > heights
             {
-                return Err("Receiver rolling filters differ".into());
+                return Err("Receiver block hints differ".into());
             }
-            for batch in &filters.batches {
-                batch.validate(blocks::MAX_BATCH_BYTES as u64)?;
+            for range in &filters.ranges {
+                range.validate(blocks::MAX_RANGE_BYTES as u64)?;
             }
-        }
-        for object in self.objects() {
-            object.validate(u64::MAX)?;
+            filters.hashes.validate(heights * 32)?;
+            if filters.hashes.bytes != heights * 32 {
+                return Err("Receiver block hint hashes differ".into());
+            }
         }
         Ok(())
     }
@@ -232,8 +223,8 @@ impl Inventory {
             for shard in &directory.shards {
                 anchors.push((shard.end_height, shard.end_hash));
                 for segment in &shard.segments {
-                    let context = &segment.witnesses.table;
-                    anchors.push((context.tree_height, context.tree_hash));
+                    let tree = &segment.companion.manifest.tree;
+                    anchors.push((tree.height, tree.hash));
                 }
             }
         }

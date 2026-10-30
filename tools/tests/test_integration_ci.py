@@ -17,8 +17,7 @@ class IntegrationTests(unittest.TestCase):
         self.assertIn('ci_smoke', registry['pir-query-server']['fast'])
         self.assertIn('receiver_ci_smoke', registry['pir-query-server']['fast'])
         self.assertIn('receiver_http', registry['pir-query-server']['full'])
-        self.assertIn('receiver_library_client', registry['pir-query-server']['full'])
-        self.assertNotIn('receiver-pir-server', registry)
+        self.assertEqual(registry['receiver-pir-server'], {'fast': ['budgets'], 'full': []})
         host = registry['pir-e2e-tests']
         self.assertIn('ci_hint', host['fast'])
         self.assertIn('encrypted_lifecycle', host['full'])

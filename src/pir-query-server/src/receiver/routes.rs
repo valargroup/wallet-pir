@@ -7,15 +7,14 @@ use axum::{
     Json, Router,
 };
 use pir_control::admission::{client_key, read_body, BodyError, ClientSlots, Queue};
-#[cfg(test)]
-use receiver_pir_server::Publication;
-use receiver_pir_server::{tables, Publications};
+use receiver_pir_server::{tables, Publication, Publications};
 use std::{sync::Arc, time::Duration};
-use zakura_pir_query_server::receiver::native::query_bytes;
-use zakura_pir_query_server::receiver::session::Error;
-use zakura_pir_query_server::receiver::session::HEADER_BYTES;
-use zakura_pir_query_server::receiver::session::MAGIC;
-use zakura_pir_query_server::receiver::session::MAX_ROWS;
+use zakura_pir_query_server::receiver::session::{Error, HEADER_BYTES};
+use zakura_pir_query_server::receiver::Hash;
+use zakura_pir_query_server::receiver::{
+    native::{query_bytes, MAGIC},
+    MAX_COMPANION_ROWS,
+};
 
 // Preserve the historical bounded categories for unmatched product-shaped
 // paths as well as this service's registered routes.
@@ -55,6 +54,7 @@ fn receiver_endpoint(route: &str) -> Option<&'static str> {
     Some(match route.split('/').next()? {
         "inventory" => "receiver_inventory",
         "shard-filters" => "receiver_shard_filters",
+        "choice" => "receiver_choice",
         "public" => "receiver_public",
         "query" => "receiver_query",
         "block-filters" => "receiver_block_filters",
@@ -94,18 +94,24 @@ struct Service {
     clients: ClientSlots,
     metrics: pir_observability::HttpMetrics,
     health_fields: HealthFields,
-    /// Rolling filter batches being encoded or sent; see [`MAX_FILTER_BATCHES`].
-    batches: Arc<tokio::sync::Semaphore>,
+    /// Block hint ranges being encoded or sent; see [`MAX_FILTER_RANGES`].
+    ranges: Arc<tokio::sync::Semaphore>,
+    /// Filter and choice objects being loaded or sent; see [`MAX_OBJECT_LOADS`].
+    objects: Arc<tokio::sync::Semaphore>,
 }
 
-/// Most rolling filter batches built or sent at once. Each holds up to twice
-/// `MAX_BATCH_BYTES` (its filters and their encoding); more are refused with 429.
-const MAX_FILTER_BATCHES: usize = 8;
+/// Most block hint ranges built or sent at once. Each holds up to twice
+/// `MAX_RANGE_BYTES` (its sets and their encoding); more are refused with 429.
+const MAX_FILTER_RANGES: usize = 8;
+
+/// Most filter and choice objects loaded or sent at once; more are refused with 429.
+const MAX_OBJECT_LOADS: usize = 16;
 
 /// The receiver categories `pir_observability` reports.
-const ENDPOINTS: [&str; 6] = [
+const ENDPOINTS: [&str; 7] = [
     "receiver_inventory",
     "receiver_shard_filters",
+    "receiver_choice",
     "receiver_public",
     "receiver_query",
     "receiver_block_filters",
@@ -127,7 +133,8 @@ pub fn router_with_health(publications: Publications, fields: HealthFields) -> R
         clients: ClientSlots::new(PER_CLIENT),
         metrics: pir_observability::HttpMetrics::default(),
         health_fields: fields,
-        batches: Arc::new(tokio::sync::Semaphore::new(MAX_FILTER_BATCHES)),
+        ranges: Arc::new(tokio::sync::Semaphore::new(MAX_FILTER_RANGES)),
+        objects: Arc::new(tokio::sync::Semaphore::new(MAX_OBJECT_LOADS)),
     })
 }
 
@@ -188,34 +195,13 @@ fn wallet_routes() -> Router<Service> {
         .route(
             "/shard-filters/:digest",
             get(|State(s): State<Service>, Path(digest): Path<String>| async move {
-                let Some(digest) = hash(&digest) else {
-                    return StatusCode::BAD_REQUEST.into_response();
-                };
-                let (publication, epoch) = match s.publications.with_filter(&digest) {
-                    Ok(selected) => selected,
-                    Err(status) => return status.into_response(),
-                };
-                // Filter bytes are read into the table budget and stay counted until
-                // the response is sent. Holding the selected inventory meanwhile keeps
-                // the filter's file (see `Publications::references`).
-                let authorization = publication.authorization();
-                let held = publication.clone();
-                let tables = s.publications.tables();
-                let loaded = tokio::task::spawn_blocking(move || {
-                    tables.filter(publication.filter(&digest).expect("selected by digest"))
-                })
-                .await;
-                // A revocation during the load is 410, as for queries: a revoked
-                // inventory's filter could wrongly rule a payment out.
-                if s.publications.epoch() != epoch || !authorization.load(std::sync::atomic::Ordering::Acquire) {
-                    return StatusCode::GONE.into_response();
-                }
-                drop(held);
-                match loaded {
-                    Ok(Ok(resident)) => binary(axum::body::Bytes::from_owner(Filter(resident))),
-                    Ok(Err(tables::LoadError::Busy)) => overloaded(),
-                    _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-                }
+                object(&s, &digest, Publications::with_filter, |p, d| p.filter(d).cloned()).await
+            }),
+        )
+        .route(
+            "/choice/:digest",
+            get(|State(s): State<Service>, Path(digest): Path<String>| async move {
+                object(&s, &digest, Publications::with_choice, |p, d| p.choice(d).cloned()).await
             }),
         )
         .route(
@@ -224,28 +210,56 @@ fn wallet_routes() -> Router<Service> {
         )
         .route("/query", post(query))
         .route("/block-filters/head", get(|State(s): State<Service>| async move {
-            match unavailable_held(|| s.publications.filters()).await {
+            match unavailable_held(|| s.publications.filters_in_epoch().map(|(window, _)| window)).await {
                 Ok(window) => ([(header::CACHE_CONTROL, "no-store")], Json(window.head().clone())).into_response(),
                 Err(status) => status.into_response(),
             }
         }))
         .route("/block-filters/:revision/:from/:limit", get(
             |State(s): State<Service>, Path((revision, from, limit)): Path<(u64, u32, u32)>| async move {
-                // The permit is held until the encoded batch is sent.
-                let Ok(permit) = s.batches.clone().try_acquire_owned() else {
-                    return overloaded();
-                };
-                match s.publications.filters().and_then(|window| window.batch(revision, from, limit)) {
-                    Ok(bytes) => {
+                match with_hints(&s, move |window| window.range(revision, from, limit)).await {
+                    Ok((bytes, permit)) => {
+                        // The permit is held until the encoded range is sent.
                         let mut response = binary(bytes);
                         let body = std::mem::replace(response.body_mut(), axum::body::Body::empty());
                         *response.body_mut() = pir_control::http::retain(body, permit);
                         response
                     }
-                    Err(status) => status.into_response(),
+                    Err(response) => response,
                 }
             }
         ))
+}
+
+/// Runs `work` on the current block hints off the async runtime under one of the
+/// [`MAX_FILTER_RANGES`] permits, which the blocking job owns, so a cancelled request
+/// cannot admit more work while its own still runs; the permit is returned with the
+/// result. Hints revoked or invalidated meanwhile could wrongly rule a payment out, so,
+/// as for shard filters, that result is refused as gone.
+async fn with_hints<T: Send + 'static>(
+    s: &Service,
+    work: impl FnOnce(&receiver_pir_server::blocks::BlockWindow) -> Result<T, StatusCode>
+        + Send
+        + 'static,
+) -> Result<(T, tokio::sync::OwnedSemaphorePermit), Response> {
+    let (window, epoch) = s
+        .publications
+        .filters_in_epoch()
+        .map_err(IntoResponse::into_response)?;
+    let Ok(permit) = s.ranges.clone().try_acquire_owned() else {
+        return Err(overloaded());
+    };
+    let (result, (permit, window)) =
+        pir_control::admission::spawn_admitted((permit, window), move |(_, window)| work(window))
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())?;
+    if s.publications.epoch() != epoch || !window.authorized() {
+        return Err(StatusCode::GONE.into_response());
+    }
+    drop(window);
+    result
+        .map(|value| (value, permit))
+        .map_err(IntoResponse::into_response)
 }
 
 /// `read`'s answer, re-read while it is 503 for up to [`crate::hold::WINDOW`].
@@ -259,13 +273,61 @@ async fn unavailable_held<T>(read: impl Fn() -> Result<T, StatusCode>) -> Result
     .await
 }
 
-/// A resident filter's encoding as a response body, holding its budget until sent.
-struct Filter(Arc<tables::Resident>);
+/// A live inventory a request selected, with the recovery epoch, or the refusal.
+type Selected = Result<(Arc<Publication>, u64), StatusCode>;
 
-impl AsRef<[u8]> for Filter {
+/// Serves the filter or choice object with hex digest `digest` from the live inventory
+/// `select` finds, whose source `source` gives, under one of the [`MAX_OBJECT_LOADS`]
+/// permits, which the blocking load owns and the response keeps until sent. Its bytes
+/// are read into the table budget and stay counted until the response is sent; holding the selected inventory
+/// meanwhile keeps its file (see `Publications::references`). A revocation during the
+/// load is 410, as for queries: a revoked inventory's object could wrongly rule a
+/// payment out.
+async fn object(
+    s: &Service,
+    digest: &str,
+    select: fn(&Publications, &Hash) -> Selected,
+    source: fn(&Publication, &Hash) -> Option<Arc<tables::ObjectSource>>,
+) -> Response {
+    let Some(digest) = hash(digest) else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
+    let (publication, epoch) = match select(&s.publications, &digest) {
+        Ok(selected) => selected,
+        Err(status) => return status.into_response(),
+    };
+    let Ok(permit) = s.objects.clone().try_acquire_owned() else {
+        return overloaded();
+    };
+    let authorization = publication.authorization();
+    let source = source(&publication, &digest).expect("selected by digest");
+    let tables = s.publications.tables();
+    let loaded =
+        pir_control::admission::spawn_admitted(permit, move |_| tables.object(&source)).await;
+    if s.publications.epoch() != epoch || !authorization.load(std::sync::atomic::Ordering::Acquire)
+    {
+        return StatusCode::GONE.into_response();
+    }
+    drop(publication);
+    match loaded {
+        Ok((Ok(resident), permit)) => {
+            let mut response = binary(axum::body::Bytes::from_owner(Object(resident)));
+            let body = std::mem::replace(response.body_mut(), axum::body::Body::empty());
+            *response.body_mut() = pir_control::http::retain(body, permit);
+            response
+        }
+        Ok((Err(tables::LoadError::Busy), _)) => overloaded(),
+        _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+/// A resident object's encoding as a response body, holding its budget until sent.
+struct Object(Arc<tables::Resident>);
+
+impl AsRef<[u8]> for Object {
     /// The encoding the resident entry holds.
     fn as_ref(&self) -> &[u8] {
-        self.0.filter().expect("a filter entry")
+        self.0.object().expect("an object entry")
     }
 }
 
@@ -321,7 +383,7 @@ fn json(body: Vec<u8>) -> Response {
         .into_response()
 }
 
-/// Serves the public PIR setup of the payment or witness session whose hex id is `id`.
+/// Serves the public PIR setup of the directory or companion session whose hex id is `id`.
 fn public(s: &Service, id: &str) -> Response {
     let Some(id) = hash(id) else {
         return StatusCode::BAD_REQUEST.into_response();
@@ -349,16 +411,16 @@ fn overloaded() -> Response {
     (StatusCode::TOO_MANY_REQUESTS, [(header::RETRY_AFTER, "1")]).into_response()
 }
 
-/// Answers one PIR query against the payment or witness table whose session its header
-/// names. The upload is
-/// read before the query waits for an evaluation slot, so a slow upload holds only
-/// its client's place, and a body longer or shorter than that session's query is
-/// refused (413 or 400) without waiting.
+/// Answers one PIR query against the directory or companion whose session its header
+/// names. The upload is read before the query waits for an evaluation slot, so a slow
+/// upload holds only its client's place. A directory query covers every row; a
+/// companion query every row or exactly its `query_rows` prefix. Any other length is
+/// refused (413 past the full length, else 400) without waiting.
 async fn query(State(s): State<Service>, request: Request) -> Response {
     let Some(client) = s.clients.try_acquire(&client_key(request.headers(), None)) else {
         return overloaded();
     };
-    let limit = query_bytes(MAX_ROWS).expect("supported maximum");
+    let limit = query_bytes(MAX_COMPANION_ROWS);
     let body = match read_body(request.into_body(), limit, UPLOAD).await {
         Ok(body) => body,
         Err(BodyError::Timeout) => return StatusCode::REQUEST_TIMEOUT.into_response(),
@@ -374,12 +436,12 @@ async fn query(State(s): State<Service>, request: Request) -> Response {
         Err(status) => return status.into_response(),
     };
     let source = publication.table(&id).expect("selected by id").clone();
-    let rows = source.rows();
-    let expected = query_bytes(rows).expect("a served geometry");
-    match body.len().cmp(&expected) {
-        std::cmp::Ordering::Greater => return StatusCode::PAYLOAD_TOO_LARGE.into_response(),
-        std::cmp::Ordering::Less => return StatusCode::BAD_REQUEST.into_response(),
-        std::cmp::Ordering::Equal => {}
+    let (full, trimmed) = (query_bytes(source.rows()), query_bytes(source.query_rows()));
+    if body.len() > full {
+        return StatusCode::PAYLOAD_TOO_LARGE.into_response();
+    }
+    if body.len() != full && body.len() != trimmed {
+        return StatusCode::BAD_REQUEST.into_response();
     }
     let Ok(permit) = s.queue.acquire(|| ()).await else {
         return overloaded();
@@ -417,388 +479,5 @@ async fn query(State(s): State<Service>, request: Request) -> Response {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::receiver::tests::common;
-    use zakura_pir_publisher::receiver::snapshot::SnapshotPublisherExt as _;
-
-    #[tokio::test]
-    async fn foreign_product_shaped_404_keeps_its_existing_metric_category() {
-        let (query_url, task) = serve(
-            Publications::default(),
-            Arc::new(Queue::new(1, 1, WAIT, true)),
-        )
-        .await;
-        let origin = query_url.strip_suffix("/v1/receiver/query").unwrap();
-        let http = reqwest::Client::new();
-        let refused = http
-            .get(format!("{origin}/v2/shards/init"))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(refused.status(), StatusCode::NOT_FOUND);
-        drop(refused);
-        let metrics = http
-            .get(format!("{origin}/metrics"))
-            .send()
-            .await
-            .unwrap()
-            .text()
-            .await
-            .unwrap();
-        assert!(metrics.contains("pir_http_responses_total{endpoint=\"init\",code=\"4xx\"} 1"));
-        task.abort();
-    }
-
-    #[tokio::test]
-    async fn an_inventory_request_waits_for_the_first_publication() {
-        use zakura_pir_query_server::receiver::session::MIN_ROWS;
-        use zakura_pir_query_server::receiver::snapshot::Snapshot;
-        let publications = Publications::default();
-        let (query_url, task) =
-            serve(publications.clone(), Arc::new(Queue::new(1, 1, WAIT, true))).await;
-        let inventory = query_url.replace("/query", "/inventory");
-        let asked = tokio::spawn(async move { reqwest::get(inventory).await.unwrap().status() });
-        tokio::time::sleep(Duration::from_millis(600)).await;
-        assert!(
-            !asked.is_finished(),
-            "nothing published yet, so the request waits"
-        );
-        let snapshot =
-            Snapshot::build(common::manifest(MIN_ROWS), &[common::record(0, 1)]).unwrap();
-        let publication = crate::receiver::tests::prepared::prepare_payments(snapshot).unwrap();
-        assert!(publications.publish(publication, 0));
-        assert_eq!(asked.await.unwrap(), StatusCode::OK);
-        task.abort();
-    }
-
-    #[tokio::test]
-    async fn query_response_retains_admission_and_publication_until_transport_drop() {
-        use zakura_pir_client::receiver::Client;
-        use zakura_pir_query_server::receiver::session::MIN_ROWS;
-        use zakura_pir_query_server::receiver::snapshot::Snapshot;
-        let snapshot =
-            Snapshot::build(common::manifest(MIN_ROWS), &[common::record(0, 1)]).unwrap();
-        let publication = crate::receiver::tests::prepared::prepare_payments(snapshot).unwrap();
-        let source = &publication.segments()[0].payments;
-        let manifest = source.payment_manifest().unwrap().clone();
-        let client = Client::new(manifest, source.public()).unwrap();
-        let publications = Publications::default();
-        assert!(publications.publish(publication, 0));
-        let prepared = Arc::downgrade(&publications.current().unwrap());
-        let queue = Arc::new(Queue::new(1, 1, WAIT, true));
-        let clients = ClientSlots::new(1);
-        let service = Service {
-            publications: publications.clone(),
-            queue: queue.clone(),
-            clients: clients.clone(),
-            metrics: Default::default(),
-            health_fields: Arc::new(serde_json::Map::new),
-            batches: Arc::new(tokio::sync::Semaphore::new(MAX_FILTER_BATCHES)),
-        };
-        let request = client.prepare(common::receiver(), 0).unwrap();
-        let response = query(
-            State(service),
-            Request::post("/v1/receiver/query")
-                .body(axum::body::Body::from(request.body().to_vec()))
-                .unwrap(),
-        )
-        .await;
-        assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(
-            response.headers()[header::CONTENT_TYPE],
-            "application/octet-stream"
-        );
-        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
-        assert_eq!(queue.executing_available(), 0);
-        assert!(clients.try_acquire("unknown").is_none());
-        publications.revoke();
-        assert!(prepared.upgrade().is_some());
-        // Dropping an unconsumed response models transport cancellation. The
-        // shared wrapper also tests the fully-polled end-of-stream case.
-        drop(response);
-        assert_eq!(queue.executing_available(), 1);
-        assert!(clients.try_acquire("unknown").is_some());
-        assert!(prepared.upgrade().is_none());
-    }
-
-    /// With every evaluation slot held, a query of the wrong length is still refused at
-    /// once, while one of the right length waits and is then told to retry.
-    #[tokio::test]
-    async fn wrong_lengths_are_refused_without_waiting_for_evaluation() {
-        let publication = crate::receiver::tests::prepared::prepare_payments(
-            crate::receiver::tests::empty_snapshot(1),
-        )
-        .unwrap();
-        let mut header = MAGIC.to_vec();
-        header.extend(publication.segments()[0].payments.id());
-        let exact = query_bytes(zakura_pir_query_server::receiver::session::MIN_ROWS).unwrap();
-        let publications = Publications::default();
-        assert!(publications.publish(publication, 0));
-        let queue = Arc::new(Queue::new(EVALUATING, WAITING, WAIT, true));
-        let _held = [
-            queue.acquire(|| ()).await.unwrap(),
-            queue.acquire(|| ()).await.unwrap(),
-        ];
-        let (url, server) = serve(publications, queue).await;
-        let http = reqwest::Client::new();
-        let post = |len: usize, client: &str| {
-            let mut body = header.clone();
-            body.resize(len, 0);
-            http.post(&url)
-                .header("x-forwarded-for", client)
-                .body(body)
-                .send()
-        };
-        for (len, status) in [
-            (exact + 1, StatusCode::PAYLOAD_TOO_LARGE),
-            (exact - 1, StatusCode::BAD_REQUEST),
-        ] {
-            let started = std::time::Instant::now();
-            assert_eq!(post(len, "10.0.0.1").await.unwrap().status(), status);
-            assert!(started.elapsed() < WAIT / 2);
-        }
-        let started = std::time::Instant::now();
-        assert_eq!(
-            post(exact, "10.0.0.2").await.unwrap().status(),
-            StatusCode::TOO_MANY_REQUESTS
-        );
-        assert!(started.elapsed() >= WAIT);
-        server.abort();
-    }
-
-    /// Rolling filter batches past the limit are refused with 429 while the others are
-    /// built or sent, and served again once one finishes.
-    #[tokio::test]
-    async fn rolling_filter_batches_beyond_the_limit_are_refused() {
-        let batches = Arc::new(tokio::sync::Semaphore::new(MAX_FILTER_BATCHES));
-        let app = router(Service {
-            publications: Publications::default(),
-            queue: Arc::new(Queue::new(1, 1, WAIT, true)),
-            clients: ClientSlots::new(PER_CLIENT),
-            metrics: pir_observability::HttpMetrics::default(),
-            health_fields: Arc::new(serde_json::Map::new),
-            batches: batches.clone(),
-        });
-        let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!(
-            "http://{}/v1/receiver/block-filters/0/100/1",
-            socket.local_addr().unwrap()
-        );
-        let server = tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
-        let held = batches
-            .clone()
-            .acquire_many_owned(MAX_FILTER_BATCHES as u32)
-            .await
-            .unwrap();
-        let refused = reqwest::get(&url).await.unwrap();
-        assert_eq!(refused.status(), StatusCode::TOO_MANY_REQUESTS);
-        drop(held);
-        // With a slot free it reaches the window, which is not published yet.
-        let served = reqwest::get(&url).await.unwrap();
-        assert_eq!(served.status(), StatusCode::SERVICE_UNAVAILABLE);
-        assert_eq!(batches.available_permits(), MAX_FILTER_BATCHES);
-        server.abort();
-    }
-
-    /// Serves `publications` with `queue`, returning the query URL and the server task.
-    async fn serve(
-        publications: Publications,
-        queue: Arc<Queue>,
-    ) -> (String, tokio::task::JoinHandle<()>) {
-        let app = router(Service {
-            publications,
-            queue,
-            clients: ClientSlots::new(PER_CLIENT),
-            metrics: pir_observability::HttpMetrics::default(),
-            health_fields: Arc::new(serde_json::Map::new),
-            batches: Arc::new(tokio::sync::Semaphore::new(MAX_FILTER_BATCHES)),
-        });
-        let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}/v1/receiver/query", socket.local_addr().unwrap());
-        let server = tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
-        (url, server)
-    }
-
-    /// Posts `body` while every evaluation slot is held, runs `during` once the query
-    /// has been selected and waits for a slot, then frees the slots for its answer.
-    async fn held_query(
-        url: &str,
-        queue: &Queue,
-        body: Vec<u8>,
-        during: impl FnOnce(),
-    ) -> reqwest::Response {
-        let held = [
-            queue.acquire(|| ()).await.unwrap(),
-            queue.acquire(|| ()).await.unwrap(),
-        ];
-        let response = tokio::spawn(reqwest::Client::new().post(url).body(body).send());
-        // A request refused before it queues fails here rather than hanging.
-        tokio::time::timeout(WAIT, async {
-            while queue.waiting_available() == WAITING {
-                tokio::time::sleep(Duration::from_millis(1)).await;
-            }
-        })
-        .await
-        .expect("the query was selected and queued");
-        during();
-        drop(held);
-        response.await.unwrap().unwrap()
-    }
-
-    /// A query selected before a revocation and evaluated after it is answered 410,
-    /// `no-store`; one selected before an ordinary rotation is still answered.
-    #[tokio::test]
-    async fn a_revocation_after_selection_is_gone() {
-        use zakura_pir_client::receiver::Client;
-        use zakura_pir_query_server::receiver::session::MIN_ROWS;
-        use zakura_pir_query_server::receiver::snapshot::Snapshot;
-        let snapshot =
-            Snapshot::build(common::manifest(MIN_ROWS), &[common::record(0, 1)]).unwrap();
-        let publication = crate::receiver::tests::prepared::prepare_payments(snapshot).unwrap();
-        let source = publication.segments()[0].payments.clone();
-        let manifest = source.payment_manifest().unwrap().clone();
-        let client = Client::new(manifest, source.public()).unwrap();
-        let publications = Publications::default();
-        assert!(publications.publish(publication, 0));
-        let queue = Arc::new(Queue::new(EVALUATING, WAITING, WAIT, true));
-        let (url, task) = serve(publications.clone(), queue.clone()).await;
-
-        let query = client.prepare(common::receiver(), 0).unwrap();
-        let rotated = held_query(&url, &queue, query.body().to_vec(), || {
-            let next = crate::receiver::tests::prepared::prepare_payments(
-                crate::receiver::tests::empty_snapshot(1),
-            );
-            assert!(publications.publish(next.unwrap(), 0));
-        })
-        .await;
-        assert_eq!(rotated.status(), StatusCode::OK);
-        let answer = rotated.bytes().await.unwrap();
-        assert_eq!(
-            client.decode(query, &answer).unwrap(),
-            Some(common::record(0, 1))
-        );
-
-        let query = client.prepare(common::receiver(), 0).unwrap();
-        let revoked = held_query(&url, &queue, query.body().to_vec(), || {
-            publications.revoke()
-        })
-        .await;
-        assert_eq!(revoked.status(), StatusCode::GONE);
-        assert_eq!(revoked.headers()[header::CACHE_CONTROL], "no-store");
-        task.abort();
-    }
-
-    /// A shard filter whose load a revocation overtakes is 410, never the revoked
-    /// inventory's filter.
-    #[tokio::test]
-    async fn a_revocation_during_a_filter_load_is_gone() {
-        use std::sync::mpsc;
-        use zakura_pir_query_server::receiver::shards::{Coverage, ShardFilter};
-        let snapshot = crate::receiver::tests::empty_snapshot(1);
-        let coverage = Coverage {
-            start_height: 100,
-            end_height: 101,
-            end_hash: [3; 32],
-        };
-        let filter = ShardFilter::build([1; 32], 0, coverage, &[common::receiver()]).unwrap();
-        let (started, loading) = mpsc::channel();
-        let (release, released) = mpsc::channel::<()>();
-        let released = std::sync::Mutex::new(released);
-        let encoding = filter.bytes().to_vec();
-        let source = Arc::new(tables::FilterSource::stored(
-            filter.digest(),
-            encoding.len() as u32,
-            filter.receivers(),
-            move || {
-                started.send(()).unwrap();
-                released.lock().unwrap().recv().unwrap();
-                Ok(encoding.clone())
-            },
-        ));
-        let segment = crate::receiver::tests::prepared::segment(
-            snapshot.clone(),
-            crate::receiver::tests::prepared::placeholder(&snapshot),
-        )
-        .unwrap();
-        let publication =
-            Publication::assemble([1; 32], 0, vec![(true, vec![segment], Some(source))]).unwrap();
-        let publications = Publications::default();
-        assert!(publications.publish(publication, 0));
-        let (url, task) = serve(publications.clone(), Arc::new(Queue::new(1, 1, WAIT, true))).await;
-        let url = url.replace(
-            "/v1/receiver/query",
-            &format!(
-                "/v1/receiver/shard-filters/{}",
-                hex::encode(filter.digest())
-            ),
-        );
-        let response = tokio::spawn(reqwest::get(url));
-        tokio::task::spawn_blocking(move || loading.recv().unwrap())
-            .await
-            .unwrap();
-        publications.revoke();
-        release.send(()).unwrap();
-        let response = response.await.unwrap().unwrap();
-        assert_eq!(response.status(), StatusCode::GONE);
-        task.abort();
-    }
-}
-
-#[cfg(all(test, feature = "qualification-tests"))]
-mod fixture_cache_tests {
-    use super::*;
-    use crate::receiver::tests::{common, prepared};
-    use zakura_pir_publisher::receiver::snapshot::SnapshotPublisherExt as _;
-    use zakura_pir_query_server::receiver::snapshot::Snapshot;
-    fn snapshot() -> Snapshot {
-        Snapshot::build(
-            common::manifest(zakura_pir_query_server::receiver::session::MIN_ROWS),
-            &[],
-        )
-        .unwrap()
-    }
-    /// Only an identical snapshot reuses a cached server; a cached server keeps no
-    /// report and does not hide corrupt input.
-    #[test]
-    fn reused_servers_do_not_share_reports_or_hide_corruption() {
-        // A cache of its own, so concurrent tests cannot evict its entries.
-        let cache = Default::default();
-        let payments = |snapshot| prepared::payments_in(&cache, snapshot);
-        let (first, second) = (payments(snapshot()).unwrap(), payments(snapshot()).unwrap());
-        assert!(std::ptr::eq(
-            first.public().as_ptr(),
-            second.public().as_ptr()
-        ));
-        let mut salted = snapshot();
-        salted.manifest.salt[0] ^= 1;
-        let salted = Snapshot::build(salted.manifest, &[]).unwrap();
-        let other = payments(salted).unwrap();
-        assert!(!std::ptr::eq(
-            first.public().as_ptr(),
-            other.public().as_ptr()
-        ));
-        let first = prepared::prepare_payments(snapshot()).unwrap();
-        let second = prepared::prepare_payments(snapshot()).unwrap();
-        let expected = first.head().inventory;
-        let changed = first.with_report(serde_json::json!({"fixture": "changed"}));
-        assert_eq!(changed.head().inventory, expected);
-        let publications = Publications::new(Duration::from_secs(600), 4096 << 20);
-        publications
-            .install_view(Some(changed), None, 0, 0)
-            .unwrap();
-        assert_eq!(
-            publications.health().0.unwrap().1,
-            Some(serde_json::json!({"fixture": "changed"}))
-        );
-        let independent = Publications::new(Duration::from_secs(600), 4096 << 20);
-        independent.install_view(Some(second), None, 0, 0).unwrap();
-        assert_eq!(independent.health().0.unwrap().1, None);
-        let mut corrupt = snapshot();
-        corrupt.data[0] ^= 1;
-        assert!(payments(corrupt).is_err());
-        let mut corrupt = snapshot();
-        corrupt.manifest.end_height = 0;
-        assert!(payments(corrupt).is_err());
-    }
-}
+#[path = "routes_tests.rs"]
+mod tests;

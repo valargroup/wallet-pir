@@ -60,7 +60,7 @@ orchard = { package = "zakura-orchard", version = "=4.0.0", default-features = f
 zakura-state = { git = "https://github.com/zakura-core/zakura.git", rev = "ae0f629bbee85cfe80d89e65d86fb2e931832efe", optional = true }
 # Receiver recovery is wallet-libraries' canonical codec, at the revision the
 # services pin. wallet-pir consumes wallet-libraries, never the reverse.
-zakura-pir-protocol = { version = "=0.0.1-rc2", default-features = false, features = ["receiver-crypto"], optional = true }
+zakura-pir-protocol = { version = "=0.0.1-rc4", default-features = false, features = ["receiver-crypto"], optional = true }
 
 [dev-dependencies]
 axum = "0.7"

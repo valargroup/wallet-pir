@@ -92,6 +92,9 @@ mod tests {
 }
 
 #[cfg(test)]
+#[path = "../../receiver-pir-server/tests/common/lookup.rs"]
+pub(crate) mod lookup;
+#[cfg(test)]
 #[path = "../../receiver-pir-server/tests/common/prepared.rs"]
 pub(crate) mod prepared;
 #[cfg(test)]

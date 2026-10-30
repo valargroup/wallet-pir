@@ -6,6 +6,12 @@
     ],
     "full": []
   },
+  "receiver-pir-server": {
+    "fast": [
+      "budgets"
+    ],
+    "full": []
+  },
   "receiver-store": {
     "fast": [],
     "full": [
@@ -63,8 +69,7 @@
       "wallet_continuation",
       "wallet_recut",
       "wallet_sync",
-      "receiver_http",
-      "receiver_library_client"
+      "receiver_http"
     ]
   },
   "pir-publisher": {

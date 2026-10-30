@@ -21,7 +21,7 @@ receiver-pir.valargroup.dev {
 	# deployed `/v1/receiver/` one. `/v1/receiver/health` and `/metrics` are
 	# deliberately not here. Publisher health stays on the shared publisher's
 	# private management listener; this edge forwards only public discovery.
-	@wallet path /receiver/v1/inventory /receiver/v1/inventory/* /receiver/v1/query /receiver/v1/public/* /receiver/v1/shard-filters/* /receiver/v1/block-filters/* /v1/receiver/inventory /v1/receiver/inventory/* /v1/receiver/query /v1/receiver/public/* /v1/receiver/shard-filters/* /v1/receiver/block-filters/*
+	@wallet path /receiver/v1/inventory /receiver/v1/inventory/* /receiver/v1/query /receiver/v1/public/* /receiver/v1/shard-filters/* /receiver/v1/choice/* /receiver/v1/block-filters/* /v1/receiver/inventory /v1/receiver/inventory/* /v1/receiver/query /v1/receiver/public/* /v1/receiver/shard-filters/* /v1/receiver/choice/* /v1/receiver/block-filters/*
 	handle @wallet {
 		reverse_proxy {$RECEIVER_QUERY_UPSTREAM} {
 			header_up Host {upstream_hostport}

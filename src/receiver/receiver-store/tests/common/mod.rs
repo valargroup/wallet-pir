@@ -1,9 +1,6 @@
 //! Fixtures shared by the receiver services' tests, included with `#[path]`.
 #![allow(dead_code)]
-use zakura_pir_publisher::receiver::{
-    snapshot::{Manifest, PROFILE},
-    Payment, RawRecord, ReceiverBytes,
-};
+use zakura_pir_publisher::receiver::{Payment, RawRecord, ReceiverBytes};
 
 /// The Orchard receiver that the Action in `fixtures/zero-ovk-action.json` pays,
 /// decoded independently from the swap's `refundTo` address; see
@@ -17,26 +14,8 @@ pub fn receiver() -> ReceiverBytes {
     hex::decode(RECEIVER_HEX).unwrap().try_into().unwrap()
 }
 
-/// A publication with `rows` rows covering heights 100 to 101 and positions 200 to 300.
-pub fn manifest(rows: u32) -> Manifest {
-    Manifest {
-        profile: PROFILE.into(),
-        history_revision: 0,
-        genesis: [1; 32],
-        start_height: 100,
-        start_parent: [2; 32],
-        start_position: 200,
-        end_height: 101,
-        end_hash: [3; 32],
-        end_position: 300,
-        rows,
-        salt: [4; 32],
-        records: 0,
-        data_sha256: [0; 32],
-    }
-}
-
-/// Page `page` of `total` payments to [`receiver`], in the last block of [`manifest`].
+/// Page `page` of `total` payments to [`receiver`] in block 101 (`[3; 32]`), at
+/// position `200 + page`.
 pub fn record(page: u32, total: u32) -> RawRecord {
     RawRecord {
         receiver: receiver(),
@@ -67,4 +46,10 @@ pub fn seeded_receiver(seed: u8) -> ReceiverBytes {
         .unwrap()
         .try_into()
         .unwrap()
+}
+
+/// [`record`]'s payment to [`receiver`] with an all-zero witness payload, as a
+/// segment build takes it.
+pub fn paid(page: u32) -> (ReceiverBytes, Payment, [u8; 512]) {
+    (receiver(), record(page, 1).payment, [0; 512])
 }

@@ -67,8 +67,8 @@ impl<'a> pir_pipeline::publisher::Publication for ReceiverPublication<'a> {
         Ok(material)
     }
     async fn verify(&mut self, stored: Self::Stored) -> Result<Self::Verified> {
-        // Preparation establishes payment, witness and filter consistency as each
-        // shard is sealed. It does not reopen the same tables for another hash pass.
+        // Payments are checked before they are stored and preparation checks each
+        // table's structure. It does not reopen the same tables for another hash pass.
         Ok(stored)
     }
     async fn assemble(&mut self, mut verified: Self::Verified) -> Result<Self::Candidate> {

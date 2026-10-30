@@ -54,6 +54,10 @@ pub(super) struct View {
     id: ViewIdentity,
     inventory: Inventory,
     directory: Arc<Mutex<Option<Weak<Publication>>>>,
+    /// The block hints installed from this view. Rejecting the view revokes them, even
+    /// after newer hints replaced them, so a request still building an answer from them
+    /// can't finish one an invalidation should have stopped.
+    filters: Arc<Mutex<Option<Weak<BlockWindow>>>>,
 }
 pub(super) struct Receiver {
     config: Config,
@@ -87,21 +91,43 @@ impl Receiver {
     pub(super) fn directory_loads(&self) -> usize {
         self.loads
     }
+    /// A copy sharing this receiver's serving state, for tests that drive its
+    /// revocation paths without consuming it.
     #[cfg(test)]
-    pub(super) fn check_unused_revocations(&self) {
-        let mut copy = Self {
+    fn copy(&self) -> Self {
+        Self {
             config: self.config.clone(),
             owner: self.owner.clone(),
             publications: self.publications.clone(),
             views: self.views.clone(),
             tables: self.tables.clone(),
             loads: self.loads,
-        };
+        }
+    }
+    #[cfg(test)]
+    pub(super) fn check_unused_revocations(&self) {
+        let mut copy = self.copy();
         let before = self.views.lock().unwrap().views.len();
         drop(copy.fence_serving());
         drop(copy.close_admission());
         assert_eq!(self.views.lock().unwrap().views.len(), before);
         assert!(self.publications.current_anchor().is_some());
+    }
+
+    /// Rejects every view but the current one, as an authority answer does.
+    #[cfg(test)]
+    pub(super) async fn reject_replaced_views(&self) {
+        let rejected = {
+            let views = self.views.lock().unwrap();
+            views
+                .views
+                .iter()
+                .map(|view| view.id)
+                .filter(|id| Some(id) != views.current.as_ref())
+                .collect()
+        };
+        let mut copy = self.copy();
+        copy.invalidate_views(rejected).await;
     }
 
     fn revoke(&self) -> impl std::future::Future<Output = Vec<ViewIdentity>> + Send + 'static {
@@ -127,6 +153,12 @@ impl Receiver {
                     .unwrap()
                     .as_ref()
                     .is_some_and(|p| p.strong_count() > 0)
+                || view
+                    .filters
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .is_some_and(|f| f.strong_count() > 0)
         });
     }
 }
@@ -171,6 +203,15 @@ impl PublicationAdapter for Receiver {
                 }
                 if let Some(window) = &view.inventory.filters {
                     filters.push(window.head.clone());
+                }
+                if let Some(window) = view
+                    .filters
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .and_then(Weak::upgrade)
+                {
+                    window.revoke();
                 }
             }
             views.views.retain(|view| !rejected.contains(&view.id));
@@ -315,8 +356,8 @@ impl PublicationAdapter for Receiver {
         }
         let mut checked = pir_publication::VerifiedObjects::default();
         if let Some(filters) = &inventory.filters {
-            for batch in &filters.batches {
-                checked.insert(objects.fetch(batch).await?.file);
+            for object in filters.ranges.iter().chain([&filters.hashes]) {
+                checked.insert(objects.fetch(object).await?.file);
             }
         }
         let filter_inventory = inventory.clone();
@@ -400,12 +441,16 @@ impl PublicationAdapter for Receiver {
         });
         let held = Arc::new(Mutex::new(None));
         let installed = held.clone();
+        let held_filters = Arc::new(Mutex::new(None));
+        let installed_filters = held_filters.clone();
         let publications = self.publications.clone();
         let revision = candidate.inventory.history_revision;
         let id = candidate.id;
         let install = Box::pin(async move {
-            let directory = publications.install_view(directory, filters, revision, epoch)?;
+            let (directory, filters) =
+                publications.install_view(directory, filters, revision, epoch)?;
             *installed.lock().unwrap() = directory.as_ref().map(Arc::downgrade);
+            *installed_filters.lock().unwrap() = filters.as_ref().map(Arc::downgrade);
             Ok(Some(id))
         });
         let publications = self.publications.clone();
@@ -422,6 +467,7 @@ impl PublicationAdapter for Receiver {
                 id: candidate.id,
                 inventory: candidate.inventory,
                 directory: held,
+                filters: held_filters,
             },
         ))
     }

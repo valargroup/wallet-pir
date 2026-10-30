@@ -13,8 +13,8 @@ use std::{
 use zakura_server_chain::{testing::receiver::RefundBlock, Network};
 #[path = "../../../../src/receiver/receiver-store/tests/common/mod.rs"]
 mod common;
-#[path = "../../../../src/receiver/receiver-pir-server/tests/common/history.rs"]
-mod history;
+#[path = "../../../../src/receiver/receiver-pir-server/tests/common/lookup.rs"]
+mod lookup;
 use super::{
     query_host::{free, Host},
     tls::Tls,
@@ -145,8 +145,7 @@ impl Receiver {
                 "management_listen": management,
                 "chain": {"rpc_url":rpc,"no_auth":true,"poll_ms":100},
                 "receiver":{"enabled":true,"settings":{
-                    "data_dir":root.as_path().join("state"),"bind":listen,"min_rows":8192,
-                    "shard_rows":8192,"filter_blocks":32
+                    "data_dir":root.as_path().join("state"),"bind":listen,"filter_blocks":32
                 }}
             }))
             .unwrap(),
@@ -285,20 +284,13 @@ impl Receiver {
     }
     pub async fn wallet(&self, origin: &str) {
         let (height, hash) = self.anchor();
-        let http = Http(reqwest::Client::new());
-        let session = history::connect(
-            origin,
-            &http,
-            history::Accepted {
-                genesis: Network::Mainnet.genesis_hash(),
-                required_start: activation(),
-                height,
-                hash,
-            },
-        )
-        .await
-        .unwrap();
-        let record = session.page(common::receiver(), 0).await.unwrap().unwrap();
+        let wallet = lookup::Wallet::at(origin, "/v1/receiver");
+        let (head, shards) = wallet.inventory().await.unwrap();
+        assert_eq!((head.end_height, head.end_hash), (height, hash));
+        assert_eq!(head.start_height, activation());
+        let segment = &shards[0].segments[0];
+        let found = wallet.lookup(segment, &common::receiver()).await.unwrap();
+        let (record, payload) = &found[0];
         let first = self.chain.blocks.lock().unwrap()[0].clone();
         assert_eq!(record.payment.height, activation());
         assert_eq!(record.payment.block_hash, first.hash());
@@ -307,7 +299,7 @@ impl Receiver {
         assert_eq!(record.total, 1, "fixture contains one non-coinbase payment");
         let mut absent = common::receiver();
         absent[0] ^= 1;
-        assert!(session.page(absent, 0).await.unwrap().is_none());
+        assert!(wallet.lookup(segment, &absent).await.unwrap().is_empty());
         let leaves: Vec<_> = {
             let blocks = self.chain.blocks.lock().unwrap();
             blocks[..=(height - activation()) as usize]
@@ -317,9 +309,8 @@ impl Receiver {
         };
         let expected = zakura_pir_publisher::receiver::witness::payloads(&leaves, &[1]).unwrap();
         assert_eq!(
-            session.witness(record.ordinal).await.unwrap(),
-            expected[0],
-            "wallet witness matches a fresh independent full-tree build"
+            *payload, expected[0],
+            "wallet payload matches a fresh independent full-tree build"
         );
     }
 }
@@ -327,47 +318,4 @@ impl Drop for Receiver {
     fn drop(&mut self) {
         self.node_task.abort();
     }
-}
-pub struct Http(pub reqwest::Client);
-impl zakura_pir_client::receiver::transport::Transport for Http {
-    async fn get(
-        &self,
-        url: &str,
-        limit: usize,
-    ) -> Result<Vec<u8>, zakura_pir_query_server::receiver::session::Error> {
-        read(self.0.get(url), limit).await
-    }
-    async fn post(
-        &self,
-        url: &str,
-        body: Vec<u8>,
-        limit: usize,
-    ) -> Result<Vec<u8>, zakura_pir_query_server::receiver::session::Error> {
-        read(self.0.post(url).body(body), limit).await
-    }
-}
-async fn read(
-    request: reqwest::RequestBuilder,
-    limit: usize,
-) -> Result<Vec<u8>, zakura_pir_query_server::receiver::session::Error> {
-    use zakura_pir_query_server::receiver::session::Error;
-    let mut response = request
-        .send()
-        .await
-        .map_err(|e| Error::Transport(e.to_string()))?;
-    if !response.status().is_success() {
-        return Err(Error::Transport(response.status().to_string()));
-    }
-    let mut bytes = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|e| Error::Transport(e.to_string()))?
-    {
-        if bytes.len() + chunk.len() > limit {
-            return Err(Error::Malformed);
-        }
-        bytes.extend_from_slice(&chunk);
-    }
-    Ok(bytes)
 }

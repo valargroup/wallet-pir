@@ -1,66 +1,66 @@
-//! Receiver PIR evaluation and the HTTP service that wallets reach through a [`Transport`].
+//! Receiver serving over HTTP, as a wallet reaches it: inventory capture, directory
+//! lookups routed by choice objects, companion reads at their admitted lengths, and the
+//! serving contract's refusals.
 #[path = "../../../receiver/receiver-store/tests/common/mod.rs"]
 mod common;
-#[path = "../../../receiver/receiver-pir-server/tests/common/history.rs"]
-mod history;
+#[path = "../../../receiver/receiver-pir-server/tests/common/lookup.rs"]
+mod lookup;
 #[path = "../../../receiver/receiver-pir-server/tests/common/prepared.rs"]
 mod prepared;
 #[path = "../../../receiver/receiver-pir-server/tests/common/router.rs"]
 mod router;
-use common::{manifest, receiver, record};
-use history::{history, Accepted, Session};
-use receiver_pir_server::{Publication, Publications};
+use common::{paid, receiver, seeded_receiver};
+use lookup::{query, Wallet};
+use prepared::{coverage, tables, tables_at, Paid, Tables};
+use receiver_pir_server::{tables::ObjectSource, Publication, Publications};
+use reqwest::StatusCode;
 use router::router_with_publications;
 use std::{
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
     time::Duration,
 };
-use zakura_pir_client::receiver::transport::{InventoryClient, Transport};
-use zakura_pir_client::receiver::Client;
-use zakura_pir_publisher::receiver::snapshot::SnapshotPublisherExt as _;
-use zakura_pir_query_server::receiver::server::Server;
-use zakura_pir_query_server::receiver::session::Error;
-use zakura_pir_query_server::receiver::session::MIN_ROWS;
-use zakura_pir_query_server::receiver::snapshot::Snapshot;
+use zakura_pir_query_server::receiver::{
+    server::Server,
+    session::Error,
+    shards::{Coverage as FilterCoverage, ShardFilter},
+    Table as _, Tree,
+};
 
-/// The chain anchor that [`manifest`] ends at.
-fn accepted() -> Accepted {
-    Accepted {
-        genesis: [1; 32],
-        required_start: 100,
-        height: 101,
-        hash: [3; 32],
-    }
+/// `n` pages to [`receiver`] at positions 200 onward.
+fn pages(n: u32) -> Vec<Paid> {
+    (0..n).map(paid).collect()
 }
-fn snapshot(count: u32) -> Snapshot {
-    snapshot_rows(count, MIN_ROWS)
+
+/// One payment to another receiver at position 250 in its own transaction.
+fn theirs() -> Paid {
+    let mut p = paid(0);
+    p.0 = seeded_receiver(1);
+    (p.1.position, p.1.tx_index, p.1.txid) = (250, 50, [50; 32]);
+    p
 }
-/// A publication of `rows` rows with `count` pages for the fixture receiver.
-fn snapshot_rows(count: u32, rows: u32) -> Snapshot {
-    let records: Vec<_> = (0..count).map(|page| record(page, count)).collect();
-    let mut manifest = manifest(rows);
-    // Positions start at 200; a long history needs room after them.
-    manifest.end_position = manifest.end_position.max(200 + u64::from(count));
-    Snapshot::build(manifest, &records).unwrap()
-}
+
 struct Running {
     origin: String,
     task: tokio::task::JoinHandle<()>,
 }
+
 impl Drop for Running {
     fn drop(&mut self) {
         self.task.abort();
     }
 }
-async fn serve(snapshot: Snapshot) -> Running {
-    serve_publication(prepared::prepare_payments(snapshot).unwrap()).await
-}
-/// Serve one prepared publication through the production router.
-async fn serve_publication(publication: Publication) -> Running {
+
+/// Serves one prepared publication through the production router.
+async fn serve(publication: Publication) -> Running {
     let publications = Publications::default();
     assert!(publications.publish(publication, 0));
     serve_router(router_with_publications(publications)).await
 }
+
+/// Serves `app` on a loopback port.
 async fn serve_router(app: axum::Router) -> Running {
     let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let origin = format!("http://{}", socket.local_addr().unwrap());
@@ -68,96 +68,15 @@ async fn serve_router(app: axum::Router) -> Running {
     Running { origin, task }
 }
 
-#[tokio::test]
-async fn rotate_canonical_sessions_and_revoke_orphaned_work() {
-    let publications = Publications::default();
-    assert!(publications.publish(prepared::prepare_payments(snapshot(2)).unwrap(), 0));
-    let server = serve_router(router_with_publications(publications.clone())).await;
-    let old = connect(&server.origin, Http(http()), accepted())
-        .await
-        .unwrap();
-    let old_id = hex::encode(old.manifest().id().unwrap());
-    let old_head = http()
-        .get(format!("{}/v1/receiver/inventory", server.origin))
-        .send()
-        .await
-        .unwrap()
-        .json::<zakura_pir_query_server::receiver::inventory::Head>()
-        .await
-        .unwrap();
-    let mut next = snapshot_rows(2, MIN_ROWS * 2);
-    next.manifest.end_height = 102;
-    next.manifest.end_hash = [9; 32];
-    // Empty canonical extension: old payments remain unchanged.
-    assert!(publications.publish(prepared::prepare_payments(next.clone()).unwrap(), 0));
-    let public = http()
-        .get(format!("{}/v1/receiver/public/{old_id}", server.origin))
-        .send()
-        .await
-        .unwrap();
-    assert!(public.status().is_success());
-    assert_eq!(history(&old, receiver()).await.unwrap().len(), 2);
-    let mut anchor = accepted();
-    anchor.height = 102;
-    anchor.hash = [9; 32];
-    let new = connect(&server.origin, Http(http()), anchor).await.unwrap();
-    assert_eq!(history(&new, receiver()).await.unwrap().len(), 2);
-
-    // Preparation started before the canonical guard detected the fork.
-    let preparing_epoch = publications.epoch();
-    let prepared = prepared::prepare_payments(next).unwrap();
-    publications.revoke();
-    assert!(!publications.publish(prepared, preparing_epoch));
-    assert_eq!(
-        http()
-            .get(format!("{}/v1/receiver/inventory", server.origin))
-            .send()
-            .await
-            .unwrap()
-            .status(),
-        reqwest::StatusCode::SERVICE_UNAVAILABLE
-    );
-    // A captured inventory's chunks are revoked with its sessions.
-    assert_eq!(
-        http()
-            .get(format!(
-                "{}/v1/receiver/inventory/{}/0",
-                server.origin,
-                hex::encode(old_head.inventory)
-            ))
-            .send()
-            .await
-            .unwrap()
-            .status(),
-        reqwest::StatusCode::GONE
-    );
-    assert_eq!(
-        http()
-            .get(format!("{}/v1/receiver/public/{old_id}", server.origin))
-            .send()
-            .await
-            .unwrap()
-            .status(),
-        reqwest::StatusCode::GONE
-    );
-    assert!(matches!(old.witness(0).await, Err(Error::Revision)));
-    assert!(matches!(
-        history(&new, receiver()).await,
-        Err(Error::Revision)
-    ));
-
-    // Canonical replacement drops the orphaned payment entirely.
-    let mut replacement = snapshot(0);
-    replacement.manifest.end_height = 102;
-    replacement.manifest.end_hash = [10; 32];
-    assert!(publications.publish(
-        prepared::prepare_payments(replacement).unwrap(),
-        publications.epoch()
-    ));
-    anchor.hash = [10; 32];
-    let recovered = connect(&server.origin, Http(http()), anchor).await.unwrap();
-    assert!(history(&recovered, receiver()).await.unwrap().is_empty());
+/// A one-shard publication of `tables`.
+fn publication(tables: Tables) -> Publication {
+    prepared::prepare(tables).unwrap()
 }
+
+fn http() -> reqwest::Client {
+    reqwest::Client::new()
+}
+
 /// Whether `response` forbids caching it.
 fn no_store(response: &reqwest::Response) -> bool {
     response
@@ -166,100 +85,292 @@ fn no_store(response: &reqwest::Response) -> bool {
         .is_some_and(|value| value == "no-store")
 }
 
+/// A wallet reads each receiver's records with one directory query per segment and one
+/// companion query per record, a miss reads no companion, and the canonical and
+/// deployed prefixes answer alike.
+#[tokio::test]
+async fn lookups_read_entries_and_slots_over_http() {
+    let mut paid = pages(3);
+    paid.push(theirs());
+    let server = serve(publication(tables(coverage(3), &paid, 2048))).await;
+    for prefix in ["/receiver/v1", "/v1/receiver"] {
+        let wallet = Wallet::at(&server.origin, prefix);
+        let ours = wallet.history(&receiver()).await.unwrap();
+        assert_eq!(
+            ours.iter()
+                .map(|r| (r.page, r.total, r.payment.clone()))
+                .collect::<Vec<_>>(),
+            (0..3)
+                .map(|page| (page, 3, paid[page as usize].1.clone()))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(wallet.history(&seeded_receiver(1)).await.unwrap().len(), 1);
+        assert!(wallet
+            .history(&seeded_receiver(2))
+            .await
+            .unwrap()
+            .is_empty());
+    }
+}
+
+/// A companion query covers every row or exactly its `query_rows` prefix: both are
+/// answered, and another prefix, a directory query sized for the companion and a body
+/// too short for its header are refused before evaluation. A response is decoded only
+/// when it echoes its own request's header.
+#[tokio::test]
+async fn companion_queries_are_admitted_at_full_or_trimmed_length() {
+    let built = tables(coverage(3), &pages(2), 6144);
+    assert_eq!(
+        (
+            built.companion.manifest.rows,
+            built.companion.manifest.query_rows
+        ),
+        (6144, 2048)
+    );
+    let segment = prepared::segment(built).unwrap().publication();
+    let server = serve(publication(tables(coverage(3), &pages(2), 6144))).await;
+    let wallet = Wallet::new(&server.origin);
+    let (d, c) = (&segment.directory, &segment.companion);
+    for sent in [2048, 6144] {
+        let row = wallet.read(c, 0, sent).await.unwrap();
+        assert!(row.iter().any(|b| *b != 0), "{sent}");
+    }
+    assert_eq!(wallet.read(c, 0, 4096).await, Err(StatusCode::BAD_REQUEST));
+    // A directory query is never trimmed or lengthened.
+    let (_, long) = query(c, 0, 6144);
+    let mut directory = long.clone();
+    directory[4..36].copy_from_slice(&d.id().unwrap());
+    assert_eq!(
+        wallet.post(directory).await,
+        Err(StatusCode::PAYLOAD_TOO_LARGE)
+    );
+    assert_eq!(
+        wallet.post(long[..40].to_vec()).await,
+        Err(StatusCode::BAD_REQUEST)
+    );
+    // Another session's answer is not this request's.
+    let (_, first) = query(c, 0, 2048);
+    let (_, second) = query(d, 0, 2048);
+    let answer = wallet.post(first.clone()).await.unwrap();
+    assert_eq!(answer[..52], first[..52]);
+    assert_ne!(answer[..52], second[..52]);
+}
+
+/// A companion whose rows past `query_rows` are not zero, which preparation refuses
+/// (wallet-libraries tests that), is never answered, even where its session was listed.
+#[tokio::test]
+async fn a_nonzero_omitted_row_is_refused_at_preparation() {
+    use sha2::Digest;
+    use zakura_pir_query_server::receiver::{Session, ROW_BYTES};
+    let built = tables(coverage(3), &pages(2), 4096);
+    let (directory, entries) = prepared::directory(built.directory.clone()).unwrap();
+    let good = prepared::companion(
+        built.companion.clone(),
+        &directory.session().manifest,
+        &entries,
+    )
+    .unwrap();
+    let mut corrupt = built.companion.clone();
+    corrupt.data[3000 * ROW_BYTES] = 1;
+    corrupt.manifest.data_sha256 = sha2::Sha256::digest(&corrupt.data).into();
+    let manifest = directory.session().manifest.clone();
+    let session = Session {
+        manifest: corrupt.manifest.clone(),
+        public_digest: good.session().public_digest,
+    };
+    let loads = Arc::new(AtomicUsize::new(0));
+    let source =
+        receiver_pir_server::tables::Source::companion(session.clone(), good.public().to_vec(), {
+            let loads = loads.clone();
+            move || {
+                loads.fetch_add(1, Ordering::SeqCst);
+                Server::companion(corrupt.clone(), &manifest, &entries)
+            }
+        })
+        .unwrap();
+    let mut segment = prepared::segment(built).unwrap();
+    segment.companion = Arc::new(source);
+    let publication =
+        Publication::assemble([1; 32], 0, vec![(false, vec![segment], None)]).unwrap();
+    let server = serve(publication).await;
+    let wallet = Wallet::new(&server.origin);
+    let (_, body) = query(&session, 0, 2048);
+    assert!(wallet.post(body).await.is_err());
+    assert_eq!(loads.load(Ordering::SeqCst), 1);
+}
+
+/// A publication with no payments serves an empty directory and a companion whose
+/// query covers one zero-filled block; any other length is refused.
+#[tokio::test]
+async fn a_zero_payment_publication_serves_empty_tables() {
+    let built = prepared::empty(3);
+    let c = &built.companion.manifest;
+    assert_eq!((c.rows, c.query_rows, c.payments), (2048, 2048, 0));
+    let segment = prepared::segment(built.clone()).unwrap().publication();
+    let server = serve(publication(built)).await;
+    let wallet = Wallet::new(&server.origin);
+    assert!(wallet.history(&receiver()).await.unwrap().is_empty());
+    assert!(wallet
+        .read(&segment.companion, 0, 2048)
+        .await
+        .unwrap()
+        .iter()
+        .all(|b| *b == 0));
+    let wider = prepared::segment(tables(coverage(3), &[], 4096))
+        .unwrap()
+        .publication();
+    let (_, mut longer) = query(&wider.companion, 0, 4096);
+    longer[4..36].copy_from_slice(&segment.companion.id().unwrap());
+    assert_eq!(
+        wallet.post(longer).await,
+        Err(StatusCode::PAYLOAD_TOO_LARGE)
+    );
+}
+
+/// Choice objects are served by digest with their exact bytes; a digest no live
+/// inventory names is 410 and a malformed one 400. Once a displaced inventory's
+/// retention ends, its choice object, public setups and queries are 410.
+#[tokio::test]
+async fn choice_objects_and_expired_sessions() {
+    use sha2::Digest;
+    let publications = Publications::with_retention(Duration::from_millis(1500));
+    let built = tables(coverage(3), &pages(1), 2048);
+    let choice = built.directory.choice.clone();
+    let digest = built.directory.manifest.choice.digest;
+    let segment = prepared::segment(built.clone()).unwrap().publication();
+    assert!(publications.publish(publication(built), 0));
+    let server = serve_router(router_with_publications(publications.clone())).await;
+    let wallet = Wallet::new(&server.origin);
+    let served = wallet
+        .get(&format!("/choice/{}", hex::encode(digest)))
+        .await
+        .unwrap();
+    assert_eq!(served, choice);
+    assert_eq!(sha2::Sha256::digest(&served)[..], digest[..]);
+    let response = http()
+        .get(format!(
+            "{}/receiver/v1/choice/{}",
+            server.origin,
+            "00".repeat(32)
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::GONE);
+    assert!(no_store(&response));
+    assert_eq!(wallet.get("/choice/zz").await, Err(StatusCode::BAD_REQUEST));
+    let mut next = coverage(4);
+    next.end_height = 102;
+    assert!(publications.publish(publication(tables(next, &pages(1), 2048)), 0));
+    // Within its retention the displaced inventory still serves.
+    assert_eq!(wallet.lookup(&segment, &receiver()).await.unwrap().len(), 1);
+    tokio::time::sleep(Duration::from_millis(1600)).await;
+    assert_eq!(publications.anchors(), [(102, [4; 32])]);
+    let path = format!("/choice/{}", hex::encode(digest));
+    assert_eq!(wallet.get(&path).await, Err(StatusCode::GONE));
+    let public = format!("/public/{}", hex::encode(segment.companion.id().unwrap()));
+    assert_eq!(wallet.get(&public).await, Err(StatusCode::GONE));
+    let (_, body) = query(&segment.directory, 0, 2048);
+    assert_eq!(wallet.post(body).await, Err(StatusCode::GONE));
+}
+
 /// Every session not served now is 410, however many were retired since, and refusals
 /// are `no-store`: a revoked session's 410 must not outlive the republication of the
 /// same deterministic session id, which then serves again at the same URL.
 #[tokio::test]
 async fn refusals_are_not_cached_and_a_republished_session_serves_again() {
-    let snapshot = snapshot(1);
-    let pir = prepared::prepare_payments(snapshot.clone()).unwrap();
-    let id = hex::encode(
-        pir.inventory().shards()[0].segments[0]
-            .payments
-            .id()
-            .unwrap(),
-    );
+    let built = tables(coverage(3), &pages(1), 2048);
+    let id = hex::encode(prepared::segment(built.clone()).unwrap().directory.id());
     let publications = Publications::default();
-    assert!(publications.publish(pir, 0));
+    assert!(publications.publish(publication(built.clone()), 0));
     let server = serve_router(router_with_publications(publications.clone())).await;
-    let get = |path: String| http().get(format!("{}{path}", server.origin)).send();
-    let unknown = get(format!("/v1/receiver/public/{}", "00".repeat(32)))
-        .await
-        .unwrap();
-    assert_eq!(unknown.status(), reqwest::StatusCode::GONE);
+    let get = |path: String| {
+        http()
+            .get(format!("{}/v1/receiver{path}", server.origin))
+            .send()
+    };
+    let unknown = get(format!("/public/{}", "00".repeat(32))).await.unwrap();
+    assert_eq!(unknown.status(), StatusCode::GONE);
     assert!(no_store(&unknown));
     publications.revoke();
     // More retirements than the server ever remembered.
-    for salt in 0..9 {
-        let mut m = manifest(MIN_ROWS);
-        m.salt[0] = salt;
-        let other = prepared::prepare_payments(Snapshot::build(m, &[]).unwrap()).unwrap();
-        assert!(publications.publish(other, publications.epoch()));
+    for end in 10..19 {
+        assert!(publications.publish(
+            prepared::prepare(prepared::empty(end)).unwrap(),
+            publications.epoch()
+        ));
         publications.revoke();
     }
-    let public = format!("/v1/receiver/public/{id}");
-    let gone = get(public.clone()).await.unwrap();
-    assert_eq!(gone.status(), reqwest::StatusCode::GONE);
+    let gone = get(format!("/public/{id}")).await.unwrap();
+    assert_eq!(gone.status(), StatusCode::GONE);
     assert!(no_store(&gone));
-
     // The identical publication has the same session id and serves the same URL.
-    let expected = Server::new(snapshot.clone()).unwrap().public().to_vec();
-    let pir = prepared::prepare_payments(snapshot).unwrap();
-    assert!(publications.publish(pir, publications.epoch()));
-    let restored = get(public).await.unwrap();
+    let expected = prepared::segment(built.clone())
+        .unwrap()
+        .directory
+        .public()
+        .to_vec();
+    assert!(publications.publish(publication(built), publications.epoch()));
+    let restored = get(format!("/public/{id}")).await.unwrap();
     assert!(restored.status().is_success() && no_store(&restored));
     assert_eq!(restored.bytes().await.unwrap(), expected);
 }
 
-/// Health serves each publication's own report with its ID.
+/// A reorg revokes every session of the inventory it replaced, including a captured
+/// one's chunks, and the canonical replacement serves without the orphaned payment.
 #[tokio::test]
-async fn health_serves_the_owners_report() {
+async fn a_revocation_retires_captured_sessions_and_the_replacement_serves() {
     let publications = Publications::default();
-    assert!(publications.publish(
-        prepared::prepare_payments(snapshot(0))
-            .unwrap()
-            .with_report(serde_json::json!({"missing_payouts": 0})),
-        0
-    ));
+    assert!(publications.publish(publication(tables(coverage(3), &pages(2), 2048)), 0));
     let server = serve_router(router_with_publications(publications.clone())).await;
-    let health = || async {
-        http()
-            .get(format!("{}/v1/receiver/health", server.origin))
-            .send()
-            .await
-            .unwrap()
-            .json::<serde_json::Value>()
-            .await
-            .unwrap()
-    };
-    assert_eq!(health().await["indexer"]["missing_payouts"], 0);
-    let mut next = snapshot(1);
-    next.manifest.end_height = 102;
-    next.manifest.end_hash = [9; 32];
-    let next = prepared::prepare_payments(next).unwrap();
-    let id = hex::encode(next.id());
+    let wallet = Wallet::new(&server.origin);
+    let (head, shards) = wallet.inventory().await.unwrap();
+    let old = shards[0].segments[0].clone();
+    assert_eq!(wallet.lookup(&old, &receiver()).await.unwrap().len(), 2);
+    // Preparation started before the canonical guard detected the fork.
+    let epoch = publications.epoch();
+    let mut forked = coverage(9);
+    forked.end_height = 102;
+    let prepared = publication(tables(forked, &pages(2), 2048));
+    publications.revoke();
+    assert!(!publications.publish(prepared, epoch));
+    assert_eq!(
+        wallet.get("/inventory").await,
+        Err(StatusCode::SERVICE_UNAVAILABLE)
+    );
+    let chunk = format!("/inventory/{}/0", hex::encode(head.inventory));
+    assert_eq!(wallet.get(&chunk).await, Err(StatusCode::GONE));
+    assert_eq!(
+        wallet.lookup(&old, &receiver()).await.unwrap_err(),
+        StatusCode::GONE
+    );
+    let mut replacement = coverage(10);
+    replacement.end_height = 102;
     assert!(publications.publish(
-        next.with_report(serde_json::json!({"missing_payouts": 3})),
-        0
+        publication(tables(replacement, &[], 2048)),
+        publications.epoch()
     ));
-    let health = health().await;
-    assert_eq!(health["serving"], id.as_str());
-    assert_eq!(health["indexer"]["missing_payouts"], 3);
+    assert!(wallet.history(&receiver()).await.unwrap().is_empty());
 }
-/// Health adds the owner's process-local fields, read on each request, without letting
-/// them replace its own.
+
+/// Health serves each publication's own report with its ID, and the owner's
+/// process-local fields beside its own without letting them replace those.
 #[tokio::test]
-async fn health_reports_the_owners_fields_beside_its_own() {
-    let reads = std::sync::Arc::new(AtomicUsize::new(0));
+async fn health_serves_the_reports_and_fields() {
+    let publications = Publications::default();
+    let first =
+        publication(prepared::empty(3)).with_report(serde_json::json!({"missing_payouts": 0}));
+    assert!(publications.publish(first, 0));
+    let reads = Arc::new(AtomicUsize::new(0));
     let fields: pir_query_server::receiver::HealthFields = {
         let reads = reads.clone();
-        std::sync::Arc::new(move || {
+        Arc::new(move || {
             let value = serde_json::json!({"reads": reads.load(Ordering::SeqCst), "serving": "x"});
             value.as_object().unwrap().clone()
         })
     };
     let server = serve_router(pir_query_server::receiver::router_with_health(
-        Publications::default(),
+        publications.clone(),
         fields,
     ))
     .await;
@@ -273,111 +384,22 @@ async fn health_reports_the_owners_fields_beside_its_own() {
             .await
             .unwrap()
     };
-    let first = health().await;
-    assert_eq!(
-        (&first["reads"], &first["serving"]),
-        (&0.into(), &serde_json::Value::Null)
-    );
-    reads.store(2, Ordering::SeqCst);
-    assert_eq!(health().await["reads"], 2);
-}
-/// A displaced inventory keeps serving its head's chunks and its sessions for its
-/// retention, so a wallet that captured it can finish, then answers 410.
-#[tokio::test]
-async fn a_displaced_inventory_serves_until_its_retention_ends() {
-    let publications = Publications::with_retention(Duration::from_millis(1500));
-    let publish = |height: u32| {
-        let mut m = manifest(MIN_ROWS);
-        (m.end_height, m.end_hash) = (height, [height as u8; 32]);
-        // Below the moving tip, so the record need not repeat its hash.
-        let mut paid = record(0, 1);
-        paid.payment.height = 100;
-        let next = Snapshot::build(m, &[paid]).unwrap();
-        publications.publish(prepared::prepare_payments(next).unwrap(), 0)
-    };
-    assert!(publish(101));
-    let server = serve_router(router_with_publications(publications.clone())).await;
-    let mut anchor = accepted();
-    (anchor.height, anchor.hash) = (101, [101; 32]);
-    let old = connect(&server.origin, Http(http()), anchor).await.unwrap();
-    let old_id = hex::encode(old.client.inventory().head().inventory);
-    assert!(publish(102));
-    assert!(publications.ready_at().is_none());
-    assert_eq!(publications.anchors(), [(102, [102; 32]), (101, [101; 32])]);
-    assert_eq!(history(&old, receiver()).await.unwrap().len(), 1);
-    let chunk = format!("{}/v1/receiver/inventory/{old_id}/0", server.origin);
-    assert!(http()
-        .get(&chunk)
-        .send()
-        .await
-        .unwrap()
-        .status()
-        .is_success());
-    tokio::time::sleep(Duration::from_millis(1600)).await;
-    assert_eq!(publications.anchors(), [(102, [102; 32])]);
-    let gone = http().get(&chunk).send().await.unwrap();
-    assert_eq!(gone.status(), reqwest::StatusCode::GONE);
-    assert!(matches!(
-        history(&old, receiver()).await,
-        Err(Error::Revision)
+    assert_eq!(health().await["indexer"]["missing_payouts"], 0);
+    let mut next = coverage(9);
+    next.end_height = 102;
+    let next = publication(tables(next, &pages(1), 2048));
+    let id = hex::encode(next.id());
+    assert!(publications.publish(
+        next.with_report(serde_json::json!({"missing_payouts": 3})),
+        0
     ));
-}
-/// Health reports the shared process identity and the served revision, and metrics count
-/// requests by route category without session IDs.
-#[tokio::test]
-async fn health_and_metrics_follow_the_serving_contract() {
-    let snapshot = snapshot(1);
-    let revision = snapshot.manifest.revision().unwrap();
-    let server = serve(snapshot).await;
-    let health: serde_json::Value = http()
-        .get(format!("{}/v1/receiver/health", server.origin))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    reads.store(2, Ordering::SeqCst);
+    let health = health().await;
+    assert_eq!(health["serving"], id.as_str());
+    assert_eq!(health["indexer"]["missing_payouts"], 3);
+    assert_eq!(health["reads"], 2);
     let identity = pir_control::Identity::process();
     assert_eq!(health["identity"]["incarnation"], identity.incarnation);
-    assert!(health["serving"].as_str().is_some());
-    let session = connect(&server.origin, Http(http()), accepted())
-        .await
-        .unwrap();
-    assert_eq!(session.manifest().directory.revision().unwrap(), revision);
-    let metrics = http()
-        .get(format!("{}/metrics", server.origin))
-        .send()
-        .await
-        .unwrap()
-        .text()
-        .await
-        .unwrap();
-    assert!(metrics.contains("pir_http_arrivals_total{endpoint=\"receiver_inventory\"} 2"));
-    assert!(metrics.contains("pir_http_arrivals_total{endpoint=\"receiver_health\"} 1"));
-    for family in [
-        "arrivals_total",
-        "inflight",
-        "cancelled_total",
-        "request_body_bytes_total",
-        "response_body_bytes_total",
-        "body_errors_total",
-        "incomplete_responses_total",
-    ] {
-        assert!(
-            metrics.contains(&format!(
-                "pir_http_{family}{{endpoint=\"receiver_health\"}}"
-            )),
-            "{family}"
-        );
-    }
-    assert!(
-        metrics.contains("pir_http_responses_total{endpoint=\"receiver_health\",code=\"2xx\"} 1")
-    );
-    assert!(metrics
-        .contains("pir_http_duration_seconds_bucket{endpoint=\"receiver_health\",le=\"0.001\"}"));
-    assert!(metrics.contains("pir_http_duration_seconds_count{endpoint=\"receiver_health\"} 1"));
-    assert!(!metrics.contains(&hex::encode(revision)));
-    server.task.abort();
 }
 
 /// A client at its cap of queries in flight, uploads included, is refused with 429 and
@@ -385,7 +407,7 @@ async fn health_and_metrics_follow_the_serving_contract() {
 #[tokio::test]
 async fn a_client_over_its_cap_is_told_to_retry() {
     use tokio::io::AsyncWriteExt;
-    let server = serve(snapshot(1)).await;
+    let server = serve(publication(prepared::empty(3))).await;
     let address = server.origin.trim_start_matches("http://").to_owned();
     let mut uploads = Vec::new();
     for _ in 0..2 {
@@ -408,435 +430,34 @@ async fn a_client_over_its_cap_is_told_to_retry() {
             .send()
     };
     let refused = query("10.0.0.1").await.unwrap();
-    assert_eq!(refused.status(), reqwest::StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(refused.status(), StatusCode::TOO_MANY_REQUESTS);
     assert_eq!(refused.headers()["retry-after"], "1");
     assert!(no_store(&refused));
     assert_eq!(
         query("10.0.0.2").await.unwrap().status(),
-        reqwest::StatusCode::BAD_REQUEST
+        StatusCode::BAD_REQUEST
     );
     drop(uploads);
 }
 
-fn http() -> reqwest::Client {
-    reqwest::Client::builder()
-        .timeout(Duration::from_secs(30))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .unwrap()
-}
-
-/// A test transport over reqwest; wallets bring their own. It maps 410 to [`Error::Revision`].
-struct Http(reqwest::Client);
-
-impl Transport for Http {
-    async fn get(&self, url: &str, limit: usize) -> Result<Vec<u8>, Error> {
-        read(self.0.get(url), limit).await
-    }
-    async fn post(&self, url: &str, body: Vec<u8>, limit: usize) -> Result<Vec<u8>, Error> {
-        read(self.0.post(url).body(body), limit).await
-    }
-}
-
-/// Send `request` and return its successful body, failing as soon as it exceeds `limit`
-/// bytes.
-async fn read(request: reqwest::RequestBuilder, limit: usize) -> Result<Vec<u8>, Error> {
-    let failed = |e: reqwest::Error| Error::Transport(e.to_string());
-    let mut response = request.send().await.map_err(failed)?;
-    match response.status() {
-        reqwest::StatusCode::GONE => return Err(Error::Revision),
-        status if !status.is_success() => return Err(Error::Transport(status.to_string())),
-        _ => {}
-    }
-    let mut body = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(failed)? {
-        if body.len() + chunk.len() > limit {
-            return Err(Error::Malformed);
-        }
-        body.extend_from_slice(&chunk);
-    }
-    Ok(body)
-}
-
-/// The transport refuses a chunked body once it crosses the limit, without waiting for
-/// the server to end it.
-#[tokio::test]
-async fn the_transport_stops_reading_at_its_limit() {
-    use tokio::io::AsyncWriteExt;
-    let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}/", socket.local_addr().unwrap());
-    let server = tokio::spawn(async move {
-        let (mut stream, _) = socket.accept().await.unwrap();
-        stream
-            .write_all(
-                b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n\
-                  10\r\n0123456789abcdef\r\n10\r\n0123456789abcdef\r\n",
-            )
-            .await
-            .unwrap();
-        std::future::pending::<()>().await;
-    });
-    let transport = Http(http());
-    let read = Transport::get(&transport, &url, 20);
-    let result = tokio::time::timeout(Duration::from_secs(5), read).await;
-    assert!(matches!(result, Ok(Err(Error::Malformed))));
-    server.abort();
-}
-
-/// Connect over PIR to the publication `origin` advertises, accepted at `accepted`.
-async fn connect<T: Transport>(
-    origin: &str,
-    http: T,
-    accepted: Accepted,
-) -> Result<Session<T>, Error> {
-    history::connect(origin, http, accepted).await
-}
-
-#[tokio::test]
-async fn retrieve_complete_history_and_enforce_limits_over_http() {
-    let server = serve(snapshot(2)).await;
-    let client = connect(&server.origin, Http(http()), accepted())
-        .await
-        .unwrap();
-    let payments = history(&client, receiver()).await.unwrap();
-    assert_eq!(payments.len(), 2);
-    assert_eq!(payments[0].position, 200);
-    assert_eq!(payments[1].position, 201);
-    // A client refuses a publication that does not end at the wallet's anchor.
-    let mut wrong = accepted();
-    wrong.hash[0] ^= 1;
-    assert!(connect(&server.origin, Http(http()), wrong).await.is_err());
-    let oversized = http()
-        .post(format!("{}/v1/receiver/query", server.origin))
-        .body(vec![
-            0;
-            zakura_pir_query_server::receiver::native::query_bytes(
-                zakura_pir_query_server::receiver::session::MAX_ROWS
-            )
-            .unwrap()
-                + 1
-        ])
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(oversized.status(), reqwest::StatusCode::PAYLOAD_TOO_LARGE);
-    let malformed = http()
-        .post(format!("{}/v1/receiver/query", server.origin))
-        .body(vec![0; 8])
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(malformed.status(), reqwest::StatusCode::BAD_REQUEST);
-    let absent = serve(snapshot(0)).await;
-    let client = connect(&absent.origin, Http(http()), accepted())
-        .await
-        .unwrap();
-    assert!(history(&client, receiver()).await.unwrap().is_empty());
-}
-
-/// A transport that counts requests and records any row file request.
-struct Counted {
-    http: Http,
-    gets: AtomicUsize,
-    posts: AtomicUsize,
-    row_files: AtomicUsize,
-}
-
-impl Transport for Counted {
-    async fn get(&self, url: &str, limit: usize) -> Result<Vec<u8>, Error> {
-        self.gets.fetch_add(1, Ordering::Relaxed);
-        if url.contains("/v1/receiver/rows/") {
-            self.row_files.fetch_add(1, Ordering::Relaxed);
-        }
-        Transport::get(&self.http, url, limit).await
-    }
-    async fn post(&self, url: &str, body: Vec<u8>, limit: usize) -> Result<Vec<u8>, Error> {
-        self.posts.fetch_add(1, Ordering::Relaxed);
-        Transport::post(&self.http, url, body, limit).await
-    }
-}
-
-/// A history longer than the old 16-page PIR limit completes over PIR alone: one
-/// query per page, no row file request, and no GET beyond the inventory head, its one
-/// chunk and the two sessions' setup.
-#[tokio::test]
-async fn long_histories_use_only_pir() {
-    const PAGES: u32 = 20;
-    let server = serve(snapshot(PAGES)).await;
-    let host = Counted {
-        http: Http(http()),
-        gets: AtomicUsize::new(0),
-        posts: AtomicUsize::new(0),
-        row_files: AtomicUsize::new(0),
-    };
-    let client = connect(&server.origin, &host, accepted()).await.unwrap();
-    let payments = history(&client, receiver()).await.unwrap();
-    assert_eq!(payments.len(), PAGES as usize);
-    assert!(payments.windows(2).all(|p| p[0].position < p[1].position));
-    assert_eq!(host.row_files.load(Ordering::Relaxed), 0);
-    assert_eq!(host.gets.load(Ordering::Relaxed), 4);
-    assert_eq!(host.posts.load(Ordering::Relaxed), PAGES as usize);
-}
-
-/// The companion witness table answers an ordinal over the shared query route under
-/// its own session, which the inventory lists beside the payment session; this crate never
-/// interprets payloads, and a wallet verifies them.
-#[tokio::test]
-async fn companion_witness_payloads_are_read_over_pir() {
-    let snapshot = snapshot(2);
-    let payloads = [[7; 512], [9; 512]];
-    let table = prepared::companion_table(&snapshot, &payloads);
-    let server = serve_publication(prepared::prepare(snapshot, table).unwrap()).await;
-    let client = connect(&server.origin, Http(http()), accepted())
-        .await
-        .unwrap();
-    assert_eq!(client.witness(1).await.unwrap(), payloads[1]);
-    assert_eq!(client.witness(0).await.unwrap(), payloads[0]);
-    // An ordinal past the table's payloads is never sent.
-    assert!(client.witness(2).await.is_err());
-}
-
-#[test]
-fn encrypted_publication_roundtrip_and_fail_closed() {
-    let records = [record(0, 2), record(1, 2)];
-    let server = Server::new(Snapshot::build(manifest(MIN_ROWS), &records).unwrap()).unwrap();
-    let client = Client::new(server.manifest().clone(), server.public()).unwrap();
-    let first = client.prepare(receiver(), 0).unwrap();
-    let second = client.prepare(receiver(), 0).unwrap();
-    assert_ne!(
-        first.body(),
-        second.body(),
-        "fresh encryption even for the same receiver"
-    );
-    assert_eq!(
-        first.body().len(),
-        zakura_pir_query_server::receiver::native::query_bytes(MIN_ROWS).unwrap()
-    );
-    let answer = server.respond(first.body()).unwrap();
-    assert_eq!(
-        answer.len(),
-        zakura_pir_query_server::receiver::native::response_bytes(MIN_ROWS).unwrap()
-    );
-    assert!(
-        client.decode(second, &answer).is_err(),
-        "reject another request's answer"
-    );
-    assert_eq!(
-        client.decode(first, &answer).unwrap(),
-        Some(records[0].clone())
-    );
-    let q = client.prepare(receiver(), 1).unwrap();
-    let a = server.respond(q.body()).unwrap();
-    assert_eq!(client.decode(q, &a).unwrap(), Some(records[1].clone()));
-    let q = client.prepare(receiver(), 2).unwrap();
-    let a = server.respond(q.body()).unwrap();
-    assert!(
-        client.decode(q, &a).is_err(),
-        "missing continuation is not absence"
-    );
-
-    let mut public = server.public().to_vec();
-    public[0] ^= 1;
-    assert!(Client::new(server.manifest().clone(), &public).is_err());
-    let mut stale = server.manifest().clone();
-    stale.directory.salt[0] ^= 1;
-    let stale = Client::new(stale, server.public()).unwrap();
-    let q = stale.prepare(receiver(), 0).unwrap();
-    assert!(matches!(server.respond(q.body()), Err(Error::Revision)));
-    assert!(server.respond(&[]).is_err());
-    let mut malformed = client.prepare(receiver(), 0).unwrap().body().to_vec();
-    malformed[0] ^= 1;
-    assert!(matches!(server.respond(&malformed), Err(Error::Malformed)));
-    println!(
-        "public_bytes={} query_bytes={} response_bytes={}",
-        server.public().len(),
-        zakura_pir_query_server::receiver::native::query_bytes(MIN_ROWS).unwrap(),
-        zakura_pir_query_server::receiver::native::response_bytes(MIN_ROWS).unwrap()
-    );
-}
-
-#[test]
-fn reject_corrupt_rows_before_preprocessing() {
-    let mut snapshot = Snapshot::build(manifest(MIN_ROWS), &[]).unwrap();
-    snapshot.data[0] ^= 1;
-    assert!(matches!(
-        Server::new(snapshot),
-        Err(Error::Directory(
-            zakura_pir_query_server::receiver::Error::Malformed
-        ))
-    ));
-    // No PIR profile serves a smaller table.
-    let small = Snapshot::build(manifest(MIN_ROWS / 2), &[]).unwrap();
-    assert!(matches!(Server::new(small), Err(Error::Unsupported)));
-}
-
-#[test]
-fn every_growth_geometry_roundtrips_above_the_previous_capacity() {
-    for rows in [
-        16_384,
-        32_768,
-        zakura_pir_query_server::receiver::session::MAX_ROWS,
-    ] {
-        let mut m = manifest(rows);
-        // Select the upper half so truncating to the previous geometry cannot pass.
-        while zakura_pir_query_server::receiver::snapshot::row_for(&m, &receiver(), 0).unwrap()
-            < rows as usize / 2
-        {
-            m.salt[0] = m.salt[0].wrapping_add(1);
-        }
-        let records = [record(0, 2), record(1, 2)];
-        let server = Server::new(Snapshot::build(m, &records).unwrap()).unwrap();
-        let client = Client::new(server.manifest().clone(), server.public()).unwrap();
-        assert_eq!(
-            server.public().len(),
-            zakura_pir_query_server::receiver::native::public_bytes(rows).unwrap()
-        );
-        for record in records {
-            let q = client.prepare(receiver(), record.page).unwrap();
-            assert_eq!(
-                q.body().len(),
-                zakura_pir_query_server::receiver::native::query_bytes(rows).unwrap()
-            );
-            let answer = server.respond(q.body()).unwrap();
-            assert_eq!(
-                answer.len(),
-                zakura_pir_query_server::receiver::native::response_bytes(rows).unwrap()
-            );
-            assert_eq!(client.decode(q, &answer).unwrap(), Some(record));
-        }
-        let mut wrong_size = client.prepare(receiver(), 0).unwrap().body().to_vec();
-        wrong_size
-            .truncate(zakura_pir_query_server::receiver::native::query_bytes(MIN_ROWS).unwrap());
-        assert!(matches!(server.respond(&wrong_size), Err(Error::Malformed)));
-    }
-}
-
-#[test]
-fn geometry_contract_accepts_only_supported_row_counts() {
-    for rows in [0, 1, 4096, 8193, 131072, u32::MAX] {
-        assert!(zakura_pir_query_server::receiver::session::validate_rows(rows).is_err());
-        assert!(zakura_pir_query_server::receiver::native::query_bytes(rows).is_err());
-    }
-    for rows in [
-        MIN_ROWS,
-        16_384,
-        32_768,
-        zakura_pir_query_server::receiver::session::MAX_ROWS,
-    ] {
-        let m = zakura_pir_query_server::receiver::session::Manifest {
-            protocol: zakura_pir_query_server::receiver::session::PROTOCOL.into(),
-            directory: manifest(rows),
-            public_digest: [0; 32],
-        };
-        m.validate().unwrap();
-    }
-}
-
 /// A sealed shard of two segments covering the same blocks, as an oversized block
-/// becomes, serves each receiver's pages from its own segment through the library
-/// client; its filter is served by digest and matches both receivers; a chunk the
-/// inventory lacks is 404 and an inventory not served is 410.
+/// becomes, serves each receiver's records from its own segment; its filter is served
+/// by digest from a stored file read once into the table budget, and a file that no
+/// longer holds the digest is refused. A chunk the inventory lacks is 404.
 #[tokio::test]
-async fn a_multi_segment_shard_and_its_filter_serve_through_the_library_client() {
-    use zakura_pir_query_server::receiver::shards::{Coverage, ShardFilter};
-    let other = common::seeded_receiver(1);
-    let first = Snapshot::build(manifest(MIN_ROWS), &[record(0, 1)]).unwrap();
-    let mut second_record = record(0, 1);
-    second_record.receiver = other;
-    (second_record.payment.position, second_record.payment.txid) = (201, [9; 32]);
-    second_record.payment.tx_index = 2;
-    let second = Snapshot::build(manifest(MIN_ROWS), &[second_record.clone()]).unwrap();
-    let coverage = Coverage {
+async fn a_multi_segment_shard_and_its_stored_filter_serve() {
+    let filter_coverage = FilterCoverage {
         start_height: 100,
         end_height: 101,
         end_hash: [3; 32],
     };
-    let filter = ShardFilter::build([1; 32], 0, coverage, &[receiver(), other]).unwrap();
-    let digest = filter.digest();
-    let tables = vec![
-        (first.clone(), prepared::placeholder(&first)),
-        (second.clone(), prepared::placeholder(&second)),
-    ];
-    let publication = prepared::inventory(vec![(true, tables, Some(filter.clone()))]).unwrap();
-    let inventory = hex::encode(publication.id());
-    let server = serve_publication(publication).await;
-    let session = connect(&server.origin, Http(http()), accepted())
-        .await
-        .unwrap();
-    let client = &session.client;
-    assert_eq!(client.inventory().shards()[0].segments.len(), 2);
-    let ours = history::inventory_history(client, receiver())
-        .await
-        .unwrap();
-    assert_eq!(ours, [record(0, 1).payment]);
-    let theirs = history::inventory_history(client, other).await.unwrap();
-    assert_eq!(theirs, [second_record.payment]);
-    let served = http()
-        .get(format!(
-            "{}/v1/receiver/shard-filters/{}",
-            server.origin,
-            hex::encode(digest)
-        ))
-        .send()
-        .await
-        .unwrap();
-    assert!(no_store(&served));
-    assert_eq!(served.bytes().await.unwrap(), filter.bytes());
-    let fetched = InventoryClient::new(
-        &server.origin,
-        Http(http()),
-        client.inventory().clone(),
-        true,
-    );
-    let fetched = fetched.filter(0).await.unwrap();
-    assert_eq!(fetched.matches(&[receiver(), other]), [true, true]);
-    let origin = server.origin.clone();
-    let status = |path: String| {
-        let origin = origin.clone();
-        async move {
-            http()
-                .get(format!("{origin}{path}"))
-                .send()
-                .await
-                .unwrap()
-                .status()
-        }
-    };
-    assert_eq!(
-        status(format!("/v1/receiver/inventory/{inventory}/1")).await,
-        reqwest::StatusCode::NOT_FOUND
-    );
-    let unknown = "00".repeat(32);
-    assert_eq!(
-        status(format!("/v1/receiver/inventory/{unknown}/0")).await,
-        reqwest::StatusCode::GONE
-    );
-    assert_eq!(
-        status(format!("/v1/receiver/shard-filters/{unknown}")).await,
-        reqwest::StatusCode::GONE
-    );
-}
-
-/// A stored shard filter keeps no bytes in the inventory: the first request reads its
-/// file into the table budget, later ones reuse the cached copy, and a file that no
-/// longer holds the digest is a server error rather than wrong bytes.
-#[tokio::test]
-async fn a_stored_shard_filter_is_read_into_the_table_budget() {
-    use receiver_pir_server::tables::FilterSource;
-    use std::sync::Arc;
-    use zakura_pir_query_server::receiver::shards::{Coverage, ShardFilter};
-    let snapshot = Snapshot::build(manifest(MIN_ROWS), &[record(0, 1)]).unwrap();
-    let coverage = Coverage {
-        start_height: 100,
-        end_height: 101,
-        end_hash: [3; 32],
-    };
-    let filter = ShardFilter::build([1; 32], 0, coverage, &[receiver()]).unwrap();
+    let other = seeded_receiver(1);
+    let filter = ShardFilter::build([1; 32], 0, filter_coverage, &[receiver(), other]).unwrap();
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("filter");
     std::fs::write(&path, filter.bytes()).unwrap();
     let reads = Arc::new(AtomicUsize::new(0));
-    let source = Arc::new(FilterSource::stored(
+    let source = Arc::new(ObjectSource::filter(
         filter.digest(),
         filter.bytes().len() as u32,
         filter.receivers(),
@@ -848,93 +469,82 @@ async fn a_stored_shard_filter_is_read_into_the_table_budget() {
             }
         },
     ));
-    assert_eq!(source.held_bytes(), 0);
-    let segment = prepared::segment(snapshot.clone(), prepared::placeholder(&snapshot)).unwrap();
+    let segments = vec![
+        prepared::segment(tables(coverage(3), &pages(1), 2048)).unwrap(),
+        prepared::segment(tables(coverage(3), &[theirs()], 2048)).unwrap(),
+    ];
     let publication =
-        Publication::assemble([1; 32], 0, vec![(true, vec![segment], Some(source))]).unwrap();
+        Publication::assemble([1; 32], 0, vec![(true, segments, Some(source))]).unwrap();
+    let inventory = hex::encode(publication.id());
     let publications = Publications::default();
     assert!(publications.publish(publication, 0));
-    let tables = publications.tables();
-    let resident = tables.resident();
+    let budget = publications.tables();
+    let resident = budget.resident();
     let server = serve_router(router_with_publications(publications)).await;
-    let url = format!(
-        "{}/v1/receiver/shard-filters/{}",
-        server.origin,
-        hex::encode(filter.digest())
-    );
+    let wallet = Wallet::new(&server.origin);
+    assert_eq!(wallet.history(&receiver()).await.unwrap().len(), 1);
+    assert_eq!(wallet.history(&other).await.unwrap()[0].payment, theirs().1);
+    let url = format!("/shard-filters/{}", hex::encode(filter.digest()));
     for _ in 0..2 {
-        let served = http().get(&url).send().await.unwrap();
-        assert!(served.status().is_success());
-        assert_eq!(served.bytes().await.unwrap(), filter.bytes());
+        assert_eq!(wallet.get(&url).await.unwrap(), filter.bytes());
     }
     assert_eq!(reads.load(Ordering::SeqCst), 1);
-    assert_eq!(tables.resident(), resident + filter.bytes().len());
-    // A changed file is refused when it is next read.
-    let other = ShardFilter::build([1; 32], 0, coverage, &[common::seeded_receiver(1)]).unwrap();
-    std::fs::write(&path, other.bytes()).unwrap();
-    let corrupt = Arc::new(FilterSource::stored(
-        filter.digest(),
-        filter.bytes().len() as u32,
-        filter.receivers(),
-        move || std::fs::read(&path).map_err(|e| Error::Transport(e.to_string())),
-    ));
+    assert!(budget.resident() >= resident + filter.bytes().len());
+    assert_eq!(
+        wallet.get(&format!("/inventory/{inventory}/1")).await,
+        Err(StatusCode::NOT_FOUND)
+    );
+    let replaced = ShardFilter::build([1; 32], 0, filter_coverage, &[receiver()]).unwrap();
+    std::fs::write(&path, replaced.bytes()).unwrap();
+    let corrupt =
+        ObjectSource::filter(filter.digest(), filter.bytes().len() as u32, 2, move || {
+            std::fs::read(&path).map_err(|e| Error::Transport(e.to_string()))
+        });
     let fresh = receiver_pir_server::tables::Tables::new(1 << 30);
-    assert!(fresh.filter(&corrupt).is_err());
+    assert!(fresh.object(&corrupt).is_err());
     assert_eq!(fresh.resident(), 0);
 }
 
 /// Wallets reach every receiver operation at the canonical `/receiver/v1/<operation>` and
-/// at the deployed `/v1/receiver/<operation>`, with identical answers: the inventory head
-/// and a chunk, both sessions' public setup, a shard filter, a payment and a witness
-/// query, and the block-filter head and a batch. Operator routes stay outside the
+/// at the deployed `/v1/receiver/<operation>` with identical answers, and both prefixes
+/// count under one bounded label per operation. Operator routes stay outside the
 /// canonical namespace.
 #[tokio::test]
 async fn canonical_and_legacy_receiver_routes_answer_identically() {
-    use zakura_pir_query_server::receiver::blocks::{BlockFilter, BlockId};
-    use zakura_pir_query_server::receiver::shards::{Coverage, ShardFilter};
-    let snapshot = snapshot(2);
-    let table = prepared::companion_table(&snapshot, &[[7; 512], [9; 512]]);
-    let coverage = Coverage {
+    use zakura_pir_query_server::receiver::blocks::HeightSet;
+    let filter_coverage = FilterCoverage {
         start_height: 100,
         end_height: 101,
         end_hash: [3; 32],
     };
-    let filter = ShardFilter::build([1; 32], 0, coverage, &[receiver()]).unwrap();
-    let publication =
-        prepared::inventory(vec![(true, vec![(snapshot, table)], Some(filter.clone()))]).unwrap();
+    let filter = ShardFilter::build([1; 32], 0, filter_coverage, &[receiver()]).unwrap();
+    let built = tables(coverage(3), &pages(2), 2048);
+    let choice = built.directory.manifest.choice.digest;
+    let publication = prepared::inventory(vec![(true, vec![built], Some(filter.clone()))]).unwrap();
     let inventory = hex::encode(publication.id());
-    let segment = &publication.segments()[0];
-    let (payments, witnesses) = (segment.payments.clone(), segment.witnesses.clone());
+    let segment = publication.segments()[0].publication();
     let publications = Publications::default();
     assert!(publications.publish(publication, 0));
-    let tip = BlockId {
-        height: 101,
-        hash: [3; 32],
-    };
-    let block = BlockFilter::build(&[1; 32], tip, [2; 32], [&receiver()]).unwrap();
-    let window = receiver_pir_server::blocks::BlockWindow::new([1; 32], 0, vec![block]).unwrap();
+    let set = HeightSet::build(&[1; 32], 101, [&receiver()])
+        .unwrap()
+        .unwrap();
+    let window = receiver_pir_server::blocks::BlockWindow::new(
+        [1; 32],
+        0,
+        101,
+        [2; 32],
+        vec![[3; 32]],
+        vec![(101, set.bytes().to_vec())],
+    )
+    .unwrap();
     assert!(publications.publish_filters(window, publications.epoch()));
     let server = serve_router(router_with_publications(publications)).await;
-
-    let payment_query = Client::new(
-        payments.payment_manifest().unwrap().clone(),
-        payments.public(),
-    )
-    .unwrap()
-    .prepare(receiver(), 0)
-    .unwrap();
-    let witness_query = zakura_pir_client::receiver::WitnessClient::new(
-        witnesses.witness_manifest().unwrap().clone(),
-        witnesses.public(),
-    )
-    .unwrap()
-    .prepare(1)
-    .unwrap();
     let gets = [
         "/inventory".to_owned(),
         format!("/inventory/{inventory}/0"),
-        format!("/public/{}", hex::encode(payments.id())),
-        format!("/public/{}", hex::encode(witnesses.id())),
+        format!("/public/{}", hex::encode(segment.directory.id().unwrap())),
+        format!("/public/{}", hex::encode(segment.companion.id().unwrap())),
+        format!("/choice/{}", hex::encode(choice)),
         format!("/shard-filters/{}", hex::encode(filter.digest())),
         "/block-filters/head".to_owned(),
         "/block-filters/0/101/1".to_owned(),
@@ -942,62 +552,43 @@ async fn canonical_and_legacy_receiver_routes_answer_identically() {
     let answer = |response: reqwest::Response| async move {
         let status = response.status();
         let headers = [
-            header_value(&response, "content-type"),
-            header_value(&response, "cache-control"),
+            response.headers().get("content-type").cloned(),
+            response.headers().get("cache-control").cloned(),
         ];
         (status, headers, response.bytes().await.unwrap())
     };
     for operation in &gets {
-        let canonical = answer(
+        let [canonical, legacy] = ["/receiver/v1", "/v1/receiver"].map(|prefix| {
             http()
-                .get(format!("{}/receiver/v1{operation}", server.origin))
+                .get(format!("{}{prefix}{operation}", server.origin))
                 .send()
-                .await
-                .unwrap(),
-        )
-        .await;
-        let legacy = answer(
-            http()
-                .get(format!("{}/v1/receiver{operation}", server.origin))
-                .send()
-                .await
-                .unwrap(),
-        )
-        .await;
-        assert_eq!(canonical.0, reqwest::StatusCode::OK, "{operation}");
+        });
+        let (canonical, legacy) = (
+            answer(canonical.await.unwrap()).await,
+            answer(legacy.await.unwrap()).await,
+        );
+        assert_eq!(canonical.0, StatusCode::OK, "{operation}");
         assert_eq!(canonical, legacy, "{operation}");
     }
-    for body in [payment_query.body(), witness_query.body()] {
-        let canonical = answer(
-            http()
-                .post(format!("{}/receiver/v1/query", server.origin))
-                .body(body.to_vec())
-                .send()
-                .await
-                .unwrap(),
-        )
-        .await;
-        let legacy = answer(
-            http()
-                .post(format!("{}/v1/receiver/query", server.origin))
-                .body(body.to_vec())
-                .send()
-                .await
-                .unwrap(),
-        )
-        .await;
-        assert_eq!(canonical.0, reqwest::StatusCode::OK);
-        assert_eq!(canonical, legacy);
+    // Queries carry fresh encryption, so each prefix answers its own with status 200.
+    for prefix in ["/receiver/v1", "/v1/receiver"] {
+        let wallet = Wallet::at(&server.origin, prefix);
+        let (_, d) = query(&segment.directory, 0, 2048);
+        let (_, c) = query(&segment.companion, 0, 2048);
+        for body in [d, c] {
+            assert_eq!(
+                wallet.post(body).await.unwrap().len(),
+                zakura_pir_query_server::receiver::native::response_bytes()
+            );
+        }
     }
-
-    // Operator routes keep their own paths and never join the canonical namespace.
     for path in ["/v1/receiver/health", "/metrics"] {
         let response = http()
             .get(format!("{}{path}", server.origin))
             .send()
             .await
             .unwrap();
-        assert_eq!(response.status(), reqwest::StatusCode::OK, "{path}");
+        assert_eq!(response.status(), StatusCode::OK, "{path}");
     }
     for path in [
         "/receiver/v1/health",
@@ -1010,10 +601,8 @@ async fn canonical_and_legacy_receiver_routes_answer_identically() {
             .send()
             .await
             .unwrap();
-        assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND, "{path}");
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
     }
-
-    // Both prefixes count under the same bounded labels.
     let metrics = http()
         .get(format!("{}/metrics", server.origin))
         .send()
@@ -1025,6 +614,7 @@ async fn canonical_and_legacy_receiver_routes_answer_identically() {
     for (label, count) in [
         ("receiver_inventory", 4),
         ("receiver_public", 4),
+        ("receiver_choice", 2),
         ("receiver_shard_filters", 2),
         ("receiver_block_filters", 4),
         ("receiver_query", 4),
@@ -1032,12 +622,28 @@ async fn canonical_and_legacy_receiver_routes_answer_identically() {
         let line = format!("pir_http_responses_total{{endpoint=\"{label}\",code=\"2xx\"}} {count}");
         assert!(metrics.contains(&line), "{line} in {metrics}");
     }
+    assert!(!metrics.contains(&hex::encode(segment.directory.id().unwrap())));
 }
 
-/// `name`'s value in `response`, if present.
-fn header_value(response: &reqwest::Response, name: &str) -> Option<String> {
-    response
-        .headers()
-        .get(name)
-        .map(|value| value.to_str().unwrap().to_owned())
+/// A companion built at a later tree than its directory's end keeps the directory
+/// session, so a wallet holding the directory reads the new companion.
+#[tokio::test]
+async fn a_rebuilt_companion_keeps_the_directory_session() {
+    let at = |height, hash: u8| Tree {
+        height,
+        hash: [hash; 32],
+        size: 300,
+    };
+    let first = tables_at(coverage(3), &pages(1), 2048, at(101, 3));
+    let second = tables_at(coverage(3), &pages(1), 2048, at(105, 5));
+    assert_eq!(first.directory.manifest, second.directory.manifest);
+    assert_ne!(
+        first.companion.manifest.revision().unwrap(),
+        second.companion.manifest.revision().unwrap()
+    );
+    let server = serve(publication(second)).await;
+    let wallet = Wallet::new(&server.origin);
+    let (_, shards) = wallet.inventory().await.unwrap();
+    assert_eq!(shards[0].segments[0].companion.manifest.tree.height, 105);
+    assert_eq!(wallet.history(&receiver()).await.unwrap().len(), 1);
 }
