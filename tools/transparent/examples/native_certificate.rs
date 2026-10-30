@@ -47,6 +47,19 @@
 //! entries. A snapshot served at both widths needs both certificates. The
 //! nearest report is byte-for-byte what this tool produced before dithering.
 //!
+//! Receiver mode (the per-table certificate of a Receiver directory or companion, built with
+//! `--features receiver`):
+//!
+//! ```text
+//! ... --features receiver --example native_certificate -- \
+//!   receiver --table directory|companion --rows-bin d-<revision>.rows \
+//!   (--public d-<revision>.public | --public-sha256 <hex>)
+//! ```
+//!
+//! It rebuilds the table under its own seeds and table kind, which fix the profile with
+//! the row count, and always writes the dithered 8-bit report, refusing rows whose public
+//! setup is not the served one.
+//!
 //! The directory and pages use the 8-bit profile: one byte per coefficient,
 //! a one-digit packing key, 22-bit published masks and 28-bit dithered
 //! queries only. For those tables the report is always the dithered format,
@@ -62,7 +75,7 @@ use reinspiring::noise::{gaussian_cdf_sha256, gaussian_counts, WeightNorms};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use transparent_native::{self as native, NativePreprocessed, TableProfile, D};
+use transparent_native::{self as native, NativePreprocessed, NativeSetup, TableProfile, D};
 
 fn norms(w: WeightNorms) -> Value {
     json!({"l1": w.l1.to_string(), "l2_squared": w.l2_squared.to_string(), "max": w.max.to_string()})
@@ -111,9 +124,12 @@ fn main() {
         .map(|kv| (kv[0].trim_start_matches("--").to_owned(), kv[1].clone()))
         .collect();
     let rounding = flags.get("query-rounding").map(String::as_str);
-    let (profile, columns, served, binding, worst_case) = match mode.as_str() {
+    // A Transparent table's profile, which the report's shape borrows.
+    let transparent: TableProfile;
+    let (shape, columns, served, binding, worst_case, product) = match mode.as_str() {
         "segment" => {
-            let profile = table_profile(&flags);
+            transparent = table_profile(&flags);
+            let profile = &transparent;
             let rows_bin = std::fs::read(&flags["rows-bin"]).expect("segment table");
             assert_eq!(
                 rows_bin.len(),
@@ -133,10 +149,57 @@ fn main() {
                 (None, None) => None,
                 _ => panic!("pass at most one of --public or --public-sha256"),
             };
-            let columns = columns_of(&rows_bin, &profile);
+            let columns = columns_of(&rows_bin, profile);
             let binding = format!("rows_sha256:{}", hex::encode(Sha256::digest(&rows_bin)));
             let worst_case = flags.get("worst-case-query").is_some_and(|v| v == "true");
-            (profile, columns, served, binding, worst_case)
+            let product = format!("transparent-{mode}");
+            (
+                shape(profile),
+                columns,
+                served,
+                binding,
+                worst_case,
+                product,
+            )
+        }
+        #[cfg(feature = "receiver")]
+        "receiver" => {
+            use zakura_pir_query_server::receiver::{
+                native::{profile, COLS},
+                Kind, ROW_BYTES,
+            };
+            let kind = match flags["table"].as_str() {
+                "directory" => Kind::Directory,
+                "companion" => Kind::Companion,
+                other => panic!("unknown Receiver table {other}"),
+            };
+            let rows_bin = std::fs::read(&flags["rows-bin"]).expect("table rows");
+            let rows = rows_bin.len() / ROW_BYTES;
+            assert_eq!(rows_bin.len(), rows * ROW_BYTES, "table length");
+            let rows_u32 = u32::try_from(rows).expect("row count");
+            let profile = profile(kind, rows_u32).expect("a served Receiver shape");
+            let served: [u8; 32] = match (flags.get("public"), flags.get("public-sha256")) {
+                (Some(path), None) => {
+                    Sha256::digest(std::fs::read(path).expect("served public")).into()
+                }
+                (None, Some(digest)) => hex::decode(digest)
+                    .expect("hex")
+                    .try_into()
+                    .expect("32-byte digest"),
+                _ => panic!("pass exactly one of --public or --public-sha256"),
+            };
+            // Byte coefficients, column-major, as the evaluator scans them.
+            let columns = (0..COLS)
+                .map(|col| {
+                    (0..rows)
+                        .map(|row| rows_bin[row * ROW_BYTES + col].into())
+                        .collect()
+                })
+                .collect();
+            let binding = format!("rows_sha256:{}", hex::encode(Sha256::digest(&rows_bin)));
+            let shape = (native::P8, &profile.setup, &profile.masks[..], rows, COLS);
+            let product = format!("receiver-{}", kind.label());
+            (shape, columns, Some(served), binding, false, product)
         }
         "synthetic" => {
             let seed: u64 = flags.get("seed").map_or(1, |s| s.parse().unwrap());
@@ -145,7 +208,7 @@ fn main() {
                 .map_or("random", String::as_str)
                 .to_owned();
             let named = flags.contains_key("geometry");
-            let profile = if named {
+            transparent = if named {
                 table_profile(&flags)
             } else {
                 TableProfile::new(
@@ -157,6 +220,7 @@ fn main() {
                 )
                 .unwrap()
             };
+            let profile = &transparent;
             let rows = profile.rows;
             let entry_max = u16::MAX >> (16 - 8 * profile.native.entry_bytes());
             let mut state = seed;
@@ -186,12 +250,13 @@ fn main() {
             } else {
                 format!("synthetic:{fill}:seed={seed}:rows={rows}")
             };
-            (profile, columns, None, binding, true)
+            let product = format!("transparent-{mode}");
+            (shape(profile), columns, None, binding, true, product)
         }
         _ => panic!("mode must be segment or synthetic"),
     };
 
-    let native_profile = profile.native;
+    let (native_profile, setup, masks, rows, cols) = shape;
     let eight_bit = native_profile.nearest_bits.is_none();
     let dithered = match rounding {
         None if eight_bit => true,
@@ -201,11 +266,7 @@ fn main() {
         None => unreachable!(),
     };
     let started = std::time::Instant::now();
-    let hint =
-        zakura_pir_server_core::native::hint(&profile.masks, profile.rows, profile.cols, |c| {
-            &columns[c]
-        })
-        .unwrap();
+    let hint = zakura_pir_server_core::native::hint(masks, rows, cols, |c| &columns[c]).unwrap();
     let analyzed: Vec<_> = hint
         .par_iter()
         .map(|block| {
@@ -217,13 +278,12 @@ fn main() {
             } else {
                 reinspiring::native::DEFAULT_TWO_MASK_SCREENS
             };
-            NativePreprocessed::build_two_mask_analyzed_with_screens(&profile.setup, block, screens)
-                .unwrap()
+            NativePreprocessed::build_two_mask_analyzed_with_screens(setup, block, screens).unwrap()
         })
         .collect();
     let pre: Vec<_> = analyzed.iter().map(|(p, _)| p).collect();
     let public = native_profile.publish(&pre).unwrap();
-    assert_eq!(public.len(), native_profile.public_len(profile.cols));
+    assert_eq!(public.len(), native_profile.public_len(cols));
     let public_sha256: [u8; 32] = Sha256::digest(&public).into();
     if let Some(served) = served {
         assert!(
@@ -231,10 +291,10 @@ fn main() {
             "rebuilt public masks differ from the served bytes; wrong snapshot"
         );
     }
-    let query: Vec<WeightNorms> = (0..profile.blocks())
+    let query: Vec<WeightNorms> = (0..cols / D)
         .map(|block| {
             if worst_case {
-                return worst(profile.rows, (1u128 << native_profile.p_bits) - 1);
+                return worst(rows, (1u128 << native_profile.p_bits) - 1);
             }
             columns[block * D..(block + 1) * D]
                 .iter()
@@ -293,9 +353,7 @@ fn main() {
         })
         .collect();
     eprintln!(
-        "analysed {} rows x {} cols in {:.1}s",
-        profile.rows,
-        profile.cols,
+        "analysed {rows} rows x {cols} cols in {:.1}s",
         started.elapsed().as_secs_f64()
     );
     let mut report = json!({
@@ -308,11 +366,11 @@ fn main() {
         "served_public_bytes": public.len(),
         "served_public_sha256": hex::encode(public_sha256),
         "served_public_checked": served.is_some(),
-        "product": format!("transparent-{mode}"),
-        "rows": profile.rows, "cols": profile.cols,
+        "product": product,
+        "rows": rows, "cols": cols,
         "query_bits": native::QUERY_BITS, "response_bits": native::RESPONSE_BITS, "kh_bits": 54,
         "worst_case_query": worst_case,
-        "setup_id": hex::encode(profile.setup.id()),
+        "setup_id": hex::encode(setup.id()),
         "database_sha256": binding,
         "sampler_sha256": hex::encode(gaussian_cdf_sha256()),
         "sampler_counts": gaussian_counts().into_iter().map(|(x, c)| json!([x, c.to_string()])).collect::<Vec<_>>(),
@@ -326,7 +384,7 @@ fn main() {
         report["query_bits"] = json!(native_profile.dithered_bits);
     }
     if eight_bit {
-        let params = profile.setup.params();
+        let params = setup.params();
         report["p_bits"] = json!(native_profile.p_bits);
         report["ell"] = json!(params.ell());
         report["gadget_bits"] = json!(params.gadget_bits());
@@ -335,6 +393,22 @@ fn main() {
         report["response_bits"] = json!(native_profile.response_bits);
     }
     println!("{report}");
+}
+
+/// A table profile's native parameters, setup, query masks, rows and columns: what
+/// a report reads, whichever product derived them.
+type Shape<'a> = (
+    native::Profile,
+    &'a NativeSetup,
+    &'a [Vec<u64>],
+    usize,
+    usize,
+);
+
+/// `profile`'s [`Shape`].
+fn shape(profile: &TableProfile) -> Shape<'_> {
+    let p = profile;
+    (p.native, &p.setup, &p.masks, p.rows, p.cols)
 }
 
 /// Column-major coefficients of a row-major segment table, as the server
