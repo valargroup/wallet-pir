@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+- Breaking: Receiver serves each segment as a directory and a companion. A lookup
+  reads one 2,048-row directory row, chosen by the segment's choice object, and on a
+  hit one companion row per record, which carries the record and its witness payload.
+  Both are prepared P8 tables. The payment and witness tables, the separate witness
+  query, `--min-rows`, `--shard-rows` and `--shard-target` are removed; a publisher
+  configuration still naming `min_rows` is refused. `GET /receiver/v1/choice/:digest`
+  serves choice objects. A shard seals after 317,440 payments, or before a block
+  that would not fit, and an oversized block still splits into up to eight segments.
+  The store reseals from its chain index on first start, dropping earlier seals and
+  table files. The minimum table budget falls from 1,536 MiB to 920 MiB, charged at
+  each preparation's measured peak until it finishes. `native_certificate receiver`
+  writes a table's certificate report for the operator's deploy gate. Wallets need
+  the matching wallet-libraries client.
+
+- Breaking: block hints are sparse and keyed by height. A wallet fetches a
+  catch-up gap, usually in one request, from
+  `/receiver/v1/block-filters/{revision}/{from}/{limit}` as one `IWRANGE2` range
+  that carries a set only for blocks that pay a receiver, so a full empty window
+  is a 92-byte header. Ranges cover only the rolling
+  window the head advertises; history before it comes from PIR. A request
+  still building an answer from hints its view no longer authorizes is refused.
+  The `IWBATCH1` batch format and the `/block-filters/range/...`
+  route are removed. No released wallet uses block hints.
+
 - A query server prepares the tables a new Receiver publication adds, usually the
   shard the latest block extended, before it serves that publication. The first
   lookup after each new block took about 7 s instead of about 3 s while the server

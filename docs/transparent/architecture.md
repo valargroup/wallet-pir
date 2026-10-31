@@ -91,10 +91,10 @@ and local evidence only.
 
 | Component | Source | Responsibility |
 |---|---|---|
-| Events | `wallet-libraries/zakura/transparent-events` | Canonical 87-byte chain event record |
-| Filters | `wallet-libraries/zakura/transparent-filter` | Range filter profiles, keying, encoding and validation |
-| Shard protocol | `wallet-libraries/zakura/transparent-shard` | Geometry registry, script tags, placement, deterministic packing, choice tables, manifests and sealing |
-| Native PIR profile | `wallet-libraries/zakura/transparent-native` over `wallet-libraries/zakura/pir-native` | Transparent's seeds and scheme identity over the two-mask ReinspiRING helpers all three products share |
+| Events | `wallet-libraries/zakura/pir-protocol` (`transparent::events`) | Canonical 87-byte chain event record |
+| Filters | `wallet-libraries/zakura/pir-protocol` (`transparent::filter`), built by `zakura/pir-publisher` (`transparent::filter`) | Range filter profiles, keying, encoding and validation |
+| Shard protocol | `wallet-libraries/zakura/pir-protocol` (`transparent::shard`, with the choice table, tags and buckets shared with Receiver in `directory`) and `zakura/pir-publisher` (`transparent::build`, `transparent::seal`, placement in `directory`) | Geometry registry, script tags, placement, deterministic packing, choice tables, manifests and sealing |
+| Native PIR profile | `wallet-libraries/zakura/pir-protocol` (`transparent::native` over `native`) | Transparent's seeds and scheme identity over the two-mask ReinspiRING helpers all three products share |
 | Ingest, census, publish | `src/transparent/transparent-publisher` | Resolve events, persist journal, seal and build shards, serve filters |
 | Shared publication and runtime | `src/transparent/transparent-shared` | Journal, verify publications, prepare native runtimes, bound memory and cache persisted or shipped runtimes |
 | Raw PIR runtime | `src/shared/pir-runtime` | Enhance and Status use the shared u16 runtime. Transparent serves only P8 tables and uses the upstream byte kernel directly |

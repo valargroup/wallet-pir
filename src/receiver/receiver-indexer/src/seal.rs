@@ -1,218 +1,212 @@
-//! Sealing Receiver shards on placement and companion witness capacity.
+//! Sealing Receiver shards (plan S1.3).
 //!
-//! A shard is sealed on block boundaries, as Transparent's are, but on what its
-//! payment table holds rather than a block count. Capacity is exact: a shard keeps a
-//! block only if some salt still places every payment in the pinned payment geometry
-//! and its companion witness table still holds one payload per payment. A block that
-//! would breach either seals the shard before it; reaching the target seals the shard
-//! after it. A block too large for one table becomes a shard of its own, split into
-//! several segments that each place. Publication never covers a block it cannot place.
-use receiver_store::{Checkpoint, Error, SealedShard, Store, SALT_ATTEMPTS};
-use sha2::{Digest, Sha256};
+//! Each whole block is projected into the open segment under its committed tag salt
+//! ([`Projection::project`]). A shard seals after the block that reaches
+//! [`SEAL_TARGET`], and before a block that would pass the companion's capacity, take a
+//! receiver past 65,535 payments, sit 2^24 or more heights after the shard's start, or
+//! collide or fail placement under all of its own salt attempts. Every rule is decided
+//! block by block, so the boundary never depends on when publication runs; the choice
+//! table plays no part in it. A block too large for one segment becomes a shard of its
+//! own, split in position order into up to eight segments.
+//!
+//! Seals are staged, not recorded: the publisher records each one only once its
+//! segments, choice objects included, have been built, so a choice failure leaves the
+//! recorded boundary where it was. Each seal names the block that decided it, and the
+//! store drops the seal with that block.
+use receiver_store::{Checkpoint, Error, SealedShard, Store};
 use std::collections::HashMap;
 use zakura_pir_publisher::receiver::inventory::MAX_SEGMENTS;
 use zakura_pir_publisher::receiver::{
-    snapshot::{self, Manifest, PROFILE, SLOTS, TREE_SIZE},
-    witness, Hash, RawRecord, ReceiverBytes,
+    initial_salt, within_limits, Projection, CAPACITY, MAX_HEIGHT_OFFSET, SEAL_SEED_ATTEMPTS,
+    SEAL_TARGET,
 };
+use zakura_pir_publisher::receiver::{Hash, RawRecord, ReceiverBytes};
 
-/// What a sealed segment holds. These are schema: shards sealed under other limits
-/// are a different partition, so each shard records the rows it was sealed under.
+/// The limits a segment seals under: the format's ([`Policy::default`]); tests only
+/// lower them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Policy {
-    /// Pinned payment table rows of every sealed segment.
-    pub rows: u32,
-    /// Most payloads one segment's companion witness table holds.
-    pub payloads: u64,
-    /// Payments after which an open shard seals at the next block boundary.
-    pub target: u64,
+    /// Payments after which a shard seals at the next block boundary.
+    pub target: u32,
+    /// Payments one segment holds.
+    pub capacity: u32,
+    /// The largest height offset from a shard's start a block may have.
+    pub max_offset: u32,
+    /// Choice seeds a seal tries.
+    pub seal_seeds: u32,
 }
 
-impl Policy {
-    /// Segments of `rows` rows, whose companion tables hold at most the largest
-    /// witness table's payloads. Without a `target`, one seventh of the smaller
-    /// capacity is kept for the block that crosses it; placement checks, not the
-    /// target, keep every segment valid.
-    pub fn new(rows: u32, target: Option<u64>) -> Result<Self, Error> {
-        zakura_pir_publisher::receiver::session::validate_rows(rows)
-            .map_err(|_| Error::Malformed)?;
-        let payloads = witness::capacity(snapshot::MAX_ROWS)?;
-        let capacity = snapshot::capacity(rows)?.min(payloads);
-        let target = target.unwrap_or(capacity - capacity / 7);
-        if target == 0 || target > capacity {
-            return Err(Error::Malformed);
-        }
-        Ok(Self {
-            rows,
-            payloads,
-            target,
-        })
-    }
-}
-
-/// The salt of a sealed shard's segment `segment` at `attempt`, fixed by the block
-/// before the shard so a projection can place payments before the shard's end is known.
-pub fn salt(parent: &Hash, segment: u32, attempt: u32) -> Hash {
-    Sha256::new()
-        .chain_update(b"ironwood-receiver/v1/shard-salt\0")
-        .chain_update(parent)
-        .chain_update(segment.to_le_bytes())
-        .chain_update(attempt.to_le_bytes())
-        .finalize()
-        .into()
-}
-
-/// One segment's exact placement state under every salt, as payments are added in
-/// position order: each salt's row occupancy, or `None` once a row overflowed.
-struct Projection {
-    rows: u32,
-    payloads: u64,
-    salts: Vec<(Manifest, Option<Vec<u8>>)>,
-    pages: HashMap<ReceiverBytes, u32>,
-    count: u64,
-}
-
-impl Projection {
-    /// An empty segment `segment` of the shard after block `parent` on `genesis`.
-    fn new(policy: &Policy, genesis: Hash, parent: &Hash, segment: u32) -> Self {
-        let salts = (0..SALT_ATTEMPTS)
-            .map(|attempt| {
-                let manifest = Manifest {
-                    profile: PROFILE.into(),
-                    genesis,
-                    history_revision: 0,
-                    start_height: 0,
-                    start_parent: [0; 32],
-                    start_position: 0,
-                    end_height: 0,
-                    end_hash: [0; 32],
-                    end_position: TREE_SIZE,
-                    rows: policy.rows,
-                    salt: salt(parent, segment, attempt),
-                    records: 0,
-                    data_sha256: [0; 32],
-                };
-                (manifest, Some(vec![0u8; policy.rows as usize]))
-            })
-            .collect();
+impl Default for Policy {
+    /// The format's limits.
+    fn default() -> Self {
         Self {
-            rows: policy.rows,
-            payloads: policy.payloads,
-            salts,
-            pages: HashMap::new(),
-            count: 0,
+            target: SEAL_TARGET,
+            capacity: CAPACITY,
+            max_offset: MAX_HEIGHT_OFFSET,
+            seal_seeds: SEAL_SEED_ATTEMPTS,
         }
-    }
-
-    /// Adds `records`, in position order, if some salt still places every payment and
-    /// the companion table still holds them; otherwise changes nothing.
-    fn try_add(&mut self, records: &[RawRecord]) -> Result<bool, Error> {
-        if self.count + records.len() as u64 > self.payloads.min(snapshot::capacity(self.rows)?) {
-            return Ok(false);
-        }
-        let mut pages = HashMap::new();
-        let placed: Vec<(ReceiverBytes, u32)> = records
-            .iter()
-            .map(|r| {
-                let next = pages
-                    .entry(r.receiver)
-                    .or_insert_with(|| self.pages.get(&r.receiver).copied().unwrap_or(0));
-                *next += 1;
-                (r.receiver, *next - 1)
-            })
-            .collect();
-        let mut outcomes = Vec::with_capacity(self.salts.len());
-        for (manifest, occupancy) in &self.salts {
-            let Some(occupancy) = occupancy else {
-                outcomes.push(None);
-                continue;
-            };
-            let mut added: HashMap<usize, u8> = HashMap::new();
-            let mut fits = true;
-            for (receiver, page) in &placed {
-                let row = snapshot::row_for(manifest, receiver, *page)?;
-                let count = added.entry(row).or_insert(0);
-                *count += 1;
-                if usize::from(occupancy[row]) + usize::from(*count) > SLOTS {
-                    fits = false;
-                    break;
-                }
-            }
-            outcomes.push(fits.then_some(added));
-        }
-        if outcomes.iter().all(Option::is_none) {
-            return Ok(false);
-        }
-        for ((_, occupancy), outcome) in self.salts.iter_mut().zip(outcomes) {
-            match (occupancy.as_mut(), outcome) {
-                (Some(rows), Some(added)) => {
-                    for (row, count) in added {
-                        rows[row] += count;
-                    }
-                }
-                (_, None) => *occupancy = None,
-                (None, Some(_)) => unreachable!("a dead salt places nothing"),
-            }
-        }
-        self.pages.extend(pages);
-        self.count += records.len() as u64;
-        Ok(true)
     }
 }
 
-/// Splits one block's `records`, in position order, into the fewest consecutive
-/// segments that each place under [`salt`] and fit their companion table, greedily.
-/// More than [`MAX_SEGMENTS`] is [`Error::Capacity`].
+/// One segment's projection and payment counts, as blocks are added.
+#[derive(Clone)]
+pub struct Segment {
+    pub projection: Projection,
+    counts: HashMap<ReceiverBytes, u32>,
+    payments: u32,
+}
+
+impl Segment {
+    /// An empty segment `index` of the shard after block `parent`.
+    pub fn new(parent: &Hash, index: u32) -> Self {
+        Self {
+            projection: Projection::new(initial_salt(parent, index)),
+            counts: HashMap::new(),
+            payments: 0,
+        }
+    }
+
+    /// Adds `records`, paid by block `block` at `height` of a shard starting at
+    /// `start`, if the limits hold and the projection places their receivers;
+    /// otherwise changes nothing and returns false.
+    pub fn add(
+        &mut self,
+        policy: &Policy,
+        records: &[RawRecord],
+        start: u32,
+        height: u32,
+        block: &Hash,
+    ) -> bool {
+        let mut counts: HashMap<ReceiverBytes, u32> = HashMap::new();
+        for record in records {
+            let count = counts
+                .entry(record.receiver)
+                .or_insert_with(|| self.counts.get(&record.receiver).copied().unwrap_or(0));
+            *count = count.saturating_add(1);
+        }
+        let payments = u64::from(self.payments) + records.len() as u64;
+        let most = counts.values().max().copied().unwrap_or(0);
+        if !within_limits(payments, most.into(), start, height)
+            || payments > u64::from(policy.capacity)
+            || height - start > policy.max_offset
+        {
+            return false;
+        }
+        #[cfg(test)]
+        if records.len() > 1 && tests::REFUSED.with(|r| r.borrow().contains(&(height, start))) {
+            return false;
+        }
+        let paid: Vec<ReceiverBytes> = counts.keys().copied().collect();
+        if self.projection.project(&paid, block).is_err() {
+            return false;
+        }
+        self.counts.extend(counts);
+        // At most the capacity, checked above.
+        self.payments = payments as u32;
+        true
+    }
+}
+
+/// Splits one block's `records`, in position order, into consecutive segments of the
+/// shard after `parent` that starts at the block, adding one payment at a time and
+/// starting a segment when the current one refuses it. More than [`MAX_SEGMENTS`], or a
+/// payment a fresh segment refuses, is [`Error::Capacity`]. Returns each segment with
+/// its records.
 pub fn split(
     policy: &Policy,
-    genesis: Hash,
     parent: &Hash,
+    height: u32,
+    block: &Hash,
     records: &[RawRecord],
-) -> Result<Vec<Vec<RawRecord>>, Error> {
-    let mut segments: Vec<Vec<RawRecord>> = vec![Vec::new()];
-    let mut projection = Projection::new(policy, genesis, parent, 0);
+) -> Result<Vec<(Segment, Vec<RawRecord>)>, Error> {
+    let mut segments = vec![(Segment::new(parent, 0), Vec::new())];
     for record in records {
-        if !projection.try_add(std::slice::from_ref(record))? {
-            let next = segments.len() as u32;
-            projection = Projection::new(policy, genesis, parent, next);
-            if !projection.try_add(std::slice::from_ref(record))? {
-                return Err(Error::Capacity);
-            }
-            segments.push(Vec::new());
+        let (segment, held) = segments.last_mut().expect("one segment");
+        if segment.add(policy, std::slice::from_ref(record), height, height, block) {
+            held.push(record.clone());
+            continue;
         }
-        segments
-            .last_mut()
-            .expect("one segment")
-            .push(record.clone());
-    }
-    if segments.len() > MAX_SEGMENTS {
-        return Err(Error::Capacity);
+        if segments.len() == MAX_SEGMENTS {
+            return Err(Error::Capacity);
+        }
+        let mut segment = Segment::new(parent, segments.len() as u32);
+        if !segment.add(policy, std::slice::from_ref(record), height, height, block) {
+            return Err(Error::Capacity);
+        }
+        segments.push((segment, vec![record.clone()]));
     }
     Ok(segments)
 }
 
+/// The segments of sealed `shard`, projected again exactly as the sealer projected
+/// them, each with its records in position order. A shard the stored blocks no longer
+/// project into is [`Error::Coverage`].
+pub fn replay(
+    policy: &Policy,
+    store: &Store,
+    shard: &SealedShard,
+) -> Result<Vec<(Segment, Vec<RawRecord>)>, Error> {
+    let parent = store.checkpoint(shard.start_height - 1)?.hash;
+    if shard.start_height == shard.end_height {
+        // Whole if the block fits a fresh segment, else split, as the sealer decided.
+        let (height, block) = (
+            shard.start_height,
+            store.checkpoint(shard.start_height)?.hash,
+        );
+        let records = store.records(height, height)?;
+        let mut segment = Segment::new(&parent, 0);
+        let parts = match segment.add(policy, &records, height, height, &block) {
+            true => vec![(segment, records)],
+            false => split(policy, &parent, height, &block, &records)?,
+        };
+        return match parts.len() == shard.segments as usize {
+            true => Ok(parts),
+            false => Err(Error::Coverage),
+        };
+    }
+    let mut segment = Segment::new(&parent, 0);
+    let mut held = Vec::new();
+    for height in shard.start_height..=shard.end_height {
+        let records = store.records(height, height)?;
+        let block = store.checkpoint(height)?.hash;
+        if !segment.add(policy, &records, shard.start_height, height, &block) {
+            return Err(Error::Coverage);
+        }
+        held.extend(records);
+    }
+    Ok(vec![(segment, held)])
+}
+
 /// The open shard: its first block, the block before it, the last block it absorbed and
-/// its projection.
+/// its segment.
 struct Open {
     start: u32,
-    parent: Hash,
+    parent: Checkpoint,
     through: Checkpoint,
     /// The store's correction revision the projection was built under.
     revision: u64,
-    projection: Projection,
+    segment: Segment,
 }
 
-/// Decides seals incrementally across publications. Recreate on restart: it replays the
-/// open shard from the store, and sealed shards are recorded there.
+/// Decides seals incrementally across publications, staging each until the store
+/// records it. Recreate on restart: it replays the open shard from the store.
+#[derive(Default)]
 pub struct Sealer {
     policy: Policy,
     open: Option<Open>,
+    /// Seals decided but not yet recorded, each with its deciding block and the
+    /// correction revision it was decided under.
+    staged: Vec<(SealedShard, Checkpoint, u64)>,
 }
 
 impl Sealer {
     /// A sealer under `policy`.
     pub fn new(policy: Policy) -> Self {
-        Self { policy, open: None }
+        Self {
+            policy,
+            open: None,
+            staged: Vec::new(),
+        }
     }
 
     /// The policy new shards are sealed under.
@@ -220,17 +214,44 @@ impl Sealer {
         &self.policy
     }
 
-    /// Absorbs every stored block after the last seal through the store's tip, recording
-    /// each seal as it is decided. A block no number of segments can hold is an error
-    /// that records nothing for it, so coverage never passes it.
-    pub fn advance(&mut self, store: &mut Store, genesis: Hash) -> Result<(), Error> {
+    /// The open shard's first height and segment, once it absorbed a block.
+    pub fn open(&self) -> Option<(u32, &Segment)> {
+        self.open
+            .as_ref()
+            .filter(|open| open.through.height >= open.start)
+            .map(|open| (open.start, &open.segment))
+    }
+
+    /// Absorbs every stored block after the last seal through the store's tip and
+    /// returns the seals decided after the store's last one, in order, which the caller
+    /// records with [`Store::seal`] once each shard is built. A block no number of
+    /// segments can hold is an error that decides nothing for it, so coverage never
+    /// passes it.
+    pub fn advance(&mut self, store: &Store) -> Result<Vec<SealedShard>, Error> {
         let tip = store.tip()?;
         let revision = store.history_revision()?;
+        let recorded = match store.sealed_shards()?.last() {
+            Some(last) => last.end_height + 1,
+            None => store.config().start_height,
+        };
+        // Seals the store has recorded since leave the stage; the rest stay only while
+        // they continue the recorded ones and their deciding blocks and revision hold.
+        self.staged.retain(|(s, ..)| s.start_height >= recorded);
+        let holds = self
+            .staged
+            .first()
+            .is_none_or(|(s, ..)| s.start_height == recorded)
+            && self.staged.iter().all(|(_, cause, at)| {
+                *at == revision && store.checkpoint(cause.height).ok().as_ref() == Some(cause)
+            });
+        if !holds {
+            self.staged.clear();
+        }
         loop {
-            let next = match store.sealed_shards()?.last() {
-                Some(last) => last.end_height + 1,
-                None => store.config().start_height,
-            };
+            let next = self
+                .staged
+                .last()
+                .map_or(recorded, |(s, ..)| s.end_height + 1);
             // A correction can change the open shard's payments without moving any
             // block, so the projection is replayed under each new correction revision.
             let valid = self.open.as_ref().is_some_and(|open| {
@@ -242,327 +263,54 @@ impl Sealer {
                 let parent = store.checkpoint(next - 1)?;
                 self.open = Some(Open {
                     start: next,
-                    parent: parent.hash,
+                    segment: Segment::new(&parent.hash, 0),
                     through: parent.clone(),
+                    parent,
                     revision,
-                    projection: Projection::new(&self.policy, genesis, &parent.hash, 0),
                 });
             }
             let open = self.open.as_mut().expect("set above");
             if open.through.height >= tip.height {
-                return Ok(());
+                return Ok(self.staged.iter().map(|(s, ..)| s.clone()).collect());
             }
             let height = open.through.height + 1;
             let records = store.records(height, height)?;
-            let sealed = if open.projection.try_add(&records)? {
-                open.through = store.checkpoint(height)?;
-                (open.projection.count >= self.policy.target).then_some((height, 1))
-            } else if open.through.height >= open.start {
-                // Seal before the block that does not fit, then retry it alone.
-                Some((open.through.height, 1))
-            } else {
-                let segments = split(&self.policy, genesis, &open.parent, &records)?;
-                Some((height, segments.len() as u32))
-            };
-            if let Some((end, segments)) = sealed {
-                self.seal(store, end, segments)?;
+            let block = store.checkpoint(height)?;
+            let sealed =
+                if open
+                    .segment
+                    .add(&self.policy, &records, open.start, height, &block.hash)
+                {
+                    open.through = block.clone();
+                    (open.segment.payments >= self.policy.target).then_some((height, 1, block))
+                } else if open.through.height < open.start {
+                    // A first block that does not fit a fresh segment whole is split into a
+                    // shard of its own, even into one segment, as `replay` decides it.
+                    let parts = split(
+                        &self.policy,
+                        &open.parent.hash,
+                        height,
+                        &block.hash,
+                        &records,
+                    )?;
+                    Some((height, parts.len() as u32, block))
+                } else {
+                    // Seal before the block that does not fit, then retry it alone.
+                    Some((open.through.height, 1, block))
+                };
+            if let Some((end, segments, cause)) = sealed {
+                let open = self.open.take().expect("an open shard");
+                let shard = SealedShard {
+                    start_height: open.start,
+                    end_height: end,
+                    segments,
+                    cause: cause.height,
+                };
+                self.staged.push((shard, cause, revision));
             }
         }
-    }
-
-    /// Records the open shard as sealed through `end` with `segments` segments.
-    fn seal(&mut self, store: &mut Store, end: u32, segments: u32) -> Result<(), Error> {
-        let open = self.open.take().expect("an open shard");
-        store.seal(&SealedShard {
-            start_height: open.start,
-            end_height: end,
-            segments,
-            rows: self.policy.rows,
-            payloads: self.policy.payloads,
-        })
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::probe::common;
-    use receiver_store::{Config, IndexedBlock};
-
-    /// A store whose blocks from height 100 hold `blocks[i]` payments each, the last of
-    /// a block to `last` when given, every commitment `[6; 32]`.
-    fn store(dir: &std::path::Path, blocks: &[usize], last: Option<ReceiverBytes>) -> Store {
-        let mut store = Store::open(
-            dir.join("directory.sqlite"),
-            Config {
-                genesis: [1; 32],
-                start_height: 100,
-                start_parent: [2; 32],
-                start_position: 0,
-            },
-        )
-        .unwrap();
-        for count in blocks {
-            append(&mut store, *count, last);
-        }
-        store
-    }
-
-    /// Appends a block of `count` payments after the store's tip.
-    fn append(store: &mut Store, count: usize, last: Option<ReceiverBytes>) -> IndexedBlock {
-        append_with(store, count, 0, last)
-    }
-
-    /// Appends a block of `count` payments and `extra` further commitments after the
-    /// store's tip, returning it.
-    fn append_with(
-        store: &mut Store,
-        count: usize,
-        extra: usize,
-        last: Option<ReceiverBytes>,
-    ) -> IndexedBlock {
-        let tip = store.tip().unwrap();
-        let height = tip.height + 1;
-        let hash = [height as u8; 32];
-        let payments = (0..count)
-            .map(|i| {
-                let mut payment = common::record(0, 1).payment;
-                (payment.height, payment.block_hash) = (height, hash);
-                payment.position = tip.position + i as u64;
-                payment.tx_index = i as u32 + 1;
-                payment.txid = [0; 32];
-                payment.txid[..8].copy_from_slice(&payment.position.to_le_bytes());
-                payment.cmx = [6; 32];
-                let receiver = match last {
-                    Some(last) if i + 1 == count => last,
-                    _ => common::receiver(),
-                };
-                (receiver, payment)
-            })
-            .collect();
-        let block = IndexedBlock {
-            height,
-            hash,
-            parent: tip.hash,
-            start_position: tip.position,
-            end_position: tip.position + (count + extra) as u64,
-            coinbase_actions: 0,
-            payments,
-            commitments: vec![[6; 32]; count + extra],
-        };
-        store.append(&block).unwrap();
-        block
-    }
-
-    /// The seals `policy` records over blocks of `blocks` payments, as
-    /// `(start, end, segments)`.
-    fn seals(policy: Policy, blocks: &[usize]) -> Vec<(u32, u32, u32)> {
-        let dir = tempfile::tempdir().unwrap();
-        let mut store = store(dir.path(), blocks, None);
-        Sealer::new(policy).advance(&mut store, [1; 32]).unwrap();
-        store
-            .sealed_shards()
-            .unwrap()
-            .iter()
-            .map(|s| (s.start_height, s.end_height, s.segments))
-            .collect()
-    }
-
-    /// A one-row payment table holds 14 records: a block that would make placement fail
-    /// seals the shard before it, never splitting a block across shards.
-    #[test]
-    fn a_block_that_would_not_place_seals_the_shard_before_it() {
-        let policy = Policy {
-            rows: 1,
-            payloads: 1000,
-            target: 1000,
-        };
-        assert_eq!(
-            seals(policy, &[10, 3, 3, 0, 12]),
-            [(100, 101, 1), (102, 103, 1)]
-        );
-    }
-
-    /// Companion witness capacity seals a shard as placement does.
-    #[test]
-    fn witness_capacity_seals_the_shard_before_a_block() {
-        let policy = Policy {
-            rows: 2,
-            payloads: 8,
-            target: 1000,
-        };
-        assert_eq!(seals(policy, &[5, 3, 1, 7]), [(100, 101, 1)]);
-    }
-
-    /// Reaching the target seals after the block that reaches it.
-    #[test]
-    fn the_target_seals_after_the_block_that_reaches_it() {
-        let policy = Policy {
-            rows: 1,
-            payloads: 1000,
-            target: 4,
-        };
-        assert_eq!(
-            seals(policy, &[2, 2, 1, 0, 3]),
-            [(100, 101, 1), (102, 104, 1)]
-        );
-    }
-
-    /// A block too large for one table seals the shard before it and becomes a shard of
-    /// its own, split into segments that each place; one too large for every segment a
-    /// shard may have is refused and never sealed.
-    #[test]
-    fn an_oversized_block_becomes_its_own_shard_of_segments() {
-        let policy = Policy {
-            rows: 1,
-            payloads: 1000,
-            target: 1000,
-        };
-        assert_eq!(seals(policy, &[3, 30, 2]), [(100, 100, 1), (101, 101, 3)]);
-        let dir = tempfile::tempdir().unwrap();
-        let mut store = store(dir.path(), &[3, MAX_SEGMENTS * SLOTS + 1], None);
-        let refused = Sealer::new(policy).advance(&mut store, [1; 32]);
-        assert!(matches!(refused, Err(Error::Capacity)));
-        assert_eq!(store.sealed_shards().unwrap().len(), 1);
-    }
-
-    /// A stop requested while a shard builds ends it inside the build, between one
-    /// segment's witness check and the next, rather than after the whole shard.
-    #[test]
-    fn a_stop_ends_a_shard_build_between_its_segments() {
-        let policy = Policy {
-            rows: 1,
-            payloads: 1000,
-            target: 1000,
-        };
-        let dir = tempfile::tempdir().unwrap();
-        let mut store = store(dir.path(), &[30], Some(common::seeded_receiver(3)));
-        Sealer::new(policy).advance(&mut store, [1; 32]).unwrap();
-        let shard = store.sealed_shards().unwrap().remove(0);
-        assert_eq!(shard.segments, 3);
-        let tip = store.tip().unwrap();
-        let mut witnesses = crate::witness::Witnesses::default();
-        // Each segment asks before its companion, before its check and once per batch of
-        // checked records: the fourth ask is the second segment's first.
-        let asked = std::cell::Cell::new(0);
-        let stop = || {
-            asked.set(asked.get() + 1);
-            asked.get() == 4
-        };
-        let stopped = crate::shards::sealed(&mut store, &mut witnesses, &shard, &tip, 0, &stop);
-        assert!(matches!(stopped, Err(Error::Stopped)));
-        assert_eq!(asked.get(), 4);
-    }
-
-    /// Every segment of an oversized shard places, a receiver paid only by the block's
-    /// last payment is in exactly the last segment, and the shard's filter holds it.
-    #[test]
-    fn every_segment_of_an_oversized_shard_places() {
-        let policy = Policy {
-            rows: 1,
-            payloads: 1000,
-            target: 1000,
-        };
-        let dir = tempfile::tempdir().unwrap();
-        let last = common::seeded_receiver(3);
-        let mut store = store(dir.path(), &[30], Some(last));
-        Sealer::new(policy).advance(&mut store, [1; 32]).unwrap();
-        let shard = store.sealed_shards().unwrap().remove(0);
-        assert_eq!((shard.end_height, shard.segments), (100, 3));
-        let tip = store.tip().unwrap();
-        let mut witnesses = crate::witness::Witnesses::default();
-        let built =
-            crate::shards::sealed(&mut store, &mut witnesses, &shard, &tip, 0, &|| false).unwrap();
-        let counts: Vec<u64> = built
-            .segments
-            .iter()
-            .map(|s| s.snapshot.manifest.records)
-            .collect();
-        assert_eq!(counts, [14, 14, 2]);
-        let holds = |s: &crate::shards::Built| {
-            let row =
-                zakura_pir_publisher::receiver::snapshot::row_for(&s.snapshot.manifest, &last, 0)
-                    .unwrap();
-            let bytes =
-                &s.snapshot.data[row * snapshot::ROW_BYTES..(row + 1) * snapshot::ROW_BYTES];
-            zakura_pir_publisher::receiver::snapshot::lookup_row(
-                &s.snapshot.manifest,
-                &last,
-                0,
-                bytes,
-            )
-            .unwrap()
-            .is_some()
-        };
-        let found: Vec<bool> = built.segments.iter().map(holds).collect();
-        assert_eq!(found, [false, false, true]);
-        for segment in &built.segments {
-            segment.snapshot.validate().unwrap();
-            crate::verify::check_publication(&segment.snapshot, &segment.witnesses).unwrap();
-        }
-        assert_eq!(
-            built.filter.matches(&[last, common::receiver()]),
-            [true, true]
-        );
-    }
-
-    /// A correction adding a payment to the open shard is replayed by a sealer kept
-    /// across it, sealing as a fresh one would.
-    #[test]
-    fn a_correction_inside_the_open_shard_replays_its_projection() {
-        let policy = Policy {
-            rows: 1,
-            payloads: 1000,
-            target: 4,
-        };
-        let dir = tempfile::tempdir().unwrap();
-        let mut store = store(dir.path(), &[2], None);
-        let mut block = append_with(&mut store, 1, 1, None);
-        let mut sealer = Sealer::new(policy);
-        sealer.advance(&mut store, [1; 32]).unwrap();
-        assert!(store.sealed_shards().unwrap().is_empty());
-        let mut added = block.payments[0].1.clone();
-        added.position += 1;
-        added.tx_index += 1;
-        added.txid[..8].copy_from_slice(&added.position.to_le_bytes());
-        block.payments.push((common::receiver(), added));
-        store.correct(1, &[block]).unwrap();
-        sealer.advance(&mut store, [1; 32]).unwrap();
-        let seals: Vec<_> = store
-            .sealed_shards()
-            .unwrap()
-            .iter()
-            .map(|s| (s.start_height, s.end_height))
-            .collect();
-        assert_eq!(seals, [(100, 101)]);
-    }
-
-    /// Sealing block by block across restarts records the seals one pass records.
-    #[test]
-    fn incremental_sealing_matches_a_fresh_replay() {
-        let policy = Policy {
-            rows: 1,
-            payloads: 1000,
-            target: 6,
-        };
-        let blocks = [4, 0, 5, 9, 2, 14, 1];
-        let dir = tempfile::tempdir().unwrap();
-        let mut store = store(dir.path(), &[], None);
-        let mut sealer = Sealer::new(policy);
-        for (i, count) in blocks.iter().enumerate() {
-            append(&mut store, *count, None);
-            if i % 3 == 2 {
-                sealer = Sealer::new(policy);
-            }
-            sealer.advance(&mut store, [1; 32]).unwrap();
-        }
-        let incremental: Vec<_> = store
-            .sealed_shards()
-            .unwrap()
-            .iter()
-            .map(|s| (s.start_height, s.end_height, s.segments))
-            .collect();
-        assert_eq!(incremental, seals(policy, &blocks));
-        assert!(!incremental.is_empty());
-    }
-}
+pub(crate) mod tests;

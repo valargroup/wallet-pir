@@ -1,17 +1,18 @@
 //! Durable copies of served PIR tables in the data directory.
 //!
-//! Each prepared table is written once beside its session manifest and public setup,
-//! named by its directory or witness revision. Inventories then hold only
-//! [`Source`]s, and the serving cache prepares a table from its files when a query needs
-//! it and the budget allows, so sealed history no longer stays resident. A restart finds
-//! every unchanged table by revision and prepares none of them until queried.
+//! Each prepared table is written once beside its session and public setup, named by
+//! its directory or companion revision; a directory's choice object is written beside
+//! its rows. Inventories then hold only sources, and the serving cache prepares a
+//! table from its files when a query needs it and the budget allows, so sealed history
+//! does not stay resident. A restart finds every unchanged table by revision and
+//! prepares none of them until queried. Files of any other name, such as an earlier
+//! format's tables, are removed on open.
 //!
 //! Sealed shards' receiver filters are written here too, named by digest, and served
-//! from these files through the same cache, so inventories share one source per filter
-//! and hold none of its bytes.
+//! from these files through the same cache.
 use receiver_pir_server::{
     publication::Segment,
-    tables::{FilterSource, Loaded, Source, Tables},
+    tables::{Loaded, ObjectSource, Reservation, Source, Tables},
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -19,11 +20,16 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use zakura_pir_publisher::receiver::session::Error;
-use zakura_pir_publisher::receiver::session::Manifest;
-use zakura_pir_publisher::receiver::session::WitnessManifest;
-use zakura_pir_publisher::receiver::{shards::ShardFilter, snapshot::Snapshot, witness, Hash};
-use zakura_pir_query_server::receiver::server::{Server, WitnessServer};
+use zakura_pir_publisher::receiver::session::{Error, MAX_MANIFEST_BYTES};
+use zakura_pir_publisher::receiver::{
+    native::public_bytes, Companion, CompanionTable, Directory, DirectoryTable, Entry,
+    Kind as TableKind, Session, Table, DIRECTORY_ROWS, ROW_BYTES,
+};
+use zakura_pir_publisher::receiver::{shards::ShardFilter, Hash};
+use zakura_pir_query_server::receiver::server::Server;
+
+/// How long a preparation waits for queries in flight to leave room for its peak.
+const PREPARE_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// The data directory's subdirectory holding table files.
 pub const TABLES_DIR: &str = "tables";
@@ -31,8 +37,8 @@ pub const TABLES_DIR: &str = "tables";
 /// What a stored file set holds.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Kind {
-    Payments,
-    Witnesses,
+    Directory,
+    Companion,
     Filter,
 }
 
@@ -40,14 +46,15 @@ impl Kind {
     /// Its files' extensions; the last written marks it stored.
     fn extensions(self) -> &'static [&'static str] {
         match self {
-            Kind::Payments | Kind::Witnesses => &["rows", "public", "json"],
+            Kind::Directory => &["rows", "choice", "public", "json"],
+            Kind::Companion => &["rows", "public", "json"],
             Kind::Filter => &["filter"],
         }
     }
 }
 
-/// One table's files by revision, payment (`p`) or witness (`w`), or a filter's (`f`)
-/// by digest.
+/// One table's files by revision, directory (`d`) or companion (`c`), or a filter's
+/// (`f`) by digest.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 struct Name {
     kind: Kind,
@@ -58,7 +65,7 @@ impl Name {
     /// The file holding its rows or filter, which reuse compares with rebuilt data.
     fn data_file(&self) -> String {
         let extension = match self.kind {
-            Kind::Payments | Kind::Witnesses => "rows",
+            Kind::Directory | Kind::Companion => "rows",
             Kind::Filter => "filter",
         };
         format!("{}.{extension}", self.stem())
@@ -67,8 +74,8 @@ impl Name {
     /// The file stem `<kind>-<revision>`.
     fn stem(&self) -> String {
         let kind = match self.kind {
-            Kind::Payments => "p",
-            Kind::Witnesses => "w",
+            Kind::Directory => "d",
+            Kind::Companion => "c",
             Kind::Filter => "f",
         };
         format!("{kind}-{}", hex::encode(self.revision))
@@ -79,8 +86,8 @@ impl Name {
         let (kind, revision) = stem.split_once('-')?;
         Some(Self {
             kind: match kind {
-                "p" => Kind::Payments,
-                "w" => Kind::Witnesses,
+                "d" => Kind::Directory,
+                "c" => Kind::Companion,
                 "f" => Kind::Filter,
                 _ => return None,
             },
@@ -96,12 +103,13 @@ pub struct Durable {
     /// Every stored table's session ID, and every stored filter's digest.
     stored: HashMap<Name, Hash>,
     /// Tables this handle prepared because no stored copy existed.
+    #[cfg(test)]
     prepared: u64,
 }
 
 impl Durable {
     /// The table files under `data_dir`, served through `tables`; leftovers of an
-    /// interrupted write are removed.
+    /// interrupted write and files of another format are removed.
     pub fn open(data_dir: &Path, tables: Arc<Tables>) -> std::io::Result<Self> {
         let dir = data_dir.join(TABLES_DIR);
         std::fs::create_dir_all(&dir)?;
@@ -120,21 +128,16 @@ impl Durable {
                     stored.insert(name, name.revision);
                 }
             } else if let Some(name) = file.strip_suffix(".json").and_then(Name::parse) {
-                // A manifest that is oversized or does not parse is dropped with its
+                // A session that is oversized or does not parse is dropped with its
                 // table below as a leftover, and its revision is prepared afresh.
-                let Ok(bytes) = pir_publication::records::read_bounded(
-                    &path,
-                    zakura_pir_publisher::receiver::session::MAX_MANIFEST_BYTES as u64,
-                ) else {
+                let Ok(bytes) =
+                    pir_publication::records::read_bounded(&path, MAX_MANIFEST_BYTES as u64)
+                else {
                     continue;
                 };
                 let session = match name.kind {
-                    Kind::Payments => serde_json::from_slice::<Manifest>(&bytes)
-                        .ok()
-                        .and_then(|m| m.id().ok()),
-                    Kind::Witnesses => serde_json::from_slice::<WitnessManifest>(&bytes)
-                        .ok()
-                        .and_then(|m| m.id().ok()),
+                    Kind::Directory => session_id::<Directory>(&bytes, &name.revision),
+                    Kind::Companion => session_id::<Companion>(&bytes, &name.revision),
                     Kind::Filter => None,
                 };
                 if let Some(session) = session {
@@ -142,7 +145,7 @@ impl Durable {
                 }
             }
         }
-        // Files of a table whose manifest was never written are leftovers.
+        // Files of a table whose session was never written are leftovers.
         for entry in std::fs::read_dir(&dir)? {
             let path = entry?.path();
             let stem = path
@@ -157,96 +160,95 @@ impl Durable {
             dir,
             tables,
             stored,
+            #[cfg(test)]
             prepared: 0,
         })
     }
 
     /// How many tables this handle prepared because no stored copy existed.
+    #[cfg(test)]
     pub fn prepared(&self) -> u64 {
         self.prepared
     }
 
-    /// The cache this directory's tables are served through.
-    pub fn tables(&self) -> &Arc<Tables> {
-        &self.tables
-    }
-
-    /// The segment serving freshly built `snapshot` and its companion `witnesses`, both
-    /// already checked: each table reuses its stored copy when one exists, and otherwise
-    /// is prepared, written and cached. Blocking.
+    /// The segment serving freshly built and checked `tables`, whose directory has
+    /// `entries`: each table reuses its stored copy when one exists, and otherwise is
+    /// prepared, written and cached. Blocking.
     pub fn segment(
         &mut self,
-        snapshot: Snapshot,
-        witnesses: witness::Table,
+        tables: zakura_pir_publisher::receiver::Segment,
+        entries: &[Entry],
     ) -> Result<Segment, Error> {
+        let manifest = tables.directory.manifest.clone();
         let name = Name {
-            kind: Kind::Payments,
-            revision: snapshot.manifest.revision()?,
+            kind: Kind::Directory,
+            revision: manifest.revision()?,
         };
         let stored = match self.stored.contains_key(&name) {
-            true => self.reuse(name, &snapshot.data, |d| d.payment_source(name))?,
+            // The choice object is checked as the rows are, since serving reads it.
+            true => self.reuse(name, &tables.directory.data, |d| {
+                match d.holds(&d.path(name, "choice"), &tables.directory.choice) {
+                    true => d.directory_source(name),
+                    false => Err(Error::Transport(
+                        "choice differs from the rebuilt one".into(),
+                    )),
+                }
+            })?,
             false => None,
         };
-        let (payments, server) = match stored {
-            Some(source) => (source, None),
+        let directory = match stored {
+            Some(source) => source,
             None => {
-                // Rows are written before preparation consumes them; the manifest, written
-                // last, marks the table stored.
-                self.write_file(name, "rows", &snapshot.data)?;
-                let server = prepare_payments(snapshot)?;
-                self.prepared += 1;
+                // Rows and choice are written before preparation consumes them; the
+                // session, written last, marks the table stored.
+                self.write_file(name, "rows", &tables.directory.data)?;
+                self.write_file(name, "choice", &tables.directory.choice)?;
+                let reserved = self.reserve(TableKind::Directory, DIRECTORY_ROWS)?;
+                let server = prepare_directory(tables.directory)?;
+                #[cfg(test)]
+                {
+                    self.prepared += 1;
+                }
                 self.write_file(name, "public", server.public())?;
-                self.write_file(name, "json", &serde_json::to_vec(server.manifest())?)?;
+                self.write_file(name, "json", &serde_json::to_vec(server.session())?)?;
                 self.stored.insert(name, server.id());
-                let source = self.payment_source(name)?;
+                let source = self.directory_source(name)?;
                 self.tables
-                    .insert(&source, Loaded::Payments(server.clone()));
-                (source, Some(server))
+                    .insert(&source, Loaded::Directory(server), reserved);
+                source
             }
         };
-        let witnesses = self.companion(&payments, server.as_ref(), witnesses)?;
+        let choice = self.choice_source(name, &manifest)?;
+        let companion = self.companion(&manifest, entries, tables.companion)?;
         Ok(Segment {
-            payments,
-            witnesses,
+            directory,
+            companion,
+            choice,
         })
     }
 
-    /// `segment`'s payment table with a rebuilt companion `witnesses`, already checked.
-    /// Blocking.
-    pub fn rewitness(
+    /// `kept`'s directory with a rebuilt and checked companion `table`, whose
+    /// directory has `entries`. Blocking.
+    pub fn rebuilt(
         &mut self,
-        payments: &Arc<Source>,
-        witnesses: witness::Table,
+        kept: &Segment,
+        entries: &[Entry],
+        table: CompanionTable,
     ) -> Result<Segment, Error> {
-        let witnesses = self.companion(payments, None, witnesses)?;
-        Ok(Segment {
-            payments: payments.clone(),
-            witnesses,
-        })
-    }
-
-    /// The stored rows of payment table `payments`, validated against its manifest.
-    /// Blocking.
-    pub fn snapshot(&self, payments: &Source) -> Result<Snapshot, Error> {
-        let directory = &payments
-            .payment_manifest()
+        let directory = &kept
+            .directory
+            .directory_session()
             .ok_or(Error::Malformed)?
-            .directory;
-        let name = Name {
-            kind: Kind::Payments,
-            revision: directory.revision()?,
-        };
-        let snapshot = Snapshot {
-            manifest: directory.clone(),
-            data: read(&self.path(name, "rows"), rows_bytes(directory.rows))?,
-        };
-        snapshot.validate()?;
-        Ok(snapshot)
+            .manifest;
+        Ok(Segment {
+            companion: self.companion(directory, entries, table)?,
+            ..kept.clone()
+        })
     }
 
     /// The source of sealed shard filter `filter`, written here once by digest. Its
     /// bytes are read back only when a request serves them. Blocking.
-    pub fn filter(&mut self, filter: &ShardFilter) -> Result<Arc<FilterSource>, Error> {
+    pub fn filter(&mut self, filter: &ShardFilter) -> Result<Arc<ObjectSource>, Error> {
         let name = Name {
             kind: Kind::Filter,
             revision: filter.digest(),
@@ -260,7 +262,7 @@ impl Durable {
             self.stored.insert(name, name.revision);
         }
         let (path, len) = (self.path(name, "filter"), filter.bytes().len());
-        Ok(Arc::new(FilterSource::stored(
+        Ok(Arc::new(ObjectSource::filter(
             filter.digest(),
             len as u32,
             filter.receivers(),
@@ -286,7 +288,7 @@ impl Durable {
     /// The source `source` builds over stored entry `name`, whose rows or filter must be
     /// exactly `data`, the copy just rebuilt from the index. Every reuse of a stored copy
     /// goes through this check. If the stored data differs or is missing, or the files do
-    /// not form a valid source, such as a public setup that is not the one its manifest
+    /// not form a valid source, such as a public setup that is not the one its session
     /// binds, the entry's files are removed and `None` returned, so the caller writes
     /// and prepares it again instead of serving it.
     fn reuse<T>(
@@ -295,7 +297,7 @@ impl Durable {
         data: &[u8],
         source: impl FnOnce(&Self) -> Result<T, Error>,
     ) -> Result<Option<T>, Error> {
-        let built = match self.holds(name, data) {
+        let built = match self.holds(&self.dir.join(name.data_file()), data) {
             true => source(self),
             false => Err(Error::Transport(format!(
                 "{} differs from the rebuilt data",
@@ -313,11 +315,10 @@ impl Durable {
         }
     }
 
-    /// Whether the stored rows or filter of `name` are exactly `data`, compared in bounded
-    /// chunks without reading the file into memory.
-    fn holds(&self, name: Name, data: &[u8]) -> bool {
+    /// Whether the file at `path` holds exactly `data`, compared in bounded chunks
+    /// without reading the file into memory.
+    fn holds(&self, path: &Path, data: &[u8]) -> bool {
         use std::io::Read;
-        let path = self.dir.join(name.data_file());
         let Ok(mut file) = std::fs::File::open(path) else {
             return false;
         };
@@ -347,89 +348,118 @@ impl Durable {
         Ok(())
     }
 
-    /// The source of `witnesses` beside the payment table `payments`, whose prepared
-    /// server is `server` when the caller has it.
+    /// The source of checked companion `table`, serving `directory` with `entries`:
+    /// its stored copy, or prepared, written and cached.
     fn companion(
         &mut self,
-        payments: &Arc<Source>,
-        server: Option<&Server>,
-        witnesses: witness::Table,
+        directory: &Directory,
+        entries: &[Entry],
+        table: CompanionTable,
     ) -> Result<Arc<Source>, Error> {
         let name = Name {
-            kind: Kind::Witnesses,
-            revision: witnesses.manifest.revision()?,
+            kind: Kind::Companion,
+            revision: table.manifest.revision()?,
+        };
+        let directory_name = Name {
+            kind: Kind::Directory,
+            revision: directory.revision()?,
         };
         if self.stored.contains_key(&name) {
-            let reused = self.reuse(name, &witnesses.data, |d| {
-                d.witness_source(name, payments.clone())
+            let reused = self.reuse(name, &table.data, |d| {
+                d.companion_source(name, directory_name)
             })?;
             if let Some(source) = reused {
                 return Ok(source);
             }
         }
-        let resident;
-        let server = match server {
-            Some(server) => server,
-            None => {
-                resident = self.tables.get(payments)?;
-                resident.payments().ok_or(Error::Malformed)?
-            }
-        };
-        self.write_file(name, "rows", &witnesses.data)?;
-        let prepared = prepare_witnesses(witnesses, server)?;
-        self.prepared += 1;
+        self.write_file(name, "rows", &table.data)?;
+        let reserved = self.reserve(TableKind::Companion, table.manifest.rows)?;
+        let prepared = prepare_companion(table, directory, entries)?;
+        #[cfg(test)]
+        {
+            self.prepared += 1;
+        }
         self.write_file(name, "public", prepared.public())?;
-        self.write_file(name, "json", &serde_json::to_vec(prepared.manifest())?)?;
+        self.write_file(name, "json", &serde_json::to_vec(prepared.session())?)?;
         self.stored.insert(name, prepared.id());
-        let source = self.witness_source(name, payments.clone())?;
-        self.tables.insert(&source, Loaded::Witnesses(prepared));
+        let source = self.companion_source(name, directory_name)?;
+        self.tables
+            .insert(&source, Loaded::Companion(prepared), reserved);
         Ok(source)
     }
 
-    /// A stored payment table's source, which reloads it from its files.
-    /// A reload prepares the rows under the manifest read here, never a later one, and
-    /// reads exactly the rows that manifest's geometry holds, so a replaced file cannot
-    /// change the geometry or grow the allocation.
-    fn payment_source(&self, name: Name) -> Result<Arc<Source>, Error> {
-        let manifest: Manifest = serde_json::from_slice(&self.manifest(name)?)?;
-        if manifest.directory.revision()? != name.revision {
+    /// A stored directory's session, read within the size bound and bound to `name`.
+    fn session<M: Table + serde::de::DeserializeOwned>(
+        &self,
+        name: Name,
+    ) -> Result<Session<M>, Error> {
+        let session: Session<M> = serde_json::from_slice(&self.manifest(name)?)?;
+        if session.manifest.revision()? != name.revision {
             return Err(Error::Malformed);
         }
-        let rows = manifest.directory.rows;
-        let public = read(
-            &self.path(name, "public"),
-            zakura_pir_publisher::receiver::native::public_bytes(rows)?,
-        )?;
-        let (directory, path) = (manifest.directory.clone(), self.path(name, "rows"));
-        let source = Source::payments(manifest, public, move || {
-            prepare_payments(Snapshot {
-                manifest: directory.clone(),
-                data: read(&path, rows_bytes(rows))?,
+        Ok(session)
+    }
+
+    /// A loader of stored directory `name`'s whole table under `manifest`, reading
+    /// exactly the rows and choice length the manifest fixes.
+    fn directory_table(
+        &self,
+        name: Name,
+        manifest: Directory,
+    ) -> impl Fn() -> Result<DirectoryTable, Error> + Clone {
+        let (rows, choice) = (self.path(name, "rows"), self.path(name, "choice"));
+        move || {
+            Ok(DirectoryTable {
+                data: read(&rows, DIRECTORY_ROWS as usize * ROW_BYTES)?,
+                choice: read(&choice, manifest.choice.bytes as usize)?,
+                manifest: manifest.clone(),
             })
+        }
+    }
+
+    /// A stored directory's source, which reloads it from its files under the session
+    /// read here, never a later one.
+    fn directory_source(&self, name: Name) -> Result<Arc<Source>, Error> {
+        let session = self.session::<Directory>(name)?;
+        let public = read(&self.path(name, "public"), public_bytes())?;
+        let table = self.directory_table(name, session.manifest.clone());
+        let source = Source::directory(session, public, move || prepare_directory(table()?))?;
+        Ok(Arc::new(source))
+    }
+
+    /// The choice object stored beside directory `name` with `manifest`.
+    fn choice_source(&self, name: Name, manifest: &Directory) -> Result<Arc<ObjectSource>, Error> {
+        let (path, len) = (self.path(name, "choice"), manifest.choice.bytes as usize);
+        Ok(Arc::new(ObjectSource::choice(
+            &manifest.choice,
+            move || read(&path, len),
+        )))
+    }
+
+    /// A stored companion's source, which reloads it from its files and checks it
+    /// against stored directory `directory`, whose files it reads too.
+    fn companion_source(&self, name: Name, directory: Name) -> Result<Arc<Source>, Error> {
+        let session = self.session::<Companion>(name)?;
+        let public = read(&self.path(name, "public"), public_bytes())?;
+        let directory_manifest = self.session::<Directory>(directory)?.manifest;
+        let directory = self.directory_table(directory, directory_manifest);
+        let (manifest, path) = (session.manifest.clone(), self.path(name, "rows"));
+        let source = Source::companion(session, public, move || {
+            let directory = directory()?;
+            let entries = directory.validate()?;
+            let table = CompanionTable {
+                data: read(&path, manifest.rows as usize * ROW_BYTES)?,
+                manifest: manifest.clone(),
+            };
+            prepare_companion(table, &directory.manifest, &entries)
         })?;
         Ok(Arc::new(source))
     }
 
-    /// A stored companion's source beside `payments`, which reloads it from its files as
-    /// [`Self::payment_source`] does.
-    fn witness_source(&self, name: Name, payments: Arc<Source>) -> Result<Arc<Source>, Error> {
-        let manifest: WitnessManifest = serde_json::from_slice(&self.manifest(name)?)?;
-        if manifest.table.revision()? != name.revision {
-            return Err(Error::Malformed);
-        }
-        let rows = manifest.table.rows;
-        let public = read(
-            &self.path(name, "public"),
-            zakura_pir_publisher::receiver::native::public_bytes(rows)?,
-        )?;
-        let (table, path) = (manifest.table.clone(), self.path(name, "rows"));
-        let source = Source::witnesses(manifest, public, payments, move || {
-            Ok(witness::Table {
-                manifest: table.clone(),
-                data: read(&path, rows_bytes(rows))?,
-            })
-        })?;
-        Ok(Arc::new(source))
+    /// The cache's charge for preparing a table here, as a query's cold load is charged;
+    /// see `Tables::reserve_peak`. It waits up to [`PREPARE_WAIT`] for tables in use.
+    fn reserve(&self, kind: TableKind, rows: u32) -> Result<Reservation, Error> {
+        Ok(self.tables.reserve_peak(kind, rows, PREPARE_WAIT)?)
     }
 
     /// Durably writes one of a table's files.
@@ -451,15 +481,23 @@ impl Durable {
         self.dir.join(format!("{}.{extension}", name.stem()))
     }
 
-    /// A table's session manifest file, within the manifest size bound.
+    /// A table's session file, within the manifest size bound.
     fn manifest(&self, name: Name) -> Result<Vec<u8>, Error> {
         let path = self.path(name, "json");
-        pir_publication::records::read_bounded(
-            &path,
-            zakura_pir_publisher::receiver::session::MAX_MANIFEST_BYTES as u64,
-        )
-        .map_err(|e| Error::Transport(format!("table file {}: {e}", path.display())))
+        pir_publication::records::read_bounded(&path, MAX_MANIFEST_BYTES as u64)
+            .map_err(|e| Error::Transport(format!("table file {}: {e}", path.display())))
     }
+}
+
+/// The ID of the session in `bytes`, if it parses and its manifest has `revision`.
+fn session_id<M: Table + serde::de::DeserializeOwned>(
+    bytes: &[u8],
+    revision: &Hash,
+) -> Option<Hash> {
+    let session: Session<M> = serde_json::from_slice(bytes).ok()?;
+    (session.manifest.revision().ok()? == *revision)
+        .then(|| session.id().ok())
+        .flatten()
 }
 
 /// A file that must hold exactly `len` bytes, refused without reading more, a failure as
@@ -469,31 +507,60 @@ fn read(path: &Path, len: usize) -> Result<Vec<u8>, Error> {
         .map_err(|e| Error::Transport(format!("table file {}: {e}", path.display())))
 }
 
-/// The bytes of a `rows`-row table's rows.
-fn rows_bytes(rows: u32) -> usize {
-    rows as usize * zakura_pir_publisher::receiver::snapshot::ROW_BYTES
-}
-
-/// Prepares a payment table, reusing identical fixtures in tests.
-fn prepare_payments(snapshot: Snapshot) -> Result<Server, Error> {
+/// Prepares a directory, reusing identical fixtures in tests.
+fn prepare_directory(table: DirectoryTable) -> Result<Server<Directory>, Error> {
     #[cfg(test)]
     {
-        crate::prepared::payments(snapshot)
+        Ok(crate::prepared::directory(table)?.0)
     }
     #[cfg(not(test))]
     {
-        Server::new(snapshot)
+        Ok(Server::directory(table)?.0)
     }
 }
 
-/// Prepares a companion beside `payments`, reusing identical fixtures in tests.
-fn prepare_witnesses(table: witness::Table, payments: &Server) -> Result<WitnessServer, Error> {
+/// Prepares a companion against `directory`'s `entries`, reusing identical fixtures in
+/// tests.
+fn prepare_companion(
+    table: CompanionTable,
+    directory: &Directory,
+    entries: &[Entry],
+) -> Result<Server<Companion>, Error> {
     #[cfg(test)]
     {
-        crate::prepared::companion(table, payments)
+        crate::prepared::companion(table, directory, entries)
     }
     #[cfg(not(test))]
     {
-        WitnessServer::new(table, payments)
+        Server::companion(table, directory, entries)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A data directory an earlier release wrote keeps none of its tables: payment and
+    /// witness files are not ours and are removed on open, while a filter written by
+    /// digest stays.
+    #[test]
+    fn earlier_tables_are_dropped_on_open() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join(TABLES_DIR);
+        std::fs::create_dir_all(&dir).unwrap();
+        let hex = "ab".repeat(32);
+        let earlier = [
+            format!("p-{hex}.rows"),
+            format!("p-{hex}.json"),
+            format!("w-{hex}.public"),
+        ];
+        for name in &earlier {
+            std::fs::write(dir.join(name), b"earlier").unwrap();
+        }
+        std::fs::write(dir.join(format!("f-{hex}.filter")), b"filter").unwrap();
+        let durable = Durable::open(root.path(), Arc::new(Tables::new(1 << 30))).unwrap();
+        assert!(earlier.iter().all(|name| !dir.join(name).exists()));
+        assert!(dir.join(format!("f-{hex}.filter")).exists());
+        assert_eq!(durable.stored.len(), 1);
     }
 }

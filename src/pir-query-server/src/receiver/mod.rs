@@ -64,7 +64,7 @@ impl Config {
             .ok_or("Receiver table budget overflow")?;
         if budget < receiver_pir_server::tables::MIN_BUDGET {
             return Err(
-                "Receiver table budget cannot load a maximum payment and witness pair".into(),
+                "Receiver table budget cannot prepare the largest directory and companion".into(),
             );
         }
         Ok(())

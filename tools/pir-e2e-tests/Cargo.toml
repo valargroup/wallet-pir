@@ -19,7 +19,7 @@ qualification-tests = []
 # The copied query-host entrypoint the process tests start.
 # The entrypoint reports its contract identity through pir-sync-manager.
 query-host = ["dep:pir-query-server", "dep:pir-sync-manager"]
-receiver = ["dep:receiver-indexer", "pir-publisher/receiver", "pir-query-server/receiver", "zakura-server-chain/receiver", "zakura-server-chain/testing-node", "zakura-pir-client/receiver", "zakura-pir-publisher/receiver-crypto"]
+receiver = ["dep:receiver-indexer", "dep:receiver-pir-server", "pir-publisher/receiver", "pir-query-server/receiver", "zakura-server-chain/receiver", "zakura-server-chain/testing-node", "zakura-pir-client/receiver", "zakura-pir-publisher/receiver-crypto"]
 receiver-tests = ["reqwest/stream", "receiver", "publisher-host", "query-host", "dep:zakura-server-chain", "dep:zakura-pir-client", "dep:zakura-pir-publisher"]
 publisher-host = ["dep:pir-publisher"]
 transparent-history = []
@@ -105,6 +105,7 @@ wallet-recovery-tests = [
 
 [dependencies]
 receiver-indexer = { path = "../../src/receiver/receiver-indexer", optional = true }
+receiver-pir-server = { path = "../../src/receiver/receiver-pir-server", optional = true }
 pir-service-discovery = { path = "../../src/shared/pir-service-discovery" }
 tempfile = { version = "3", optional = true }
 pir-publisher = { path = "../../src/pir-publisher", optional = true }
@@ -117,9 +118,9 @@ pir-query-server = { path = "../../src/pir-query-server", optional = true }
 pir-sync-manager = { path = "../../src/shared/pir-sync-manager", optional = true }
 transparent-shared = { path = "../../src/transparent/transparent-shared", optional = true }
 zakura-server-chain = { path = "../../src/shared/pir-chain", default-features = false, optional = true }
-zakura-pir-client = { version = "=0.0.1-rc2", default-features = false, optional = true }
-zakura-pir-publisher = { version = "=0.0.1-rc2", default-features = false, optional = true }
-zakura-pir-protocol = { version = "=0.0.1-rc2", default-features = false, optional = true }
+zakura-pir-client = { version = "=0.0.1-rc5", default-features = false, optional = true }
+zakura-pir-publisher = { version = "=0.0.1-rc5", default-features = false, optional = true }
+zakura-pir-protocol = { version = "=0.0.1-rc5", default-features = false, optional = true }
 pir-pipeline = { path = "../../src/shared/pir-pipeline" }
 hex = { version = "0.4", optional = true }
 sha2 = { version = "0.10", optional = true }
@@ -163,7 +164,7 @@ test = false
 # Address fixtures belong to the wallet consumer tests, never serving libraries.
 transparent = { package = "zakura-transparent", version = "=4.0.0", default-features = false }
 pir-sync-manager = { path = "../../src/shared/pir-sync-manager" }
-zakura-pir-query-server = { version = "=0.0.1-rc2", default-features = false, features = ["transparent", "receiver"] }
+zakura-pir-query-server = { version = "=0.0.1-rc5", default-features = false, features = ["transparent", "receiver"] }
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
 sha2 = "0.10"

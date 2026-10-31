@@ -8,15 +8,11 @@
 //! commitments. No publication reads the full commitment history.
 use crate::verify::directory_error;
 use receiver_store::{Checkpoint, Error, Store, SHARD_LEAVES};
+use zakura_pir_publisher::receiver::Hash;
 use zakura_pir_publisher::receiver::{
     crypto::witness::combine,
     wire::{decode_payload, is_final, LOWER_LEVELS, PAYLOAD_BYTES},
     witness::ShardPaths,
-};
-use zakura_pir_publisher::receiver::{
-    snapshot::{Manifest, Snapshot},
-    witness::{self, TablePublisherExt},
-    Hash,
 };
 
 /// The filling shard's paths and the stored block they extend through.
@@ -154,55 +150,6 @@ fn shard_payloads(
         .into_iter()
         .map(|position| Ok((position, paths.payload(position).map_err(directory_error)?)))
         .collect()
-}
-
-/// The companion table for `snapshot`, whose records carry ordinals ranked by position:
-/// one payload per record in ordinal order, built at the snapshot's own end. See
-/// [`table_at`].
-pub fn table(
-    snapshot: &Snapshot,
-    payloads: &[[u8; PAYLOAD_BYTES]],
-) -> Result<witness::Table, Error> {
-    let m = &snapshot.manifest;
-    let end = Checkpoint {
-        height: m.end_height,
-        hash: m.end_hash,
-        position: m.end_position,
-    };
-    table_at(m, payloads, &end)
-}
-
-/// The companion table for the payment table `m`: one payload per record in ordinal
-/// order, built at `context`, the payment table's end or a later block of the same
-/// chain. Rows are the fewest supported that hold them; more payloads than the largest
-/// table holds is [`Error::Capacity`].
-pub fn table_at(
-    m: &Manifest,
-    payloads: &[[u8; PAYLOAD_BYTES]],
-    context: &Checkpoint,
-) -> Result<witness::Table, Error> {
-    let rows = u32::try_from(payloads.len().div_ceil(witness::PAYLOADS))
-        .map_err(|_| Error::Capacity)?
-        .next_power_of_two()
-        .max(zakura_pir_publisher::receiver::session::MIN_ROWS);
-    if rows > zakura_pir_publisher::receiver::session::MAX_ROWS {
-        return Err(Error::Capacity);
-    }
-    Ok(witness::Table::build(
-        witness::Manifest {
-            profile: witness::PROFILE.into(),
-            genesis: m.genesis,
-            history_revision: m.history_revision,
-            payments: m.revision()?,
-            payloads: 0,
-            rows,
-            tree_height: context.height,
-            tree_hash: context.hash,
-            tree_size: context.position,
-            data_sha256: [0; 32],
-        },
-        payloads,
-    )?)
 }
 
 /// Folds `position`'s final lower path from its commitment `cmx` to its Ironwood shard's
@@ -413,19 +360,6 @@ mod tests {
         // A restart rebuilds the filling shard from its own commitments.
         let restarted = Witnesses::default().payloads(&mut store, &tip, &all);
         assert_eq!(restarted.unwrap(), built);
-        // Swapping two final payloads between ordinals is refused before serving,
-        // on this same completed shard.
-        let snapshot = store.snapshot(8, 0).unwrap();
-        let mut payloads = built;
-        let table = super::table(&snapshot, &payloads).unwrap();
-        let roots = crate::verify::check_publication(&snapshot, &table).unwrap();
-        assert_eq!(roots.get(&0), shard0.root().as_ref());
-        payloads.swap(0, 1);
-        let swapped = super::table(&snapshot, &payloads).unwrap();
-        assert!(matches!(
-            crate::verify::check_publication(&snapshot, &swapped),
-            Err(Error::Coverage)
-        ));
     }
 
     /// A rewind past the completing block drops the completed shard, and the cached paths
@@ -469,9 +403,7 @@ mod tests {
     }
 
     /// A correction that adds a payment to a completed shard rebuilds only that shard,
-    /// under its recorded root, to the oracle's payloads. A publication's final payloads
-    /// then fold to that root, and swapping two of them between ordinals is refused
-    /// before serving. Fast checks that refusal on the incremental build.
+    /// under its recorded root, to the oracle's payloads.
     #[cfg(feature = "qualification-tests")]
     #[test]
     fn a_correction_rebuilds_a_completed_shard_under_its_root() {
@@ -500,17 +432,5 @@ mod tests {
         assert_eq!(store.completed_shard(0).unwrap().unwrap().root, root);
         assert_eq!(shard0.root(), Some(root));
         assert!(store.payloads(&[10]).unwrap()[0].is_some());
-
-        let snapshot = store.snapshot(8, 1).unwrap();
-        let mut payloads = witnesses.payloads(&mut store, &tip, &fixed).unwrap();
-        let table = super::table(&snapshot, &payloads).unwrap();
-        let roots = crate::verify::check_publication(&snapshot, &table).unwrap();
-        assert_eq!(roots.get(&0), Some(&root));
-        payloads.swap(0, 1);
-        let swapped = super::table(&snapshot, &payloads).unwrap();
-        assert!(matches!(
-            crate::verify::check_publication(&snapshot, &swapped),
-            Err(Error::Coverage)
-        ));
     }
 }

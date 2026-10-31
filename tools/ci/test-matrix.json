@@ -160,8 +160,7 @@
       "native:pir-e2e-tests:lib:pir_e2e_tests",
       "native:pir-e2e-tests:doc:pir_e2e_tests",
       "native:pir-query-server:test:receiver_ci_smoke",
-      "native:pir-query-server:test:receiver_http",
-      "native:pir-query-server:test:receiver_library_client"
+      "native:pir-query-server:test:receiver_http"
     ]
   },
   "enhance-http": {
@@ -213,7 +212,6 @@
     "targets": [
       "receiver:receiver-indexer:bin:receiver-probe",
       "receiver:receiver-indexer:doc:receiver_indexer",
-      "receiver:receiver-indexer:example:rehearsal_fixture",
       "receiver:receiver-indexer:lib:receiver_indexer",
       "receiver:receiver-store:doc:receiver_store",
       "receiver:receiver-store:lib:receiver_store",
@@ -224,7 +222,9 @@
     "family": "receiver",
     "targets": [
       "receiver:receiver-pir-server:doc:receiver_pir_server",
-      "receiver:receiver-pir-server:lib:receiver_pir_server"
+      "receiver:receiver-pir-server:example:measure",
+      "receiver:receiver-pir-server:lib:receiver_pir_server",
+      "receiver:receiver-pir-server:test:budgets"
     ]
   }
 }

@@ -140,6 +140,7 @@ pub fn receiver() -> Mount {
                 "/inventory",
                 "/inventory/*operation",
                 "/shard-filters/*operation",
+                "/choice/*operation",
                 "/public/*operation",
                 "/query",
                 "/block-filters/*operation",

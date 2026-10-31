@@ -1,109 +1,115 @@
 //! Immutable prepared inventories and atomic, reorg-fenced serving state.
-use crate::tables::{FilterSource, Loaded, Source, Tables};
+use crate::tables::{Loaded, ObjectSource, Source, Tables};
 use axum::http::StatusCode;
 use std::{
     collections::HashMap,
     sync::{Arc, RwLock, Weak},
     time::{Duration, Instant},
 };
-use zakura_pir_query_server::receiver::inventory::{FilterRef, Head, Inventory, Shard};
-use zakura_pir_query_server::receiver::server::{Server, WitnessServer};
+use zakura_pir_query_server::receiver::inventory::FilterRef;
+use zakura_pir_query_server::receiver::inventory::{Head, Inventory, Shard};
+use zakura_pir_query_server::receiver::session::Error;
 use zakura_pir_query_server::receiver::Hash;
+use zakura_pir_query_server::receiver::{self, server::Server, Companion, Directory};
 
-/// One segment for serving: the sources of its payment session and of the companion
-/// witness session bound to it.
+/// One segment for serving: its directory and companion sources and its choice object.
 #[derive(Clone)]
 pub struct Segment {
-    pub payments: Arc<Source>,
-    pub witnesses: Arc<Source>,
+    pub directory: Arc<Source>,
+    pub companion: Arc<Source>,
+    pub choice: Arc<ObjectSource>,
 }
 
 impl Segment {
     /// A segment over prepared servers kept in memory, for tables with no durable copy.
-    pub fn resident(server: Server, witnesses: WitnessServer) -> Self {
+    pub fn resident(
+        directory: Server<Directory>,
+        choice: &[u8],
+        companion: Server<Companion>,
+    ) -> Self {
+        let reference = directory.session().manifest.choice;
         Self {
-            payments: Arc::new(Source::memory(Loaded::Payments(server))),
-            witnesses: Arc::new(Source::memory(Loaded::Witnesses(witnesses))),
+            directory: Arc::new(Source::memory(Loaded::Directory(directory))),
+            companion: Arc::new(Source::memory(Loaded::Companion(companion))),
+            choice: Arc::new(ObjectSource::memory_choice(&reference, choice)),
         }
     }
 
-    /// The payment and witness session manifests an inventory lists.
-    pub fn publication(&self) -> zakura_pir_query_server::receiver::session::Publication {
-        zakura_pir_query_server::receiver::session::Publication {
-            payments: self
-                .payments
-                .payment_manifest()
-                .expect("a payment source")
+    /// The segment publication an inventory lists.
+    pub fn publication(&self) -> receiver::Publication {
+        receiver::Publication {
+            directory: self
+                .directory
+                .directory_session()
+                .expect("a directory")
                 .clone(),
-            witnesses: self
-                .witnesses
-                .witness_manifest()
-                .expect("a witness source")
+            companion: self
+                .companion
+                .companion_session()
+                .expect("a companion")
                 .clone(),
         }
     }
 }
 
 /// One immutable inventory prepared for serving: its head and chunks, every segment's
-/// sessions, every sealed shard's filter, and the owner's report on the index it was
-/// built from. Sessions and filters shared with another inventory share their sources,
-/// so their prepared rows and filter bytes are cached once.
+/// sessions and choice object, every sealed shard's filter, and the owner's report on
+/// the index it was built from. Sessions and objects shared with another inventory
+/// share their sources, so their prepared rows and bytes are cached once.
 pub struct Publication {
     inventory: Inventory,
     authorized: Arc<std::sync::atomic::AtomicBool>,
     head: Vec<u8>,
     chunks: Vec<Vec<u8>>,
     segments: Vec<Segment>,
-    /// Session ID to segment index and whether it is the witness session.
+    /// Session ID to segment index and whether it is the companion session.
     sessions: HashMap<Hash, (usize, bool)>,
-    filters: HashMap<Hash, Arc<FilterSource>>,
+    filters: HashMap<Hash, Arc<ObjectSource>>,
+    choices: HashMap<Hash, Arc<ObjectSource>>,
     pub(crate) report: Option<serde_json::Value>,
 }
 
 impl Publication {
     /// Prepares `inventory` for serving with `segments`, one per segment in inventory
     /// order, and the `filters` its sealed shards name. The caller has already verified
-    /// every record and witness payload cryptographically and accepted the inventory's
-    /// chain anchor; this checks only that the sessions and filters are exactly those
-    /// the inventory lists, and the chunk bound.
+    /// every record and payload cryptographically and accepted the inventory's chain
+    /// anchor; this checks only that the sessions, choice objects and filters are
+    /// exactly those the inventory lists, and the chunk bound.
     pub fn verified(
         inventory: Inventory,
         segments: Vec<Segment>,
-        filters: Vec<Arc<FilterSource>>,
-    ) -> Result<Self, zakura_pir_query_server::receiver::session::Error> {
-        use zakura_pir_query_server::receiver::session::Error::Malformed;
+        filters: Vec<Arc<ObjectSource>>,
+    ) -> Result<Self, Error> {
         let listed = inventory.shards().iter().flat_map(|s| &s.segments);
         if listed.clone().count() != segments.len() {
-            return Err(Malformed);
+            return Err(Error::Malformed);
         }
-        let mut sessions = HashMap::new();
+        let (mut sessions, mut choices) = (HashMap::new(), HashMap::new());
         for (index, (listed, segment)) in listed.zip(&segments).enumerate() {
-            if listed.payments.id()? != segment.payments.id()
-                || listed.witnesses.id()? != segment.witnesses.id()
-                || segment.payments.payment_manifest().is_none()
-                || segment.witnesses.witness_manifest().is_none()
+            let choice = &listed.directory.manifest.choice;
+            if listed.directory.id()? != segment.directory.id()
+                || listed.companion.id()? != segment.companion.id()
+                || segment.choice.digest() != choice.digest
+                || segment.choice.bytes() != choice.bytes
             {
-                return Err(Malformed);
+                return Err(Error::Malformed);
             }
-            sessions.insert(segment.payments.id(), (index, false));
-            sessions.insert(segment.witnesses.id(), (index, true));
+            sessions.insert(segment.directory.id(), (index, false));
+            sessions.insert(segment.companion.id(), (index, true));
+            choices.insert(choice.digest, segment.choice.clone());
         }
-        let mut served = HashMap::new();
-        for filter in filters {
-            served.insert(filter.digest(), filter);
-        }
+        let mut served: HashMap<_, _> = filters.into_iter().map(|f| (f.digest(), f)).collect();
         let mut named = HashMap::new();
         for reference in inventory.shards().iter().filter_map(|s| s.filter.as_ref()) {
-            let filter = served.remove(&reference.digest).ok_or(Malformed)?;
-            if filter.bytes() != reference.bytes
-                || filter.receivers() != u64::from(reference.receivers)
+            let filter = served.remove(&reference.digest).ok_or(Error::Malformed)?;
+            if filter.bytes() != reference.bytes || filter.count() != u64::from(reference.receivers)
             {
-                return Err(Malformed);
+                return Err(Error::Malformed);
             }
             named.insert(reference.digest, filter);
         }
         if !served.is_empty() {
-            return Err(Malformed);
+            return Err(Error::Malformed);
         }
         let chunks = inventory
             .chunks()?
@@ -117,6 +123,7 @@ impl Publication {
             segments,
             sessions,
             filters: named,
+            choices,
             report: None,
             authorized: Arc::new(std::sync::atomic::AtomicBool::new(true)),
         })
@@ -128,30 +135,31 @@ impl Publication {
     pub fn assemble(
         genesis: Hash,
         history_revision: u64,
-        shards: Vec<(bool, Vec<Segment>, Option<Arc<FilterSource>>)>,
-    ) -> Result<Self, zakura_pir_query_server::receiver::session::Error> {
+        shards: Vec<(bool, Vec<Segment>, Option<Arc<ObjectSource>>)>,
+    ) -> Result<Self, Error> {
         let (mut listed, mut segments, mut filters) = (Vec::new(), Vec::new(), Vec::new());
         for (sealed, prepared, filter) in shards {
-            let m = prepared
+            let c = prepared
                 .first()
-                .and_then(|s| s.payments.payment_manifest())
-                .ok_or(zakura_pir_query_server::receiver::session::Error::Malformed)?
-                .directory
+                .and_then(|s| s.directory.directory_session())
+                .ok_or(Error::Malformed)?
+                .manifest
+                .coverage
                 .clone();
             listed.push(Shard {
                 index: 0,
                 sealed,
-                start_height: m.start_height,
-                start_parent: m.start_parent,
-                start_position: m.start_position,
-                end_height: m.end_height,
-                end_hash: m.end_hash,
-                end_position: m.end_position,
+                start_height: c.start_height,
+                start_parent: c.start_parent,
+                start_position: c.start_position,
+                end_height: c.end_height,
+                end_hash: c.end_hash,
+                end_position: c.end_position,
                 segments: prepared.iter().map(Segment::publication).collect(),
                 filter: filter.as_ref().map(|f| FilterRef {
                     digest: f.digest(),
                     bytes: f.bytes(),
-                    receivers: f.receivers() as u32,
+                    receivers: f.count() as u32,
                 }),
             });
             segments.extend(prepared);
@@ -205,28 +213,23 @@ impl Publication {
     }
 
     /// The source of the shard filter with digest `digest`, if a shard names it.
-    pub fn filter(&self, digest: &Hash) -> Option<&Arc<FilterSource>> {
+    pub fn filter(&self, digest: &Hash) -> Option<&Arc<ObjectSource>> {
         self.filters.get(digest)
     }
 
-    /// Bytes its tables and filters keep resident outside the table budget: none unless a
-    /// source holds its state in memory (see [`Source::memory`]).
-    pub fn held_bytes(&self) -> usize {
-        let tables = self
-            .segments
-            .iter()
-            .map(|s| s.payments.held_bytes() + s.witnesses.held_bytes());
-        tables.sum::<usize>() + self.filters.values().map(|f| f.held_bytes()).sum::<usize>()
+    /// The source of the choice object with digest `digest`, if a segment names it.
+    pub fn choice(&self, digest: &Hash) -> Option<&Arc<ObjectSource>> {
+        self.choices.get(digest)
     }
 
     /// The source of the table whose session ID is `id`, if one of this inventory's
     /// segments has it.
     pub fn table(&self, id: &Hash) -> Option<&Arc<Source>> {
-        let (index, witness) = *self.sessions.get(id)?;
+        let (index, companion) = *self.sessions.get(id)?;
         let segment = &self.segments[index];
-        Some(match witness {
-            false => &segment.payments,
-            true => &segment.witnesses,
+        Some(match companion {
+            false => &segment.directory,
+            true => &segment.companion,
         })
     }
 
@@ -253,14 +256,14 @@ impl Publication {
     pub fn contexts(&self) -> Vec<(u32, Hash)> {
         let mut contexts = Vec::new();
         for segment in &self.segments {
-            let table = &segment
-                .witnesses
-                .witness_manifest()
-                .expect("a witness source")
-                .table;
-            let context = (table.tree_height, table.tree_hash);
-            if !contexts.contains(&context) {
-                contexts.push(context);
+            let tree = segment
+                .companion
+                .companion_session()
+                .expect("a companion")
+                .manifest
+                .tree;
+            if !contexts.contains(&(tree.height, tree.hash)) {
+                contexts.push((tree.height, tree.hash));
             }
         }
         contexts
@@ -275,6 +278,7 @@ impl Publication {
             segments: self.segments.clone(),
             sessions: self.sessions.clone(),
             filters: self.filters.clone(),
+            choices: self.choices.clone(),
             report: Some(report),
             authorized: self.authorized.clone(),
         }
@@ -290,6 +294,12 @@ pub const DEFAULT_TABLE_BUDGET: usize = 4 << 30;
 /// Most displaced inventories retained at once. A publication waits while this many are
 /// still within their retention, so a captured inventory is never dropped early.
 pub const MAX_RETAINED: usize = 16;
+
+/// The directory and block hints [`Publications::install_view`] installed.
+pub type Installed = (
+    Option<Arc<Publication>>,
+    Option<Arc<crate::blocks::BlockWindow>>,
+);
 
 struct State {
     withdrawal: Option<Arc<dyn Fn() + Send + Sync>>,
@@ -349,6 +359,13 @@ impl State {
         self.release(ended.into_iter().map(|(p, _)| p));
     }
 
+    /// Stops serving the block hints, refusing responses still being built from them.
+    fn drop_filters(&mut self) {
+        if let Some(filters) = self.filters.take() {
+            filters.revoke();
+        }
+    }
+
     /// See [`Publications::revoke`].
     fn revoke(&mut self) {
         if let Some(withdrawal) = &self.withdrawal {
@@ -362,7 +379,7 @@ impl State {
                 .into_iter()
                 .chain(retained.into_iter().map(|(p, _)| p)),
         );
-        self.filters = None;
+        self.drop_filters();
     }
 
     /// Records `publications`, which no longer accept requests, in case a request still
@@ -444,7 +461,13 @@ impl Publications {
             .iter()
             .chain(retained)
             .chain(&held)
-            .flat_map(|p| p.sessions.keys().chain(p.filters.keys()).copied())
+            .flat_map(|p| {
+                p.sessions
+                    .keys()
+                    .chain(p.filters.keys())
+                    .chain(p.choices.keys())
+                    .copied()
+            })
             .collect()
     }
 
@@ -491,14 +514,15 @@ impl Publications {
     /// Install one fully authorized HTTPS view atomically. All refusals happen
     /// before changing serving state; the lifecycle has already fenced revisions
     /// that invalidate earlier answers. Returning the installed directory lets
-    /// its owner retain files until the final request releases it.
+    /// its owner retain files until the final request releases it, and returning
+    /// the installed hints lets it revoke them if the view is later rejected.
     pub fn install_view(
         &self,
         directory: Option<Publication>,
         filters: Option<crate::blocks::BlockWindow>,
         revision: u64,
         expected_epoch: u64,
-    ) -> Result<Option<Arc<Publication>>, &'static str> {
+    ) -> Result<Installed, &'static str> {
         let mut state = self.0.write().unwrap();
         if state.epoch != expected_epoch || revision < state.history_revision {
             return Err("Receiver view was fenced");
@@ -544,20 +568,23 @@ impl Publications {
                 }
             }
         }
-        if let Some(filters) = filters {
-            state.filters = Some(Arc::new(filters));
+        let filters = filters.map(Arc::new);
+        if let Some(filters) = &filters {
+            state.filters = Some(filters.clone());
         }
-        Ok(state.current.clone())
+        Ok((state.current.clone(), filters))
     }
 
-    /// The current rolling window, whether or not a PIR publication is ready.
-    pub fn filters(&self) -> Result<Arc<crate::blocks::BlockWindow>, StatusCode> {
-        self.0
-            .read()
-            .unwrap()
+    /// The current block hints, whether or not a PIR publication is ready, with the
+    /// recovery epoch, read together so a response built afterwards can be refused if a
+    /// revocation came in between.
+    pub fn filters_in_epoch(&self) -> Result<(Arc<crate::blocks::BlockWindow>, u64), StatusCode> {
+        let state = self.0.read().unwrap();
+        let window = state
             .filters
             .clone()
-            .ok_or(StatusCode::SERVICE_UNAVAILABLE)
+            .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+        Ok((window, state.epoch))
     }
 
     /// Runs [`State::expire`]. Every read path calls it, including the owner's periodic
@@ -729,7 +756,7 @@ impl Publications {
                 .chain(removed.into_iter().map(|(p, _)| p)),
         );
         if filters.is_some_and(|head| state.filters.as_ref().is_some_and(|f| f.head() == head)) {
-            state.filters = None;
+            state.drop_filters();
         }
     }
 
@@ -752,7 +779,7 @@ impl Publications {
         true
     }
 
-    /// The live inventory holding session `id`, payment or witness, with the current
+    /// The live inventory holding session `id`, directory or companion, with the current
     /// epoch. An id not served now, whether unknown, revoked or expired, is `GONE`.
     pub fn select(&self, id: &Hash) -> Result<(Arc<Publication>, u64), StatusCode> {
         self.find(|p| p.table(id).is_some())
@@ -766,6 +793,11 @@ impl Publications {
     /// A live inventory naming shard filter `digest`, with the current epoch, or `GONE`.
     pub fn with_filter(&self, digest: &Hash) -> Result<(Arc<Publication>, u64), StatusCode> {
         self.find(|p| p.filters.contains_key(digest))
+    }
+
+    /// A live inventory naming choice object `digest`, with the current epoch, or `GONE`.
+    pub fn with_choice(&self, digest: &Hash) -> Result<(Arc<Publication>, u64), StatusCode> {
+        self.find(|p| p.choices.contains_key(digest))
     }
 
     /// The inventories that accept new requests, current first.
@@ -797,345 +829,4 @@ impl Publications {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use zakura_pir_publisher::receiver::snapshot::SnapshotPublisherExt as _;
-
-    /// An empty prepared publication whose salt starts with `salt`.
-    #[cfg(feature = "qualification-tests")]
-    fn publication(salt: u8) -> Publication {
-        publication_at(salt, 3)
-    }
-
-    /// An empty prepared publication whose salt starts with `salt`, ending at a block
-    /// hash of `hash` bytes.
-    fn publication_at(salt: u8, hash: u8) -> Publication {
-        let snapshot = if salt == hash {
-            crate::empty_snapshot(salt)
-        } else {
-            let mut manifest =
-                crate::common::manifest(zakura_pir_query_server::receiver::session::MIN_ROWS);
-            manifest.salt[0] = salt;
-            manifest.end_hash = [hash; 32];
-            zakura_pir_query_server::receiver::snapshot::Snapshot::build(manifest, &[]).unwrap()
-        };
-        crate::prepared::prepare_payments(snapshot).unwrap()
-    }
-
-    /// Selective rejection fences held requests without closing unrelated
-    /// current admission or changing the global recovery epoch.
-    #[test]
-    fn invalidating_one_inventory_preserves_other_approved_requests() {
-        let publications = Publications::default();
-        let first = publication_at(1, 1);
-        let id = first.id();
-        let token = first.authorization();
-        assert!(publications.publish(first, 0));
-        let held = publications.live()[0].clone();
-        let next = publication_at(2, 2);
-        let approved = next.authorization();
-        assert!(publications.publish(next, 0));
-        // The request outlives its inventory's retention, before a sweep has
-        // transferred the expired entry into the released set.
-        publications.0.write().unwrap().retained[0].1 = Instant::now() - Duration::from_secs(1);
-        publications.invalidate(&std::collections::HashSet::from([id]), None);
-        assert!(!token.load(std::sync::atomic::Ordering::Acquire));
-        assert!(!held
-            .authorization()
-            .load(std::sync::atomic::Ordering::Acquire));
-        assert!(approved.load(std::sync::atomic::Ordering::Acquire));
-        assert_eq!(publications.epoch(), 0);
-        assert_eq!(publications.live().len(), 1);
-        assert_eq!(publications.current_anchor(), Some((101, [2; 32])));
-    }
-
-    /// A check that found an anchor off the chain revokes only while its epoch is
-    /// current and the anchor still accepts requests.
-    #[test]
-    fn a_stale_check_revokes_only_while_its_anchor_is_served() {
-        let (a, b) = ((101, [1; 32]), (101, [2; 32]));
-        let publications = Publications::default();
-        assert!(publications.publish(publication_at(1, 1), 0));
-        // A check reads A, then a revocation and B's publication overtake it.
-        let (epoch, anchors) = publications.serving();
-        assert_eq!(anchors, [a]);
-        publications.revoke();
-        assert!(publications.publish(publication_at(2, 2), epoch + 1));
-        assert!(!publications.revoke_serving(epoch, a));
-        assert_eq!(publications.serving(), (epoch + 1, vec![b]));
-        // An ordinary rotation keeps the epoch, but once A's retention ends a check that
-        // read A no longer revokes the publication that replaced it. Reuse B's prepared
-        // table rather than preprocess a third empty one.
-        let publications = Publications::default();
-        assert!(publications.publish(publication_at(1, 1), 0));
-        let (epoch, _) = publications.serving();
-        assert!(publications.publish(publication_at(2, 2), 0));
-        let ended = Instant::now()
-            .checked_sub(Duration::from_millis(1))
-            .unwrap();
-        publications.0.write().unwrap().retained[0].1 = ended;
-        assert!(!publications.revoke_serving(epoch, a));
-        assert_eq!(publications.anchors(), [b]);
-        // A served anchor off the chain still revokes every session.
-        assert!(publications.revoke_serving(epoch, b));
-        assert_eq!(publications.serving(), (epoch + 1, vec![]));
-    }
-
-    /// A preparation overtaken by a newer publish cannot replace it, even once the
-    /// newer one's predecessor has left its retention. Fast already refuses a stale
-    /// check once a newer anchor is current.
-    #[cfg(feature = "qualification-tests")]
-    #[test]
-    fn an_overtaken_preparation_is_not_published() {
-        let publications = Publications::default();
-        assert!(publications.publish(publication_at(1, 1), 0));
-        let mut newer =
-            crate::common::manifest(zakura_pir_query_server::receiver::session::MIN_ROWS);
-        (newer.end_height, newer.end_hash) = (102, [2; 32]);
-        let snapshot =
-            zakura_pir_query_server::receiver::snapshot::Snapshot::build(newer, &[]).unwrap();
-        let newer = crate::prepared::prepare_payments(snapshot).unwrap();
-        assert!(publications.publish(newer, 0));
-        let ended = Instant::now()
-            .checked_sub(Duration::from_millis(1))
-            .unwrap();
-        publications.0.write().unwrap().retained[0].1 = ended;
-        assert!(!publications.publish(publication_at(3, 3), 0));
-        assert_eq!(publications.anchors(), [(102, [2; 32])]);
-    }
-
-    /// A retained anchor revokes the current inventory with it.
-    #[test]
-    fn a_retained_anchor_still_revokes_every_session() {
-        let publications = Publications::default();
-        assert!(publications.publish(publication_at(1, 1), 0));
-        let (epoch, _) = publications.serving();
-        assert!(publications.publish(publication_at(2, 2), 0));
-        assert!(publications.revoke_serving(epoch, (101, [1; 32])));
-        assert!(publications.anchors().is_empty());
-    }
-
-    /// A displaced inventory is dropped once its retention ends, not kept until the next
-    /// publication, and its id is then 410. Fast already ends that retention on the
-    /// stale-anchor runtime.
-    #[cfg(feature = "qualification-tests")]
-    #[test]
-    fn an_expired_previous_publication_is_dropped() {
-        let publications = Publications::default();
-        assert!(publications.publish(publication(1), 0));
-        let first = Arc::downgrade(publications.0.read().unwrap().current.as_ref().unwrap());
-        let id = first.upgrade().unwrap().segments()[0].payments.id();
-        assert!(publications.publish(publication(2), 0));
-        assert!(publications.select(&id).is_ok());
-        assert!(first.upgrade().is_some());
-        let ended = Instant::now()
-            .checked_sub(Duration::from_millis(1))
-            .unwrap();
-        publications.0.write().unwrap().retained[0].1 = ended;
-        assert_eq!(publications.anchors().len(), 1);
-        assert!(first.upgrade().is_none());
-        assert!(matches!(publications.select(&id), Err(StatusCode::GONE)));
-    }
-
-    /// Republishing the current inventory replaces it without a new retention or epoch, keeps
-    /// a predecessor's deadline, and still honors the epoch fence.
-    #[cfg(feature = "qualification-tests")]
-    #[test]
-    fn republishing_the_current_session_replaces_it_in_place() {
-        let publications = Publications::default();
-        assert!(publications.publish(publication(1), 0));
-        assert!(!publications.publish(publication(1), 1));
-        assert!(publications.publish(publication(1), 0));
-        assert_eq!(publications.epoch(), 0);
-        assert_eq!(publications.anchors().len(), 1);
-        // A new inventory activates at once and retains its predecessor.
-        assert!(publications.publish(publication(2), 0));
-        assert!(publications.publish(publication(2), 0));
-        assert!(publications.ready_at().is_none());
-        assert_eq!(publications.anchors().len(), 2);
-    }
-
-    /// Once [`MAX_RETAINED`] displaced inventories are within their retention, the next
-    /// publication waits for the oldest to expire instead of dropping it early.
-    #[test]
-    fn a_full_retained_set_holds_back_the_next_publication() {
-        let publications = Publications::default();
-        // Prepare before arming retention. A unique manifest built afterward can
-        // outlast the deadline, and `publish` then expires the set it should refuse.
-        let newer = publication_at(2, 2);
-        assert!(publications.publish(publication_at(1, 1), 0));
-        let held = publications.current().unwrap();
-        let until = Instant::now() + Duration::from_secs(5);
-        publications.0.write().unwrap().retained = vec![(held, until); MAX_RETAINED];
-        assert_eq!(publications.ready_at(), Some(until));
-        assert!(!publications.publish(newer, 0));
-        publications.0.write().unwrap().retained[0].1 = Instant::now();
-        assert!(publications.ready_at().is_none());
-    }
-    /// A report update keeps the current session and its prepared PIR state, and is
-    /// refused for another anchor or after a revocation.
-    #[test]
-    fn a_report_update_keeps_the_prepared_session() {
-        let publications = Publications::default();
-        assert!(publications.publish(publication_at(1, 1), 0));
-        let (before, _) = publications
-            .current()
-            .map(|p| (p, publications.epoch()))
-            .unwrap();
-        let anchor = (101, [1; 32]);
-        assert!(!publications.update_report((101, [2; 32]), serde_json::json!(1), 0));
-        assert!(!publications.update_report(anchor, serde_json::json!(1), 1));
-        assert!(publications.update_report(anchor, serde_json::json!(2), 0));
-        let (after, epoch) = publications
-            .current()
-            .map(|p| (p, publications.epoch()))
-            .unwrap();
-        assert_eq!((after.id(), epoch), (before.id(), 0));
-        assert!(std::ptr::eq(
-            before.segments()[0].payments.public().as_ptr(),
-            after.segments()[0].payments.public().as_ptr()
-        ));
-        assert_eq!(
-            publications.health().0,
-            Some((before.id(), Some(serde_json::json!(2))))
-        );
-        assert!(publications.ready_at().is_none());
-        publications.revoke();
-        assert!(!publications.update_report(anchor, serde_json::json!(3), 0));
-    }
-    /// A companion constructed at a later block than its payment table makes that block
-    /// a served anchor too, so finding it off the chain revokes every session.
-    #[cfg(feature = "qualification-tests")]
-    #[test]
-    fn a_later_witness_context_is_a_served_anchor() {
-        use zakura_pir_publisher::receiver::witness::TablePublisherExt as _;
-        let manifest =
-            crate::common::manifest(zakura_pir_query_server::receiver::session::MIN_ROWS);
-        let snapshot =
-            zakura_pir_query_server::receiver::snapshot::Snapshot::build(manifest, &[]).unwrap();
-        let mut table = crate::prepared::placeholder(&snapshot).manifest;
-        (table.tree_height, table.tree_hash) = (105, [5; 32]);
-        let table = zakura_pir_query_server::receiver::witness::Table::build(table, &[]).unwrap();
-        let publication = crate::prepared::prepare(snapshot, table).unwrap();
-        let publications = Publications::default();
-        assert!(publications.publish(publication, 0));
-        let (epoch, anchors) = publications.serving();
-        assert_eq!(anchors, [(101, [3; 32]), (105, [5; 32])]);
-        assert!(publications.revoke_serving(epoch, (105, [5; 32])));
-        assert!(publications.anchors().is_empty());
-    }
-
-    /// A new companion beside an unchanged payment session displaces the old one
-    /// through the ordinary retention, so a wallet that captured the old pair can finish.
-    #[cfg(feature = "qualification-tests")]
-    #[test]
-    fn a_witness_only_replacement_keeps_the_displaced_companion() {
-        let manifest =
-            crate::common::manifest(zakura_pir_query_server::receiver::session::MIN_ROWS);
-        let snapshot = zakura_pir_query_server::receiver::snapshot::Snapshot::build(
-            manifest,
-            &[crate::common::record(0, 1)],
-        )
-        .unwrap();
-        let first = crate::prepared::prepare(
-            snapshot.clone(),
-            crate::prepared::companion_table(&snapshot, &[[1; 512]]),
-        )
-        .unwrap();
-        let second = crate::prepared::prepare(
-            snapshot.clone(),
-            crate::prepared::companion_table(&snapshot, &[[2; 512]]),
-        )
-        .unwrap();
-        let witness = |p: &Publication| p.segments()[0].witnesses.id();
-        let (old, new) = (witness(&first), witness(&second));
-        assert_eq!(
-            first.segments()[0].payments.id(),
-            second.segments()[0].payments.id()
-        );
-        assert_ne!(old, new);
-        assert_ne!(first.id(), second.id());
-        let publications = Publications::default();
-        assert!(publications.publish(first, 0));
-        assert!(publications.publish(second, 0));
-        assert!(publications.select(&old).is_ok());
-        assert!(publications.select(&new).is_ok());
-    }
-
-    /// An inventory a request selected keeps naming its tables after it leaves service,
-    /// whether its retention ended or a revocation removed it, so their files outlive the
-    /// request; once the request releases it, its tables are no longer referenced.
-    #[test]
-    fn a_held_inventory_stays_referenced_until_released() {
-        let publications = Publications::default();
-        assert!(publications.publish(publication_at(1, 1), 0));
-        let first = publications.current().unwrap().segments()[0].payments.id();
-        let (held, _) = publications.select(&first).unwrap();
-        assert!(publications.publish(publication_at(2, 2), 0));
-        publications.0.write().unwrap().retained[0].1 = Instant::now();
-        assert!(matches!(publications.select(&first), Err(StatusCode::GONE)));
-        assert!(publications.references().contains(&first));
-        drop(held);
-        assert!(!publications.references().contains(&first));
-        // An instance a report update replaced stays referenced while held, through a
-        // later displacement and expiry of its replacement.
-        let middle = publications.current().unwrap().segments()[0].payments.id();
-        let (held, _) = publications.select(&middle).unwrap();
-        assert!(publications.update_report((101, [2; 32]), serde_json::json!(1), 0));
-        // Same prepared inventory as the first publication: a different id from the
-        // current one, so it displaces rather than replacing in place, and the
-        // payment table is the one already cached.
-        assert!(publications.publish(publication_at(1, 1), 0));
-        publications
-            .0
-            .write()
-            .unwrap()
-            .retained
-            .last_mut()
-            .unwrap()
-            .1 = Instant::now();
-        assert!(matches!(
-            publications.select(&middle),
-            Err(StatusCode::GONE)
-        ));
-        assert!(publications.references().contains(&middle));
-        drop(held);
-        assert!(!publications.references().contains(&middle));
-        let second = publications.current().unwrap().segments()[0].payments.id();
-        let (held, _) = publications.select(&second).unwrap();
-        publications.revoke();
-        assert!(publications.references().contains(&second));
-        drop(held);
-        assert!(publications.references().is_empty());
-    }
-
-    /// A correction fences direct lookups before the replacement PIR table is ready.
-    #[cfg(feature = "qualification-tests")]
-    #[test]
-    fn correction_revokes_old_sessions_and_refuses_old_preparations() {
-        let publications = Publications::default();
-        let old = publication(1);
-        let old_id = old.segments()[0].payments.id();
-        assert!(publications.publish(old, 0));
-        assert!(publications.advance_history_revision(1));
-        assert!(publications.select(&old_id).is_err());
-        assert!(publications
-            .current()
-            .map(|p| (p, publications.epoch()))
-            .is_err());
-        assert!(!publications.advance_history_revision(0));
-        assert!(!publications.publish(publication(2), publications.epoch()));
-        let mut manifest =
-            crate::common::manifest(zakura_pir_query_server::receiver::session::MIN_ROWS);
-        manifest.history_revision = 1;
-        let snapshot =
-            zakura_pir_query_server::receiver::snapshot::Snapshot::build(manifest, &[]).unwrap();
-        let corrected = crate::prepared::prepare_payments(snapshot).unwrap();
-        assert!(publications.publish(corrected, publications.epoch()));
-        assert!(publications
-            .current()
-            .map(|p| (p, publications.epoch()))
-            .is_ok());
-        assert!(publications.select(&old_id).is_err());
-    }
-}
+mod tests;

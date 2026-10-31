@@ -113,15 +113,16 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
     let layout: receiver_indexer::application::Layout =
         serde_json::from_slice(&std::fs::read(layout).unwrap()).unwrap();
     let segment = &layout.shards[0].segments[0];
-    let (payments, companion) = (
-        hex::encode(segment.payments),
-        hex::encode(segment.witnesses),
+    let (directory, companion) = (
+        hex::encode(segment.directory),
+        hex::encode(segment.companion),
     );
     for file in [
-        format!("{payments}.rows"),
-        format!("{payments}.json"),
-        format!("{companion}.witness"),
-        format!("{companion}.witness.json"),
+        format!("d-{directory}.rows"),
+        format!("d-{directory}.choice"),
+        format!("d-{directory}.json"),
+        format!("c-{companion}.rows"),
+        format!("c-{companion}.json"),
     ] {
         assert!(dir.path().join("publications").join(file).exists());
     }
@@ -271,31 +272,7 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
     task.abort();
 }
 
-#[test]
-fn cli_rejects_unservable_geometry_before_contacting_the_node() {
-    for rows in ["1", "4096", "8193", "131072"] {
-        let dir = tempfile::tempdir().unwrap();
-        let output = std::process::Command::new(env!("CARGO_BIN_EXE_pir-publisher"))
-            .args([
-                "receiver",
-                "publish",
-                "--data-dir",
-                dir.path().to_str().unwrap(),
-                "--rpc-url",
-                "http://127.0.0.1:1",
-                "--no-auth",
-                "--min-rows",
-                rows,
-            ])
-            .output()
-            .unwrap();
-        assert!(!output.status.success());
-        assert!(String::from_utf8_lossy(&output.stderr).contains("Unsupported"));
-        assert!(!dir.path().join("publications").exists());
-    }
-}
-
-/// Witness tables need every commitment of each Ironwood shard, and wallets refuse
+/// Companion payloads need every commitment of each Ironwood shard, and wallets refuse
 /// served coverage that starts later, so one-shot and serving runs both refuse a later
 /// start before contacting the node.
 #[test]

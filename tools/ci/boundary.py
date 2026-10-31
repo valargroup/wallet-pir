@@ -225,6 +225,19 @@ CANONICAL = {
     'zakura-filters', 'zakura-pir-protocol', 'zakura-pir-client',
     'zakura-pir-publisher', 'zakura-pir-query-server', 'zakura-pir-server-core',
 }
+# Every package wallet-libraries publishes. Released ones resolve from crates.io,
+# so they are recognized by name as well as by their Git source.
+WALLET_LIBRARY_PACKAGES = CANONICAL | {
+    'zakura-client-backend', 'zakura-client-sqlite', 'zakura-near-intents',
+    'zakura-one-time-ivk', 'zakura-pczt', 'zakura-pir-config', 'zakura-service-config',
+    'zakura-transaction-wire', 'zakura-wallet-lib',
+}
+
+
+def wallet_library(name, source):
+    """Whether `name` from `source` (a Git URL, a registry source or empty) is a
+    wallet-libraries package, from its repository or released under its name."""
+    return WALLET_LIBRARIES in (source or '') or name in WALLET_LIBRARY_PACKAGES
 # Retained evidence outside the active product. It is still checked for direct
 # Common and node edges; only the pure-package rules skip it.
 EXCLUDED = ('evidence/', 'target/')
@@ -437,7 +450,7 @@ def violations(packages, allowed):
                     problems.append(f"{package['manifest']}: {dependency['kind']} on "
                                     f"{'Common' if name in COMMON else 'node'} package {name}")
             if (package['name'] in PURE and not package.get('preserved')
-                    and WALLET_LIBRARIES in dependency['git']
+                    and wallet_library(name, dependency['git'])
                     and (name not in CANONICAL
                          or (name == CODEC and CODEC_FEATURE in dependency.get('features', [])))):
                 problems.append(f"{package['manifest']}: pure PIR package has a "
@@ -584,7 +597,7 @@ def resolved_violations(metadata, *, workspace_unified=False):
                 continue
             seen.add((current, through_codec))
             target = packages[current]
-            library = WALLET_LIBRARIES in (target['source'] or '')
+            library = wallet_library(target['name'], target['source'])
             # The protocol and publisher packages carry receiver cryptography behind a
             # feature, which workspace metadata unifies into every product that uses
             # them. Standalone consumers below resolve without it and get no exemption.

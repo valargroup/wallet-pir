@@ -1,15 +1,7 @@
 mod common;
-use common::{manifest, receiver, record};
+use common::{receiver, record};
 use receiver_store::Error;
-use zakura_pir_publisher::receiver::{
-    snapshot::{lookup_row, row_for, Snapshot, ROW_BYTES, SLOTS},
-    RawRecord, ReceiverBytes,
-};
-
-fn row<'a>(s: &'a Snapshot, r: &ReceiverBytes, page: u32) -> &'a [u8] {
-    let n = row_for(&s.manifest, r, page).unwrap();
-    &s.data[n * ROW_BYTES..(n + 1) * ROW_BYTES]
-}
+use zakura_pir_publisher::receiver::{RawRecord, ReceiverBytes};
 
 /// Valid Ironwood receivers, pinned in `fixtures/receivers.json` (see
 /// [`common::seeded_receiver`]): `other` and `third` from spending keys of bytes 3 and
@@ -277,7 +269,7 @@ fn durable_coverage_atomic_failure_and_reorg() {
         start_position: 200,
     };
     let mut store = Store::open(&path, config.clone()).unwrap();
-    assert!(store.snapshot(8, 0).is_err());
+    assert_eq!(store.tip().unwrap().height, 99);
     let empty = IndexedBlock {
         height: 100,
         hash: [10; 32],
@@ -289,7 +281,7 @@ fn durable_coverage_atomic_failure_and_reorg() {
         commitments: vec![],
     };
     store.append(&empty).unwrap();
-    assert_eq!(store.snapshot(8, 0).unwrap().manifest.end_height, 100);
+    assert_eq!(store.tip().unwrap().height, 100);
     let mut r = record(0, 1);
     r.payment.position = 202;
     let mut block = IndexedBlock {
@@ -308,14 +300,10 @@ fn durable_coverage_atomic_failure_and_reorg() {
     let mut store = Store::open(&path, config.clone()).unwrap();
     assert_eq!(store.tip().unwrap().position, 204);
     assert_eq!(store.counts().unwrap(), (1, 2));
-    let old = store.snapshot(8, 0).unwrap();
+    let old = store.records(100, 101).unwrap();
     assert_eq!(
-        lookup_row(&old.manifest, &r.receiver, 0, row(&old, &r.receiver, 0))
-            .unwrap()
-            .unwrap()
-            .payment
-            .position,
-        202
+        old.iter().map(|r| r.payment.position).collect::<Vec<_>>(),
+        [202]
     );
     block.height = 102;
     block.parent = [3; 32];
@@ -336,17 +324,12 @@ fn durable_coverage_atomic_failure_and_reorg() {
     block.coinbase_actions = 0;
     block.payments[0].1.block_hash = block.hash;
     store.append(&block).unwrap();
-    let new = store.snapshot(8, 0).unwrap();
-    assert_ne!(
-        old.manifest.revision().unwrap(),
-        new.manifest.revision().unwrap()
-    );
-    assert!(old.manifest.accept([1; 32], 100, 101, block.hash).is_err());
+    assert_ne!(store.records(100, 101).unwrap(), old);
     let mut wrong = config.clone();
     wrong.genesis = [99; 32];
     assert!(Store::open(&path, wrong).is_err());
     store.rewind(99, config.start_parent).unwrap();
-    assert!(store.snapshot(8, 0).is_err());
+    assert_eq!(store.records(100, 101).unwrap(), []);
 }
 
 /// A payment in the coinbase's leading positions or in transaction zero is refused.
@@ -388,7 +371,7 @@ fn coinbase_payments_are_refused() {
 /// another txid in the same one, and another receiver's later position in an earlier
 /// transaction or Action.
 #[test]
-fn unsnapshottable_payments_are_refused() {
+fn out_of_order_payments_are_refused() {
     use receiver_store::{Config, IndexedBlock, Store};
     let dir = tempfile::tempdir().unwrap();
     let config = Config {
@@ -441,7 +424,7 @@ fn unsnapshottable_payments_are_refused() {
 #[test]
 fn store_positions_end_within_the_tree() {
     use receiver_store::{Config, IndexedBlock, Store};
-    use zakura_pir_publisher::receiver::snapshot::TREE_SIZE;
+    use zakura_pir_publisher::receiver::TREE_SIZE;
     let dir = tempfile::tempdir().unwrap();
     let config = |start_position| Config {
         genesis: [1; 32],
@@ -473,69 +456,7 @@ fn store_positions_end_within_the_tree() {
             ..crossing
         })
         .unwrap();
-    let manifest = store.snapshot(8, 0).unwrap().manifest;
-    assert_eq!(manifest.end_position, TREE_SIZE);
-}
-
-#[test]
-fn crowded_buckets_retry_the_salt_before_growing() {
-    use receiver_store::{Config, IndexedBlock, Store};
-    let dir = tempfile::tempdir().unwrap();
-    let config = Config {
-        genesis: [1; 32],
-        start_height: 100,
-        start_parent: [2; 32],
-        start_position: 200,
-    };
-    let mut store = Store::open(dir.path().join("directory.sqlite"), config).unwrap();
-    // Twenty pages in two rows overflow when fifteen share a row. The block hash is
-    // the first salt, so choose one that crowds a row.
-    let crowded = |hash: [u8; 32]| {
-        let mut m = manifest(2);
-        m.salt = hash;
-        let first = (0..20)
-            .filter(|&page| row_for(&m, &receiver(), page).unwrap() == 0)
-            .count();
-        !(6..=14).contains(&first)
-    };
-    let hash = (0..=255).map(|k| [k; 32]).find(|h| crowded(*h)).unwrap();
-    let payments = (0..20)
-        .map(|page| {
-            let mut r = record(page, 20);
-            r.payment.height = 100;
-            r.payment.block_hash = hash;
-            (r.receiver, r.payment)
-        })
-        .collect();
-    store
-        .append(&IndexedBlock {
-            height: 100,
-            hash,
-            parent: [2; 32],
-            start_position: 200,
-            end_position: 220,
-            coinbase_actions: 0,
-            payments,
-            commitments: vec![[6; 32]; 20],
-        })
-        .unwrap();
-    let first = store.snapshot(2, 0).unwrap();
-    assert_ne!(first.manifest.salt, hash);
-    assert_eq!(first.manifest.records, 20);
-    for page in 0..20 {
-        let found = lookup_row(
-            &first.manifest,
-            &receiver(),
-            page,
-            row(&first, &receiver(), page),
-        );
-        assert_eq!(found.unwrap().unwrap().page, page);
-    }
-    // A rebuild of the same coverage picks the same salt.
-    assert_eq!(
-        store.snapshot(2, 0).unwrap().manifest.revision().unwrap(),
-        first.manifest.revision().unwrap()
-    );
+    assert_eq!(store.tip().unwrap().position, TREE_SIZE);
 }
 
 /// Commitment ranges and payment positions follow appends, rewinds, reopening and
@@ -680,7 +601,7 @@ fn corrections_replace_payments_on_an_unchanged_chain() {
         commitments: vec![[1; 32], payment.cmx, payment.cmx],
     };
     store.append(&block).unwrap();
-    assert_eq!(store.snapshot(8, 0).unwrap().manifest.records, 0);
+    assert_eq!(store.records(100, 100).unwrap(), []);
     block.payments = vec![(receiver(), payment.clone())];
     assert!(store.correct(0, std::slice::from_ref(&block)).is_err());
     let mut changed = block.clone();
@@ -692,8 +613,7 @@ fn corrections_replace_payments_on_an_unchanged_chain() {
     assert_eq!(store.history_revision().unwrap(), 0);
     store.correct(1, std::slice::from_ref(&block)).unwrap();
     assert_eq!(store.history_revision().unwrap(), 1);
-    assert!(store.snapshot(8, 0).is_err());
-    assert_eq!(store.snapshot(8, 1).unwrap().manifest.records, 1);
+    assert_eq!(store.records(100, 100).unwrap().len(), 1);
     let mut second = payment.clone();
     (second.position, second.tx_index, second.txid) = (2, 2, [2; 32]);
     block.payments.push((receiver(), second));
@@ -701,47 +621,10 @@ fn corrections_replace_payments_on_an_unchanged_chain() {
     assert_eq!(store.payment_positions(0, 3).unwrap(), [1, 2]);
 }
 
-/// A history with more payments than the table has slots fails with
-/// [`Error::Capacity`], and builds at a larger size.
-#[test]
-fn a_history_beyond_the_slots_is_a_capacity_failure() {
-    use receiver_store::{Config, IndexedBlock, Store};
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("directory.sqlite");
-    let config = Config {
-        genesis: [1; 32],
-        start_height: 100,
-        start_parent: [2; 32],
-        start_position: 200,
-    };
-    let mut store = Store::open(&path, config).unwrap();
-    let n = SLOTS as u32 + 1;
-    let payments = (0..n)
-        .map(|page| {
-            let mut r = record(page, n);
-            r.payment.height = 100;
-            (r.receiver, r.payment)
-        })
-        .collect();
-    store
-        .append(&IndexedBlock {
-            height: 100,
-            hash: [3; 32],
-            parent: [2; 32],
-            start_position: 200,
-            end_position: 200 + u64::from(n),
-            coinbase_actions: 0,
-            payments,
-            commitments: vec![[6; 32]; n as usize],
-        })
-        .unwrap();
-    assert!(matches!(store.snapshot(1, 0), Err(Error::Capacity)));
-    assert_eq!(store.snapshot(4, 0).unwrap().manifest.records, u64::from(n));
-}
-
 /// Sealed shards are recorded contiguously from the configured start through stored
-/// blocks; a rewind past a shard's end removes it, and so does a correction at or before
-/// its end, while earlier shards stay.
+/// blocks; a rewind or correction reaching the block that decided a seal removes it,
+/// whether that is its end or the block after it that it could not take, while earlier
+/// shards stay.
 #[test]
 fn sealed_shards_follow_rewinds_and_corrections() {
     use receiver_store::{Config, IndexedBlock, SealedShard, Store};
@@ -773,9 +656,18 @@ fn sealed_shards_follow_rewinds_and_corrections() {
         start_height: start,
         end_height: end,
         segments: 1,
-        rows: 8,
-        payloads: 64,
+        cause: end,
     };
+    let before = |start, end| SealedShard {
+        cause: end + 1,
+        ..shard(start, end)
+    };
+    assert!(store
+        .seal(&SealedShard {
+            cause: 102,
+            ..shard(100, 100)
+        })
+        .is_err());
     assert!(store.seal(&shard(101, 101)).is_err());
     assert!(store.seal(&shard(100, 104)).is_err());
     store.seal(&shard(100, 100)).unwrap();
@@ -792,6 +684,14 @@ fn sealed_shards_follow_rewinds_and_corrections() {
     store.correct(1, &[block(101)]).unwrap();
     assert_eq!(store.sealed_shards().unwrap(), [shard(100, 100)]);
     assert_eq!(store.records(100, 102).unwrap(), []);
+    // A seal before block 102 goes with block 102, though its own blocks stay.
+    store.seal(&before(101, 101)).unwrap();
+    store.rewind(101, [101; 32]).unwrap();
+    assert_eq!(store.sealed_shards().unwrap(), [shard(100, 100)]);
+    store.append(&block(102)).unwrap();
+    store.seal(&before(101, 101)).unwrap();
+    store.correct(2, &[block(102)]).unwrap();
+    assert_eq!(store.sealed_shards().unwrap(), [shard(100, 100)]);
 }
 
 /// Writes an earlier release's version 2 store at `legacy` holding one payment in block
@@ -912,20 +812,61 @@ fn a_version_2_store_converts_once_and_stays_for_rollback() {
         legacy_bytes(&path),
         (3, zakura_pir_publisher::receiver::RECORD_BYTES)
     );
-    let mut store = Store::open(&path, config.clone()).unwrap();
-    let snapshot = store.snapshot(8, 0).unwrap();
-    assert_eq!(
-        lookup_row(
-            &snapshot.manifest,
-            &paid.receiver,
-            0,
-            row(&snapshot, &paid.receiver, 0)
-        )
-        .unwrap()
-        .unwrap(),
-        paid
-    );
+    // Opening it moves it to version 4.
+    let store = Store::open(&path, config.clone()).unwrap();
+    assert_eq!(store.records(100, 100).unwrap(), [paid]);
     drop(store);
     assert!(!upgrade(&legacy, &path).unwrap());
+    Store::open(&path, config).unwrap();
+}
+
+/// A version 3 store with sealed history opens as version 4 with those seals
+/// dropped, its chain index intact, so the sealer reseals from it. The upgrade is one
+/// transaction: an open that fails after the drop, here under another network's
+/// configuration, leaves the version 3 store and its seals as they were, and a later
+/// open upgrades it.
+#[test]
+fn a_version_3_store_drops_its_seals_once() {
+    use receiver_store::{Config, Store};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(receiver_store::STORE_FILE);
+    let config = Config {
+        genesis: [1; 32],
+        start_height: 100,
+        start_parent: [2; 32],
+        start_position: 0,
+    };
+    drop(Store::open(&path, config.clone()).unwrap());
+    let db = rusqlite::Connection::open(&path).unwrap();
+    db.execute_batch(
+        "INSERT INTO blocks VALUES (100,x'0303030303030303030303030303030303030303030303030303030303030303',0,0);
+        DROP TABLE receiver_shards;
+        CREATE TABLE receiver_shards (shard INTEGER PRIMARY KEY, start_height INTEGER NOT NULL,
+            end_height INTEGER NOT NULL REFERENCES blocks(height) ON DELETE CASCADE,
+            segments INTEGER NOT NULL CHECK(segments>0), rows INTEGER NOT NULL, payloads INTEGER NOT NULL);
+        INSERT INTO receiver_shards (start_height,end_height,segments,rows,payloads) VALUES (100,100,1,65536,327680);
+        PRAGMA user_version=3;",
+    )
+    .unwrap();
+    drop(db);
+    let state = || {
+        let db = rusqlite::Connection::open(&path).unwrap();
+        let version: u32 = db
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        let seals: u32 = db
+            .query_row("SELECT COUNT(*) FROM receiver_shards", [], |r| r.get(0))
+            .unwrap();
+        (version, seals)
+    };
+    let mut other = config.clone();
+    other.genesis = [9; 32];
+    assert!(matches!(Store::open(&path, other), Err(Error::Coverage)));
+    assert_eq!(state(), (3, 1));
+    let store = Store::open(&path, config.clone()).unwrap();
+    assert_eq!(store.sealed_shards().unwrap(), []);
+    assert_eq!(store.tip().unwrap().height, 100);
+    drop(store);
+    assert_eq!(state(), (4, 0));
     Store::open(&path, config).unwrap();
 }

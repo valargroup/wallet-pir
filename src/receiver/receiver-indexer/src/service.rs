@@ -17,9 +17,6 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>
 pub struct Config {
     #[arg(long)]
     pub data_dir: PathBuf,
-    /// Minimum served row count. Grows by powers of two up to 65536.
-    #[arg(long, default_value_t = zakura_pir_publisher::receiver::session::MIN_ROWS)]
-    pub min_rows: u32,
     /// A node's RPC endpoint. Repeat it for more nodes: each pass runs on the mainnet
     /// one with the highest tip (see [`NodeClient::ranked`]).
     #[arg(long, required = true)]
@@ -29,7 +26,7 @@ pub struct Config {
     #[arg(long)]
     #[serde(default)]
     pub no_auth: bool,
-    /// Must be Ironwood activation: companion witness tables need every commitment of each
+    /// Must be Ironwood activation: companion payloads need every commitment of each
     /// Ironwood shard, and wallets refuse served coverage that starts later.
     #[arg(long, default_value_t = crate::blocks::ironwood_activation())]
     pub start_height: u32,
@@ -65,17 +62,6 @@ pub struct Config {
     #[arg(long)]
     #[serde(default)]
     pub filter_blocks: Option<u32>,
-    /// Pinned payment table rows of every sealed Receiver shard segment. Sealing keeps
-    /// each segment placeable at this geometry; changing it affects only later seals.
-    #[arg(long, default_value_t = zakura_pir_publisher::receiver::session::MAX_ROWS)]
-    #[serde(default = "default_shard_rows")]
-    pub shard_rows: u32,
-    /// Payments after which a Receiver shard seals at the next block. By default one
-    /// seventh below the smaller of the segment's payment slots and the largest witness
-    /// table's payloads.
-    #[arg(long)]
-    #[serde(default)]
-    pub shard_target: Option<u64>,
     /// How long a displaced inventory, with every session, chunk and shard filter it
     /// names, keeps serving, in seconds: long enough for a wallet that captured it to
     /// finish a restore pass. At most 16 are retained; a new publication waits for one to
@@ -87,8 +73,8 @@ pub struct Config {
     /// retained inventories' and in-flight queries' tables. Sealed tables live in the data
     /// directory's `tables/` and load on demand within it. The default leaves the
     /// deployed unit's 7 GiB `MemoryMax` room for preparation, the index and witness
-    /// paths. It must hold the largest payment and witness pair, 1536 MiB, which a cold
-    /// witness load needs at once.
+    /// paths. It must hold the largest directory beside the largest companion's
+    /// preparation (`receiver_pir_server::tables::MIN_BUDGET`).
     #[arg(long, default_value_t = 4096)]
     #[serde(default = "default_table_memory_mib")]
     pub table_memory_mib: u64,
@@ -112,7 +98,6 @@ impl From<&Config> for application::Config {
     fn from(args: &Config) -> Self {
         Self {
             data_dir: args.data_dir.clone(),
-            min_rows: args.min_rows,
             start_height: args.start_height,
             end_height: args.end_height,
             depth: args.depth,
@@ -121,27 +106,17 @@ impl From<&Config> for application::Config {
             audit_enabled: args.near_key.is_some(),
             filter_blocks: args.filter_blocks,
             history_revision: args.history_revision,
-            shard_rows: args.shard_rows,
-            shard_target: args.shard_target,
         }
     }
 }
 
 impl Config {
     pub fn validate(&self) -> Result<()> {
-        zakura_pir_publisher::receiver::session::validate_rows(self.min_rows)?;
-        crate::seal::Policy::new(self.shard_rows, self.shard_target)
-            .map_err(|_| "invalid shard rows or target")?;
-        // Sealed segments are served at these rows; staged serving refuses fewer than
-        // the advertised minimum.
-        if self.shard_rows < self.min_rows {
-            return Err("--shard-rows must be at least --min-rows".into());
-        }
         let floor = receiver_pir_server::tables::MIN_BUDGET as u64 >> 20;
         if self.table_memory_mib < floor {
             return Err(format!(
-                "the table memory budget must be at least {floor} MiB: a cold witness load \
-                 holds the largest payment and witness tables together"
+                "the table memory budget must be at least {floor} MiB: a cold companion \
+                 load prepares beside the largest directory"
             )
             .into());
         }
@@ -149,7 +124,9 @@ impl Config {
             return Err("retention must be between one minute and one day".into());
         }
         if self.start_height != crate::blocks::ironwood_activation() {
-            return Err("witness tables and serving need history from Ironwood activation".into());
+            return Err(
+                "companion payloads and serving need history from Ironwood activation".into(),
+            );
         }
         let private = match self.bind.ip() {
             IpAddr::V4(ip) => ip.is_loopback() || ip.is_private(),
@@ -204,11 +181,6 @@ pub async fn publish(mut args: Config) -> Result<()> {
     Ok(())
 }
 
-/// Default sealed segment rows, shared by JSON configuration and command-line parsing.
-fn default_shard_rows() -> u32 {
-    zakura_pir_publisher::receiver::session::MAX_ROWS
-}
-
 /// Default prepared table budget in MiB, shared by JSON configuration and command-line
 /// parsing.
 fn default_table_memory_mib() -> u64 {
@@ -225,53 +197,37 @@ fn default_retention_seconds() -> u64 {
 mod tests {
     use super::*;
 
-    /// A budget too small for a cold witness load of the largest pair is refused, since
-    /// once such a table was evicted its queries could never load it again; the pair
-    /// itself is accepted.
+    /// A budget too small to prepare the largest companion beside the largest directory
+    /// is refused, since once such a table was evicted its queries could never load it
+    /// again; that budget itself is accepted.
     #[test]
-    fn the_table_budget_must_hold_the_largest_pair() {
-        let config = |mib: u64| {
-            Config::try_parse_from([
+    fn the_table_budget_must_hold_the_largest_preparation() {
+        let config = |extra: &[&str]| {
+            let base = [
                 "pir-publisher receiver publish",
                 "--data-dir",
                 "/srv/receiver",
                 "--rpc-url",
                 "http://127.0.0.1:8232",
                 "--no-auth",
-                "--table-memory-mib",
-                &mib.to_string(),
-            ])
-            .unwrap()
+            ];
+            Config::try_parse_from(base.iter().chain(extra))
         };
-        assert_eq!(receiver_pir_server::tables::MIN_BUDGET, 1536 << 20);
-        for mib in [256, 1024, 1535] {
-            assert!(config(mib).validate().is_err(), "{mib}");
+        let floor = receiver_pir_server::tables::MIN_BUDGET >> 20;
+        assert_eq!(floor, 920);
+        for mib in [256, floor - 1] {
+            let mib = mib.to_string();
+            assert!(config(&["--table-memory-mib", &mib])
+                .unwrap()
+                .validate()
+                .is_err());
         }
-        assert!(config(1536).validate().is_ok());
-        assert!(config(4096).validate().is_ok());
-    }
-
-    /// Sealed segments are published at `--shard-rows`, so it may not be below the
-    /// advertised `--min-rows`.
-    #[test]
-    fn shard_rows_must_reach_the_minimum() {
-        let config = |shard: u32, min: u32| {
-            Config::try_parse_from([
-                "pir-publisher receiver publish",
-                "--data-dir",
-                "/srv/receiver",
-                "--rpc-url",
-                "http://127.0.0.1:8232",
-                "--no-auth",
-                "--shard-rows",
-                &shard.to_string(),
-                "--min-rows",
-                &min.to_string(),
-            ])
-            .unwrap()
-        };
-        assert!(config(8192, 16384).validate().is_err());
-        assert!(config(16384, 16384).validate().is_ok());
-        assert!(config(65536, 8192).validate().is_ok());
+        for mib in [floor, 4096] {
+            let mib = mib.to_string();
+            assert!(config(&["--table-memory-mib", &mib])
+                .unwrap()
+                .validate()
+                .is_ok());
+        }
     }
 }

@@ -22,8 +22,6 @@ type Result<T> = pir_pipeline::publisher::Result<T>;
 pub struct Config {
     pub data_dir: PathBuf,
     pub bind: SocketAddr,
-    #[serde(default = "min_rows")]
-    pub min_rows: u32,
     #[serde(default = "depth")]
     pub depth: u32,
     #[serde(default = "batch_size")]
@@ -31,9 +29,6 @@ pub struct Config {
     #[serde(default = "concurrency")]
     pub concurrency: u32,
     pub filter_blocks: Option<u32>,
-    #[serde(default = "shard_rows")]
-    pub shard_rows: u32,
-    pub shard_target: Option<u64>,
     #[serde(default = "retention_seconds")]
     pub retention_seconds: u64,
     #[serde(default = "table_memory_mib")]
@@ -44,9 +39,6 @@ pub struct Config {
     #[serde(default = "near_poll_seconds")]
     pub near_poll_seconds: u64,
 }
-fn min_rows() -> u32 {
-    8192
-}
 fn depth() -> u32 {
     2
 }
@@ -55,9 +47,6 @@ fn batch_size() -> u32 {
 }
 fn concurrency() -> u32 {
     8
-}
-fn shard_rows() -> u32 {
-    65536
 }
 fn retention_seconds() -> u64 {
     600
@@ -73,7 +62,6 @@ impl Config {
     fn source(&self, chain: &ChainSettings) -> service::Config {
         service::Config {
             data_dir: self.data_dir.clone(),
-            min_rows: self.min_rows,
             rpc_url: vec![chain.rpc_url.clone()],
             cookie: chain.rpc_cookie.clone(),
             no_auth: chain.rpc_cookie.is_none(),
@@ -86,8 +74,6 @@ impl Config {
             batch_size: self.batch_size,
             concurrency: self.concurrency,
             filter_blocks: self.filter_blocks,
-            shard_rows: self.shard_rows,
-            shard_target: self.shard_target,
             retention_seconds: self.retention_seconds,
             table_memory_mib: self.table_memory_mib,
             history_revision: self.history_revision,
@@ -493,7 +479,6 @@ mod tests {
             .unwrap(),
             config: application::Config {
                 data_dir: directory.into(),
-                min_rows: 8192,
                 start_height: start,
                 end_height: None,
                 depth: 5,
@@ -502,8 +487,6 @@ mod tests {
                 audit_enabled: false,
                 filter_blocks: None,
                 history_revision: 0,
-                shard_rows: 65536,
-                shard_target: None,
             },
         }
     }
@@ -578,22 +561,18 @@ mod tests {
     /// canonical guard, including when no new RPC block can be fetched yet.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn canonical_guard_runs_while_preparation_blocks_its_task() {
-        use zakura_pir_query_server::receiver::blocks::{BlockFilter, BlockId as ReceiverBlock};
         let publications = Publications::default();
         let genesis = Network::Mainnet.genesis_hash();
         let height = blocks::ironwood_activation();
-        let filter = BlockFilter::build(
-            &genesis,
-            ReceiverBlock {
-                height,
-                hash: [9; 32],
-            },
+        let window = receiver_pir_server::blocks::BlockWindow::new(
+            genesis,
+            0,
+            height,
             [0; 32],
-            &[],
+            vec![[9; 32]],
+            vec![],
         )
         .unwrap();
-        let window =
-            receiver_pir_server::blocks::BlockWindow::new(genesis, 0, vec![filter]).unwrap();
         assert!(publications.publish_filters(window, 0));
         let (sender, observations) = tokio::sync::watch::channel(None);
         let stop = Shutdown::default();

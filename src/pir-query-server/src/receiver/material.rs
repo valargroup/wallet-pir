@@ -4,11 +4,15 @@ use receiver_pir_server::{
     blocks::BlockWindow,
     distribution::Inventory,
     publication::{Publication, Segment},
-    tables::{self, FilterSource, Source},
+    tables::{self, ObjectSource, Source},
 };
 use std::{collections::HashSet, sync::Arc};
 use zakura_pir_query_server::receiver::{
-    blocks::Batch, inventory, server::Server, session::Error, snapshot::Snapshot, witness,
+    blocks::{Range, MAX_RANGE_BLOCKS},
+    inventory,
+    server::Server,
+    session::Error,
+    CompanionTable, DirectoryTable, Hash,
 };
 
 fn read(file: &VerifiedObjectFile) -> Result<Vec<u8>, Error> {
@@ -24,7 +28,7 @@ fn read(file: &VerifiedObjectFile) -> Result<Vec<u8>, Error> {
 pub(super) struct Tables {
     pub(super) key: Vec<u8>,
     segments: Vec<Segment>,
-    filters: Vec<Arc<FilterSource>>,
+    filters: Vec<Arc<ObjectSource>>,
 }
 
 pub(super) fn load(
@@ -76,12 +80,12 @@ impl Tables {
         let known: HashSet<_> = previous
             .segments
             .iter()
-            .flat_map(|s| [s.payments.id(), s.witnesses.id()])
+            .flat_map(|s| [s.directory.id(), s.companion.id()])
             .collect();
         for source in self
             .segments
             .iter()
-            .flat_map(|s| [&s.payments, &s.witnesses])
+            .flat_map(|s| [&s.directory, &s.companion])
             .filter(|source| !known.contains(&source.id()))
         {
             if let Err(error) = cache.get(source) {
@@ -99,40 +103,52 @@ fn build(
 ) -> crate::Result<Tables> {
     let mut segments = Vec::new();
     for segment in &directory.segments {
-        let rows = segment.payments.clone();
-        let checked = objects.get(&rows)?;
-        let manifest = segment.publication.payments.clone();
-        let snapshot = manifest.directory.clone();
-        let public = objects.read(&segment.payment_public)?;
-        let payment_owner = owner.clone();
-        let payments = Arc::new(Source::payments(manifest, public, move || {
-            let _owner = &payment_owner;
-            Server::new(Snapshot {
-                manifest: snapshot.clone(),
-                data: read(&checked)?,
-            })
-        })?);
-        let rows = segment.witnesses.clone();
-        let checked = objects.get(&rows)?;
-        let manifest = segment.publication.witnesses.clone();
-        let table = manifest.table.clone();
-        let public = objects.read(&segment.witness_public)?;
-        let witness_owner = owner.clone();
-        let witnesses = Arc::new(Source::witnesses(
-            manifest,
-            public,
-            payments.clone(),
+        let (rows, choice) = (
+            objects.get(&segment.directory)?,
+            objects.get(&segment.choice)?,
+        );
+        let choice_rows = choice.clone();
+        let session = segment.publication.directory.clone();
+        // Reads and checks the directory: the companion's load needs its entries too.
+        let table = {
+            let (owner, manifest) = (owner.clone(), session.manifest.clone());
             move || {
-                let _owner = &witness_owner;
-                Ok(witness::Table {
-                    manifest: table.clone(),
-                    data: read(&checked)?,
+                let _owner = &owner;
+                Ok::<_, Error>(DirectoryTable {
+                    manifest: manifest.clone(),
+                    data: read(&rows)?,
+                    choice: read(&choice_rows)?,
                 })
-            },
-        )?);
+            }
+        };
+        let public = objects.read(&segment.directory_public)?;
+        let directory_table = table.clone();
+        let directory = Arc::new(Source::directory(session.clone(), public, move || {
+            Ok(Server::directory(directory_table()?)?.0)
+        })?);
+        let companion_rows = objects.get(&segment.companion)?;
+        let companion_session = segment.publication.companion.clone();
+        let public = objects.read(&segment.companion_public)?;
+        let (manifest, owner_c) = (companion_session.manifest.clone(), owner.clone());
+        let companion = Arc::new(Source::companion(companion_session, public, move || {
+            let _owner = &owner_c;
+            let directory = table()?;
+            let entries = directory.validate()?;
+            let table = CompanionTable {
+                manifest: manifest.clone(),
+                data: read(&companion_rows)?,
+            };
+            Server::companion(table, &directory.manifest, &entries)
+        })?);
+        let owner_k = owner.clone();
+        let choice = Arc::new(ObjectSource::choice(&session.manifest.choice, move || {
+            let _owner = &owner_k;
+            read(&choice)
+        }));
         segments.push(Segment {
-            payments,
-            witnesses,
+            directory,
+            companion,
+            choice,
         });
     }
     let filters = directory
@@ -141,11 +157,9 @@ fn build(
         .filter_map(|s| s.filter.as_ref())
         .zip(&directory.filters)
         .map(|(named, object)| -> crate::Result<_> {
-            let named = named.clone();
-            let object = object.clone();
-            let checked = objects.get(&object)?;
+            let checked = objects.get(object)?;
             let owner = owner.clone();
-            Ok(Arc::new(FilterSource::stored(
+            Ok(Arc::new(ObjectSource::filter(
                 named.digest,
                 named.bytes,
                 u64::from(named.receivers),
@@ -171,29 +185,45 @@ pub(super) fn load_filters(
         .filters
         .as_ref()
         .map(|filters| -> crate::Result<BlockWindow> {
-            let mut from = filters.head.first;
-            let mut blocks = Vec::new();
-            for object in &filters.batches {
-                let batch = Batch::decode(&objects.read(object)?)?;
-                batch.check(
-                    &filters.head,
-                    from,
-                    zakura_pir_query_server::receiver::blocks::MAX_BLOCKS,
-                )?;
-                if batch.filters().is_empty() {
-                    return Err("empty Receiver filter batch".into());
+            let head = &filters.head;
+            let hashes: Vec<Hash> = objects
+                .read(&filters.hashes)?
+                .chunks_exact(32)
+                .map(|hash| hash.try_into().expect("32-byte chunks"))
+                .collect();
+            let mut sets = Vec::new();
+            let mut parent = None;
+            let mut previous: Option<Range> = None;
+            for object in &filters.ranges {
+                let bytes = objects.read(object)?;
+                let range = Range::decode(&bytes)?;
+                let from = previous.as_ref().map_or(head.first, |p| p.end().height + 1);
+                range.check(head, from, MAX_RANGE_BLOCKS)?;
+                let end = range.end();
+                if previous.as_ref().is_some_and(|p| !range.follows(p))
+                    || hashes[(end.height - head.first) as usize] != end.hash
+                {
+                    return Err("Receiver block hint ranges do not continue".into());
                 }
-                from = from
-                    .checked_add(batch.filters().len() as u32)
-                    .ok_or("Receiver filter height overflow")?;
-                blocks.extend_from_slice(batch.filters());
-                if blocks.len() > 24192 {
-                    return Err("Receiver filter window exceeds block limit".into());
-                }
+                parent.get_or_insert(range.parent());
+                // Checked by the decode above, so only the encoded sets are kept.
+                sets.extend(
+                    Range::raw_sets(&bytes)?
+                        .into_iter()
+                        .map(|(height, set)| (height, set.to_vec())),
+                );
+                previous = Some(range);
             }
-            let window = BlockWindow::new(inventory.genesis, inventory.history_revision, blocks)?;
-            if window.head() != &filters.head {
-                return Err("Receiver filter window differs from its head".into());
+            let window = BlockWindow::new(
+                inventory.genesis,
+                inventory.history_revision,
+                head.first,
+                parent.ok_or("Receiver block hints are empty")?,
+                hashes,
+                sets,
+            )?;
+            if previous.map(|p| p.end()) != Some(head.tip) || window.head() != head {
+                return Err("Receiver block hints differ from their head".into());
             }
             Ok(window)
         })

@@ -73,26 +73,6 @@ pub struct TreeAnchor {
     pub size: u64,
 }
 
-impl TreeAnchor {
-    /// A payment table's end.
-    pub fn payments(m: &zakura_pir_publisher::receiver::snapshot::Manifest) -> Self {
-        Self {
-            height: m.end_height,
-            hash: m.end_hash,
-            size: m.end_position,
-        }
-    }
-
-    /// A companion witness table's construction block.
-    pub fn witnesses(m: &zakura_pir_publisher::receiver::witness::Manifest) -> Self {
-        Self {
-            height: m.tree_height,
-            hash: m.tree_hash,
-            size: m.tree_size,
-        }
-    }
-}
-
 /// How a node's chain differs from a [`TreeAnchor`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TreeMismatch {

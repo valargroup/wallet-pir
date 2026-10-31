@@ -14,12 +14,8 @@ pub use audit::{
 
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::path::Path;
-use zakura_pir_publisher::receiver::{
-    snapshot::{self, Manifest, Snapshot, SnapshotPublisherExt, PROFILE, TREE_SIZE},
-    Hash, Payment, RawRecord, ReceiverBytes,
-};
+use zakura_pir_publisher::receiver::{Hash, Payment, RawRecord, ReceiverBytes, TREE_SIZE};
 
 /// Why directory data, coverage or the database was rejected: the directory's own
 /// errors, unchanged, and the database's.
@@ -31,10 +27,11 @@ pub enum Error {
     Coverage,
     #[error("receiver directory table limit exceeded")]
     Capacity,
-    #[error("missing continuation page")]
-    MissingPage,
     #[error("receiver directory format needs a newer client")]
     Unsupported,
+    /// No choice seed built a segment's choice table (`receiver.choice.failed`).
+    #[error("receiver.choice.failed: no seed built the segment's choice table")]
+    Choice,
     /// A requested stop ended a long build before it finished.
     #[error("Receiver stopped while building shards")]
     Stopped,
@@ -52,7 +49,7 @@ impl From<zakura_pir_publisher::receiver::Error> for Error {
             zakura_pir_publisher::receiver::Error::Malformed => Error::Malformed,
             zakura_pir_publisher::receiver::Error::Coverage => Error::Coverage,
             zakura_pir_publisher::receiver::Error::Capacity => Error::Capacity,
-            zakura_pir_publisher::receiver::Error::MissingPage => Error::MissingPage,
+            zakura_pir_publisher::receiver::Error::Choice => Error::Choice,
             zakura_pir_publisher::receiver::Error::Unsupported => Error::Unsupported,
             zakura_pir_publisher::receiver::Error::Json(error) => Error::Json(error),
         }
@@ -69,9 +66,6 @@ fn encode(record: &RawRecord) -> Result<[u8; zakura_pir_publisher::receiver::REC
 fn decode(bytes: &[u8]) -> Result<Option<RawRecord>, Error> {
     RawRecord::decode(bytes).map_err(|_| Error::Malformed)
 }
-
-/// Salts a publication tries at one row count before the caller grows the table.
-pub const SALT_ATTEMPTS: u32 = 16;
 
 /// The network and chain boundary that a database is bound to.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -108,17 +102,15 @@ pub const SHARD_LEAVES: u64 = 1 << 16;
 /// Bytes of one companion witness payload.
 pub const PAYLOAD_BYTES: usize = 512;
 
-/// A sealed Receiver shard: its inclusive blocks and how many fixed-geometry segments
-/// its payments span.
+/// A sealed Receiver shard: its inclusive blocks, how many segments its payments span,
+/// and the block that decided the seal: its end, or the block after it that the shard
+/// could not take. Removing or correcting that block removes the seal.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SealedShard {
     pub start_height: u32,
     pub end_height: u32,
     pub segments: u32,
-    /// The pinned payment table rows it was sealed under.
-    pub rows: u32,
-    /// The most companion payloads one of its segments was allowed.
-    pub payloads: u64,
+    pub cause: u32,
 }
 
 /// A completed Ironwood shard: its root and the block holding its last leaf.
@@ -149,7 +141,7 @@ impl Store {
         )?;
         let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let version: u32 = tx.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-        if version > 3 {
+        if version > 4 {
             return Err(Error::Malformed);
         }
         // Earlier versions hold shorter records; see [`upgrade`].
@@ -169,6 +161,12 @@ impl Store {
                 return Err(Error::Malformed);
             }
         }
+        // Version 3 sealed shards by payment table geometry. Version 4 seals directory
+        // and companion segments, so those boundaries are dropped and resealed from the retained
+        // chain index, in this transaction: an interrupted open leaves version 3.
+        if version == 3 {
+            tx.execute_batch("DROP TABLE IF EXISTS receiver_shards;")?;
+        }
         tx.execute_batch("CREATE TABLE IF NOT EXISTS filter_revision (revision INTEGER NOT NULL);
             INSERT INTO filter_revision SELECT 0 WHERE NOT EXISTS (SELECT 1 FROM filter_revision);
             CREATE TABLE IF NOT EXISTS config (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL);
@@ -184,9 +182,10 @@ impl Store {
             CREATE TABLE IF NOT EXISTS witness_payloads (position INTEGER PRIMARY KEY REFERENCES payments(position) ON DELETE CASCADE,
                 shard INTEGER NOT NULL REFERENCES ironwood_shards(shard) ON DELETE CASCADE, payload BLOB NOT NULL CHECK(length(payload)=512));
             CREATE TABLE IF NOT EXISTS receiver_shards (shard INTEGER PRIMARY KEY, start_height INTEGER NOT NULL,
-                end_height INTEGER NOT NULL REFERENCES blocks(height) ON DELETE CASCADE, segments INTEGER NOT NULL CHECK(segments>0),
-                rows INTEGER NOT NULL, payloads INTEGER NOT NULL);
-            PRAGMA user_version=3;")?;
+                end_height INTEGER NOT NULL, segments INTEGER NOT NULL CHECK(segments BETWEEN 1 AND 8),
+                cause INTEGER NOT NULL REFERENCES blocks(height) ON DELETE CASCADE
+                CHECK(cause BETWEEN end_height AND end_height + 1));
+            PRAGMA user_version=4;")?;
         let encoded = serde_json::to_string(&config)?;
         tx.execute("INSERT OR IGNORE INTO config VALUES (1,?1)", [&encoded])?;
         let saved: String =
@@ -209,10 +208,10 @@ impl Store {
     }
 
     /// Reject gaps, changed parents, coinbase payments, malformed records and payments
-    /// a snapshot would refuse before advancing coverage: the block's payments must
+    /// a segment would refuse before advancing coverage: the block's payments must
     /// share its hash and follow chain order by position, transaction index and action
     /// index, with one txid per transaction. Heights and position ranges order the
-    /// blocks, so each receiver's pages continue as [`snapshot::check_next`] requires.
+    /// blocks, so each receiver's pages continue in chain order.
     pub fn append(&mut self, block: &IndexedBlock) -> Result<(), Error> {
         let tx = self
             .db
@@ -285,7 +284,7 @@ impl Store {
     /// `application::correct` does. Each block must match its stored hash, parent, positions, coinbase count
     /// and commitments; its payments are checked as [`Self::append`] checks them. Final
     /// witness payloads of the replaced payments go with them and are rebuilt from the
-    /// retained commitments when next requested, and sealed shards ending at or after
+    /// retained commitments when next requested, and sealed shards decided at or after
     /// the first corrected block are unsealed.
     pub fn correct(&mut self, revision: u64, blocks: &[IndexedBlock]) -> Result<(), Error> {
         let tx = self
@@ -330,7 +329,7 @@ impl Store {
         }
         // Partition boundaries through the affected suffix are recomputed.
         if let Some(first) = blocks.iter().map(|b| b.height).min() {
-            tx.execute("DELETE FROM receiver_shards WHERE end_height>=?1", [first])?;
+            tx.execute("DELETE FROM receiver_shards WHERE cause>=?1", [first])?;
         }
         tx.execute("UPDATE filter_revision SET revision=?1", [revision])?;
         tx.commit()?;
@@ -506,67 +505,6 @@ impl Store {
         Ok(())
     }
 
-    /// Build all receiver pages from one SQLite read transaction and immutable anchor.
-    /// A crowded bucket retries the next of [`SALT_ATTEMPTS`] salts derived from the
-    /// anchor, so the result is deterministic; [`Error::Capacity`] means every salt
-    /// overflowed at `rows`, or the history has more payments than `rows` has slots,
-    /// found without loading more records than that. Correction revisions bind every session.
-    pub fn snapshot(&mut self, rows: u32, history_revision: u64) -> Result<Snapshot, Error> {
-        self.snapshot_from(self.config.start_height, rows, history_revision)
-    }
-
-    /// [`Self::snapshot`] of the blocks from `from` through the tip: a recent tier
-    /// after the last sealed shard.
-    pub fn snapshot_from(
-        &mut self,
-        from: u32,
-        rows: u32,
-        history_revision: u64,
-    ) -> Result<Snapshot, Error> {
-        let capacity = snapshot::capacity(rows)?;
-        let tx = self.db.transaction()?;
-        let stored_revision: u64 =
-            tx.query_row("SELECT revision FROM filter_revision", [], |r| r.get(0))?;
-        if history_revision != stored_revision {
-            return Err(Error::Coverage);
-        }
-        let anchor = tip(&tx, &self.config)?;
-        if from < self.config.start_height || anchor.height < from {
-            return Err(Error::Coverage);
-        }
-        let count: u64 = tx.query_row(
-            "SELECT COUNT(*) FROM payments WHERE height>=?1",
-            [from],
-            |r| r.get(0),
-        )?;
-        if count > capacity {
-            return Err(Error::Capacity);
-        }
-        let start = checkpoint_at(&tx, &self.config, from - 1)?;
-        let records = records(&tx, from, anchor.height)?;
-        tx.commit()?;
-        let template = Manifest {
-            profile: PROFILE.into(),
-            genesis: self.config.genesis,
-            history_revision,
-            start_height: from,
-            start_parent: start.hash,
-            start_position: start.position,
-            end_height: anchor.height,
-            end_hash: anchor.hash,
-            end_position: anchor.position,
-            rows,
-            salt: [0; 32],
-            records: 0,
-            data_sha256: [0; 32],
-        };
-        table(
-            template,
-            records,
-            (0..SALT_ATTEMPTS).map(|a| salt(&anchor.hash, a)),
-        )
-    }
-
     /// The stored payments in blocks `from..=to`, each a lone page, in position order.
     pub fn records(&self, from: u32, to: u32) -> Result<Vec<RawRecord>, Error> {
         records(&self.db, from, to)
@@ -575,7 +513,7 @@ impl Store {
     /// The sealed Receiver shards, contiguous from the configured start.
     pub fn sealed_shards(&self) -> Result<Vec<SealedShard>, Error> {
         let mut query = self.db.prepare(
-            "SELECT start_height,end_height,segments,rows,payloads FROM receiver_shards ORDER BY shard",
+            "SELECT start_height,end_height,segments,cause FROM receiver_shards ORDER BY shard",
         )?;
         let shards: Vec<SealedShard> = query
             .query_map([], |r| {
@@ -583,8 +521,7 @@ impl Store {
                     start_height: r.get(0)?,
                     end_height: r.get(1)?,
                     segments: r.get(2)?,
-                    rows: r.get(3)?,
-                    payloads: r.get(4)?,
+                    cause: r.get(3)?,
                 })
             })?
             .collect::<Result<_, _>>()?;
@@ -599,8 +536,8 @@ impl Store {
     }
 
     /// Records `shard` as the next sealed shard: it must start right after the last
-    /// one, or at the configured start, and end at a stored block. A rewind past its end
-    /// or a correction at or before its end removes it.
+    /// one, or at the configured start, and its deciding block must be stored. A rewind
+    /// or a correction reaching that block removes it.
     pub fn seal(&mut self, shard: &SealedShard) -> Result<(), Error> {
         let next = self
             .sealed_shards()?
@@ -609,13 +546,15 @@ impl Store {
         if shard.start_height != next
             || shard.end_height < shard.start_height
             || shard.end_height > self.tip()?.height
-            || shard.segments == 0
+            || !(1..=8).contains(&shard.segments)
+            || !(shard.end_height..=shard.end_height + 1).contains(&shard.cause)
+            || shard.cause > self.tip()?.height
         {
             return Err(Error::Coverage);
         }
         self.db.execute(
-            "INSERT INTO receiver_shards (start_height,end_height,segments,rows,payloads) VALUES (?1,?2,?3,?4,?5)",
-            params![shard.start_height, shard.end_height, shard.segments, shard.rows, shard.payloads],
+            "INSERT INTO receiver_shards (start_height,end_height,segments,cause) VALUES (?1,?2,?3,?4)",
+            params![shard.start_height, shard.end_height, shard.segments, shard.cause],
         )?;
         Ok(())
     }
@@ -671,7 +610,7 @@ pub fn open_in(data_dir: &Path, config: Config, create: bool) -> Result<(Store, 
 
 /// Builds the store at `path` from the version 2 store at `legacy` once, if `path` does
 /// not exist yet and `legacy` does. The copy's records gain a zero witness ordinal,
-/// which every snapshot reassigns, and it becomes version 3; completed Ironwood shards
+/// which every segment build reassigns, and it becomes version 3; completed Ironwood shards
 /// are recorded from its retained commitments when next needed. `legacy` is left
 /// unchanged, so a rollback to the earlier binary keeps working from it. Interrupted
 /// conversions restart from the beginning. Returns whether it converted.
@@ -833,7 +772,7 @@ impl PayoutStore {
 }
 
 /// Checks and stores `block`'s payments as [`Store::append`] describes, each as a lone
-/// page whose snapshot numbers its pages and witness ordinal.
+/// page; a segment build assigns its slot, page and total.
 fn insert_payments(tx: &Connection, block: &IndexedBlock) -> Result<(), Error> {
     let mut last: Option<&Payment> = None;
     for (receiver, p) in &block.payments {
@@ -888,55 +827,6 @@ fn records(db: &Connection, from: u32, to: u32) -> Result<Vec<RawRecord>, Error>
         .map(|bytes| decode(&bytes?)?.ok_or(Error::Malformed))
         .collect();
     records
-}
-
-/// Numbers each receiver's pages in position order, ranks every record's witness
-/// ordinal by position, and places `records` under the first of `salts` whose buckets
-/// all fit `template`'s rows. [`Error::Capacity`] when none does.
-pub fn table(
-    template: Manifest,
-    mut records: Vec<RawRecord>,
-    salts: impl IntoIterator<Item = Hash>,
-) -> Result<Snapshot, Error> {
-    records.sort_by_key(|r| (r.receiver, r.payment.position));
-    let mut start = 0;
-    while start < records.len() {
-        let end = start
-            + records[start..]
-                .iter()
-                .take_while(|r| r.receiver == records[start].receiver)
-                .count();
-        let total = u32::try_from(end - start).map_err(|_| Error::Capacity)?;
-        for (page, record) in records[start..end].iter_mut().enumerate() {
-            record.page = page as u32;
-            record.total = total;
-        }
-        start = end;
-    }
-    snapshot::assign_ordinals(&mut records);
-    for salt in salts {
-        let manifest = Manifest {
-            salt,
-            ..template.clone()
-        };
-        match Snapshot::build(manifest, &records) {
-            Err(zakura_pir_publisher::receiver::Error::Capacity) => continue,
-            built => return Ok(built?),
-        }
-    }
-    Err(Error::Capacity)
-}
-
-/// The anchor hash first, so an uncrowded publication keeps its earlier salt.
-fn salt(anchor: &Hash, attempt: u32) -> Hash {
-    if attempt == 0 {
-        return *anchor;
-    }
-    let mut h = Sha256::new();
-    h.update(b"ironwood-receiver/v1/salt\0");
-    h.update(anchor);
-    h.update(attempt.to_le_bytes());
-    h.finalize().into()
 }
 
 /// The checkpoint just below the configured start height.

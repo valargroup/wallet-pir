@@ -96,7 +96,7 @@ class ReceiverOpsConfig(unittest.TestCase):
         wallet = re.search(r'@wallet path (.*)', text).group(1).split()
         expected = {prefix + operation for prefix in ('/receiver/v1', '/v1/receiver')
                     for operation in ('/inventory', '/inventory/*', '/query', '/public/*',
-                                      '/shard-filters/*', '/block-filters/*')}
+                                      '/shard-filters/*', '/choice/*', '/block-filters/*')}
         self.assertEqual(set(wallet), expected)
         provider = re.search(r'@provider path (.*)', text).group(1).split()
         self.assertEqual(provider, ['/provider/receiver/v1/*'])
