@@ -32,13 +32,13 @@ thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 
-zakura-pir-protocol = { version = "=0.0.1-rc4", default-features = false, features = ["transparent"] }
-zakura-pir-query-server = { version = "=0.0.1-rc4", default-features = false, features = ["transparent"] }
-zakura-pir-server-core = { version = "=0.0.1-rc4", default-features = false, features = ["transparent"] }
-zakura-pir-publisher = { version = "=0.0.1-rc4", default-features = false, features = ["transparent"], optional = true }
+zakura-pir-protocol = { version = "=0.0.1-rc5", default-features = false, features = ["transparent"] }
+zakura-pir-query-server = { version = "=0.0.1-rc5", default-features = false, features = ["transparent"] }
+zakura-pir-server-core = { version = "=0.0.1-rc5", default-features = false, features = ["transparent"] }
+zakura-pir-publisher = { version = "=0.0.1-rc5", default-features = false, features = ["transparent"], optional = true }
 
 # Disk-cache verification encrypts one sample query; no product client is selected.
-zakura-pir-client = { version = "=0.0.1-rc4", default-features = false, features = ["native"] }
+zakura-pir-client = { version = "=0.0.1-rc5", default-features = false, features = ["native"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 rustix = { version = "1.1", features = ["fs", "process", "thread"] }
@@ -46,5 +46,5 @@ rustix = { version = "1.1", features = ["fs", "process", "thread"] }
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
 tempfile = "3"
-zakura-pir-publisher = { version = "=0.0.1-rc4", default-features = false, features = ["transparent"] }
-zakura-pir-client = { version = "=0.0.1-rc4", default-features = false, features = ["transparent"] }
+zakura-pir-publisher = { version = "=0.0.1-rc5", default-features = false, features = ["transparent"] }
+zakura-pir-client = { version = "=0.0.1-rc5", default-features = false, features = ["transparent"] }

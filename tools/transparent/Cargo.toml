@@ -260,11 +260,11 @@ tokio-util = { version = "0.7", features = ["io"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 zakura-server-chain = { path = "../../src/shared/pir-chain", default-features = false, features = ["transparent", "rpc"], optional = true }
 
-zakura-pir-protocol = { version = "=0.0.1-rc4", default-features = false, features = ["transparent"] }
-zakura-pir-publisher = { version = "=0.0.1-rc4", default-features = false, features = ["transparent"] }
-zakura-pir-query-server = { version = "=0.0.1-rc4", default-features = false, features = ["transparent"] }
-zakura-pir-server-core = { version = "=0.0.1-rc4", default-features = false, features = ["transparent"] }
-zakura-pir-client = { version = "=0.0.1-rc4", default-features = false, features = ["transparent", "engine-store", "reqwest"] }
+zakura-pir-protocol = { version = "=0.0.1-rc5", default-features = false, features = ["transparent"] }
+zakura-pir-publisher = { version = "=0.0.1-rc5", default-features = false, features = ["transparent"] }
+zakura-pir-query-server = { version = "=0.0.1-rc5", default-features = false, features = ["transparent"] }
+zakura-pir-server-core = { version = "=0.0.1-rc5", default-features = false, features = ["transparent"] }
+zakura-pir-client = { version = "=0.0.1-rc5", default-features = false, features = ["transparent", "engine-store", "reqwest"] }
 
 [build-dependencies]
 prost-build = { version = "0.13", optional = true }
@@ -273,4 +273,4 @@ sha2 = "0.10"
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
 transparent-shared = { path = "../../src/transparent/transparent-shared", features = ["test-support"] }
-zakura-pir-client = { version = "=0.0.1-rc4", default-features = false, features = ["transparent", "engine-store", "reqwest", "testing"] }
+zakura-pir-client = { version = "=0.0.1-rc5", default-features = false, features = ["transparent", "engine-store", "reqwest", "testing"] }

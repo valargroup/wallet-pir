@@ -39,9 +39,9 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 zakura-server-chain = { path = "../../shared/pir-chain", default-features = false, features = ["status", "rpc"] }
 
-zakura-pir-publisher = { version = "=0.0.1-rc4", default-features = false, features = ["status"], optional = true }
+zakura-pir-publisher = { version = "=0.0.1-rc5", default-features = false, features = ["status"], optional = true }
 # Wallet client for the host's Status regressions. Production builds leave it off.
-zakura-pir-client = { version = "=0.0.1-rc4", default-features = false, optional = true }
+zakura-pir-client = { version = "=0.0.1-rc5", default-features = false, optional = true }
 
 [dev-dependencies]
 # Cross-role regressions run real query-server Status roles against this publisher.

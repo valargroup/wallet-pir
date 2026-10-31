@@ -36,9 +36,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # recovery and proof checks from one exact wallet-libraries revision; node reads
 # and block interpretation from the shared chain reader, which uses the same
 # revision. The evaluator prepares sessions, and the probe reads as a wallet.
-zakura-pir-publisher = { version = "=0.0.1-rc4", default-features = false, features = ["receiver-crypto"] }
-zakura-pir-query-server = { version = "=0.0.1-rc4", default-features = false, features = ["receiver"] }
-zakura-pir-client = { version = "=0.0.1-rc4", default-features = false, features = ["receiver"] }
+zakura-pir-publisher = { version = "=0.0.1-rc5", default-features = false, features = ["receiver-crypto"] }
+zakura-pir-query-server = { version = "=0.0.1-rc5", default-features = false, features = ["receiver"] }
+zakura-pir-client = { version = "=0.0.1-rc5", default-features = false, features = ["receiver"] }
 zakura-server-chain = { path = "../../shared/pir-chain", default-features = false, features = ["receiver", "rpc"] }
 
 
