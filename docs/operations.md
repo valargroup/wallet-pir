@@ -57,7 +57,8 @@ nothing. On every selected host it unpacks the build, has the new binary accept 
 host's config, and runs that build's `pir-probe` against the service running now. Then
 it prints the waves that would restart. Every deploy and dry run ends with one probe
 per product through the public origins wallets use (Enhance and Status through
-`enhance-pir`, Transparent history and transaction details through `transparent-pir`,
+`enhance-pir`, Transparent history and transaction details through `wallet-pir`, whose
+canonical `/transparent/v1/` routes reach the Transparent fleet's `/v2` API,
 Receiver through `receiver-pir`), run from the publisher host with the deployed build's
 `pir-probe`; a failed probe is retried within its 15 s budget while query roles catch up.
 A publisher restart stops Enhance and Receiver work at the next shard, or inside the

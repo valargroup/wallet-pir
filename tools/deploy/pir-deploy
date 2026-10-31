@@ -37,7 +37,9 @@ set -euo pipefail
 INVENTORY=${PIR_INVENTORY:-$HOME/.config/wallet-pir/inventory}
 DISCOVERY=${PIR_DISCOVERY:-https://enhance-pir.valargroup.dev/.well-known/pir-service-discovery}
 RELEASES=${PIR_RELEASES:-https://github.com/valargroup/wallet-pir/releases/download}
-PUBLIC=${PIR_PUBLIC-https://enhance-pir.valargroup.dev=enhance,status https://transparent-pir.valargroup.dev=transparent_history,transaction_details https://receiver-pir.valargroup.dev=receiver}
+# Transparent is probed through wallet-pir: the probe uses canonical /transparent/v1
+# routes, which that edge maps onto the Transparent fleet's /v2 API.
+PUBLIC=${PIR_PUBLIC-https://enhance-pir.valargroup.dev=enhance,status https://wallet-pir.valargroup.dev=transparent_history,transaction_details https://receiver-pir.valargroup.dev=receiver}
 SSH=${PIR_SSH:-ssh}
 SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=10 -o ControlMaster=auto -o "ControlPath=/tmp/pir-%C" -o ControlPersist=120)
 [ -n "${PIR_SSH_CONFIG:-}" ] && SSH_OPTS=(-F "$PIR_SSH_CONFIG" "${SSH_OPTS[@]}")
