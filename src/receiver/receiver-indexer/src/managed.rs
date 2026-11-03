@@ -640,6 +640,7 @@ mod tests {
             .record(
                 "near-payout-audit",
                 &[([1; 43], [7; 32], now - 7200)],
+                &[],
                 now,
                 now,
             )

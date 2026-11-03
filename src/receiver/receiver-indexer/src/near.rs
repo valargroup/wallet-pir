@@ -3,11 +3,13 @@
 //!
 //! It answers one question independently of NEAR's Zcash addresses: did NEAR send each
 //! reported payout and refund so a wallet can find it (zero OVK, Ironwood)? Payouts name
-//! their transaction. Refunds do not, so a refund counts as found when any of its swap's
+//! their transaction, though NEAR may list another chain's transaction beside it, so a
+//! payout counts as found when any destination transaction its swap lists pays its
+//! receiver. Refunds name none, so a refund counts as found when any of its swap's
 //! reported origin transactions pays the refund receiver. Index completeness is the
 //! canary's, not this audit's; see [`receiver_store::audit`] for when items retire.
 use receiver_store::{
-    Confirmation, OpenRefund, PaymentIndex, PayoutChange, PayoutStore, RefundChange,
+    Confirmation, OpenPayout, OpenRefund, PaymentIndex, PayoutChange, PayoutStore, RefundChange,
     ReportedRefund, Store, RETIRE_AFTER_SECS,
 };
 use serde::Deserialize;
@@ -111,7 +113,7 @@ pub struct Capture {
     feeds: serde_json::Map<String, serde_json::Value>,
     /// Unretired checkable payouts first seen complete more than
     /// [`COMPLETION_GRACE_SECS`] before the terminal block's time.
-    payouts: Vec<(ReceiverBytes, Hash)>,
+    payouts: Vec<OpenPayout>,
     /// Checkable payouts retired after being found, which stay checked.
     retired: u64,
     /// Uncheckable payouts first seen in that span but within [`AUDIT_LOOKBACK_SECS`].
@@ -132,7 +134,7 @@ pub fn capture(store: &PayoutStore, anchor_time: i64) -> Result<Capture> {
         }
         let due = anchor_time - COMPLETION_GRACE_SECS;
         let mut payouts = store.due_payouts(due)?;
-        payouts.retain(|p| !uncheckable(&p.1));
+        payouts.retain(|p| !uncheckable(&p.txid));
         Ok(Capture {
             feeds,
             payouts,
@@ -187,13 +189,14 @@ fn standing(refund: &OpenRefund, matched: bool, anchor: i64) -> Standing {
     }
 }
 
-/// Whether any of `refund`'s candidates pays its receiver, by `paid_in`.
-fn matched<E>(
-    refund: &OpenRefund,
+/// Whether any of `candidates` pays `receiver`, by `paid_in`.
+fn matched<'a, E>(
+    receiver: &ReceiverBytes,
+    candidates: impl IntoIterator<Item = &'a Hash>,
     mut paid_in: impl FnMut(&ReceiverBytes, &Hash) -> std::result::Result<bool, E>,
 ) -> std::result::Result<bool, E> {
-    for txid in &refund.candidates {
-        if paid_in(&refund.receiver, txid)? {
+    for txid in candidates {
+        if paid_in(receiver, txid)? {
             return Ok(true);
         }
     }
@@ -205,7 +208,8 @@ impl Capture {
     ///
     /// Payouts: how many payouts first seen complete more than an hour before the
     /// terminal block's time and not yet retired have no payment to their receiver in
-    /// the transaction NEAR reported in `index` (`payouts_missing`), and how many have
+    /// `index` in any destination transaction NEAR reported for their swap
+    /// (`payouts_missing`), and how many have
     /// been checked in all (`payouts_checked`, retired ones included). A missing payout
     /// means the indexer missed it, or NEAR paid it without the zero OVK, which a seed
     /// restore cannot find. Payouts to an Orchard receiver that NEAR reported complete
@@ -233,8 +237,8 @@ impl Capture {
         ) -> std::result::Result<bool, receiver_store::Error>,
     ) -> Result<serde_json::Value> {
         let mut missing = 0;
-        for (receiver, txid) in &self.payouts {
-            if !paid_in(receiver, txid)? {
+        for payout in &self.payouts {
+            if !matched(&payout.receiver, payout.candidates(), &mut paid_in)? {
                 missing += 1;
             }
         }
@@ -249,7 +253,8 @@ impl Capture {
         let mut uncheckable_new = 0;
         let mut deposits = Vec::new();
         for refund in &self.refunds {
-            match standing(refund, matched(refund, &mut paid_in)?, anchor) {
+            let found = matched(&refund.receiver, &refund.candidates, &mut paid_in)?;
+            match standing(refund, found, anchor) {
                 Standing::Pending => pending += 1,
                 Standing::Uncheckable => {
                     let at = refund.seen_at + COMPLETION_GRACE_SECS;
@@ -533,7 +538,8 @@ impl Audit {
                 let change = if uncheckable(&p.txid) {
                     (p.seen_at < now - AUDIT_LOOKBACK_SECS).then_some(PayoutChange::Expire)
                 } else {
-                    step(p.found_at, index.paid_in(&p.receiver, &p.txid)?, now).map(|s| match s {
+                    let found = matched(&p.receiver, p.candidates(), |r, t| index.paid_in(r, t))?;
+                    step(p.found_at, found, now).map(|s| match s {
                         Step::Found => PayoutChange::Found,
                         Step::Reopen => PayoutChange::Reopen,
                         Step::Retire => PayoutChange::Retire,
@@ -544,7 +550,9 @@ impl Audit {
             let mut refund_changes = Vec::new();
             let mut followups = Followups::default();
             for r in &refunds {
-                let found = matched(r, |receiver, txid| index.paid_in(receiver, txid))?;
+                let found = matched(&r.receiver, &r.candidates, |receiver, txid| {
+                    index.paid_in(receiver, txid)
+                })?;
                 refund_changes.extend(step(r.found_at, found, now).map(|s| {
                     let change = match s {
                         Step::Found => RefundChange::Found,
@@ -755,11 +763,11 @@ impl Explorer {
         let cursor = store.cursor(feed.name())?;
         let floor = cursor.map_or(since, |c| c - feed.lookback());
         let mut newest = cursor.unwrap_or(since).min(read_at);
-        let mut completed = Vec::new();
+        let (mut completed, mut swaps) = (Vec::new(), Vec::new());
         self.scan(feed, floor, read_at, cursor.is_none(), |swap, created| {
             newest = newest.max(created);
             if let Some(receiver) = swap.recipient.as_deref().and_then(orchard_receiver) {
-                completions(swap, receiver, &mut completed);
+                completions(swap, receiver, &mut completed, &mut swaps);
             }
         })
         .await?;
@@ -768,7 +776,7 @@ impl Explorer {
             .into_iter()
             .map(|(r, t)| (r, t, seen_at))
             .collect();
-        store.record(feed.name(), &completed, newest, read_at)?;
+        store.record(feed.name(), &completed, &swaps, newest, read_at)?;
         Ok(completed.len())
     }
 
@@ -993,17 +1001,25 @@ fn orchard_receiver(address: &str) -> Option<ReceiverBytes> {
 }
 
 /// Adds the payouts of `swap` to `receiver` if it succeeded: one per parsable reported
-/// transaction, or else one uncheckable record (see [`UNCHECKABLE_ZEROS`]).
-fn completions(swap: &Swap, receiver: ReceiverBytes, out: &mut Vec<(ReceiverBytes, Hash)>) {
+/// transaction, or else one uncheckable record (see [`UNCHECKABLE_ZEROS`]). A swap that
+/// lists several also links each to its identity in `swaps`, since NEAR lists the other
+/// chain's excess refund there too, and that never pays a Zcash receiver.
+fn completions(
+    swap: &Swap,
+    receiver: ReceiverBytes,
+    out: &mut Vec<(ReceiverBytes, Hash)>,
+    swaps: &mut Vec<(Hash, ReceiverBytes, Hash)>,
+) {
     if swap.status.as_deref() != Some(SUCCESS) {
         return;
     }
+    let txids = parse_hashes(swap.destination_chain_tx_hashes.iter().flatten());
+    if txids.len() > 1 {
+        let id = identity(&swap.deposit_address, swap.deposit_memo.as_deref());
+        swaps.extend(txids.iter().map(|&txid| (id, receiver, txid)));
+    }
     let before = out.len();
-    out.extend(
-        parse_hashes(swap.destination_chain_tx_hashes.iter().flatten())
-            .into_iter()
-            .map(|txid| (receiver, txid)),
-    );
+    out.extend(txids.into_iter().map(|txid| (receiver, txid)));
     if out.len() == before {
         let digest = identity(&swap.deposit_address, swap.deposit_memo.as_deref());
         let mut txid = [0; 32];
@@ -1098,6 +1114,7 @@ mod tests {
             .record(
                 "near-payout-audit",
                 &[(receiver(1), [7; 32], now - 2 * 60 * 60)],
+                &[],
                 now,
                 now - 2 * 60 * 60,
             )
@@ -1132,14 +1149,14 @@ mod tests {
             (receiver(2), [0; 32], early),
         ];
         provider
-            .record("near-payout-audit", &payouts, now, early)
+            .record("near-payout-audit", &payouts, &[], now, early)
             .unwrap();
         let payouts = [(receiver(2), [9; 32], now - 60)];
         provider
-            .record("near-payout-audit", &payouts, now, now - 60)
+            .record("near-payout-audit", &payouts, &[], now, now - 60)
             .unwrap();
         provider
-            .record("near-payout-audit", &[], now, now - 30)
+            .record("near-payout-audit", &[], &[], now, now - 30)
             .unwrap();
         let first = report(&provider, &index, now);
         assert_eq!(first["payouts_checked"], 2);
@@ -1156,6 +1173,65 @@ mod tests {
             serde_json::json!({"near-payout-audit": now - 30, "near-refund-audit": null,
                 "near-excess-refund-audit": null})
         );
+    }
+
+    /// A swap listing its payout beside another chain's transaction, as NEAR lists a
+    /// Bitcoin excess refund, is found once the payout is indexed, by review and report
+    /// alike. Another swap's unindexed payout to the same receiver is still missing.
+    #[test]
+    fn a_payout_is_found_in_any_destination_transaction_its_swap_lists() {
+        let dir = tempfile::tempdir().unwrap();
+        let (provider_path, index_path) = (
+            dir.path().join("providers.sqlite"),
+            dir.path().join(receiver_store::STORE_FILE),
+        );
+        let (mut index, block) = paid_index(&index_path);
+        index.append(&block).unwrap();
+        // The Bitcoin excess refund NEAR listed with a ZEC payout on 2026-11-03.
+        let refund = "4518b182912ff3525a3c1dbb75e69227cc7eb84e6adb2080018ef901ba910647";
+        let record = |address: &str, hashes: &[&str]| -> Swap {
+            serde_json::from_value(serde_json::json!({
+                "createdAtTimestamp": 5, "depositAddress": address, "status": SUCCESS,
+                "destinationChainTxHashes": hashes,
+            }))
+            .unwrap()
+        };
+        let (mut completed, mut swaps) = (Vec::new(), Vec::new());
+        let (paid, other) = ("07".repeat(32), "09".repeat(32));
+        completions(
+            &record("d", &[&paid, refund]),
+            receiver(1),
+            &mut completed,
+            &mut swaps,
+        );
+        completions(
+            &record("e", &[&other]),
+            receiver(1),
+            &mut completed,
+            &mut swaps,
+        );
+        assert_eq!(completed.len(), 3);
+        assert_eq!(swaps.len(), 2);
+        let now = 1_000_000;
+        let seen = now - 2 * 60 * 60;
+        let completed: Vec<_> = completed.into_iter().map(|(r, t)| (r, t, seen)).collect();
+        let mut provider = PayoutStore::open(&provider_path).unwrap();
+        provider
+            .record(Feed::Payouts.name(), &completed, &swaps, now, seen)
+            .unwrap();
+        assert_eq!(report(&provider, &index, now)["payouts_missing"], 1);
+        let (changes, _, _) = audit(&provider_path, &index_path)
+            .review(&provider, now)
+            .unwrap();
+        let refund = zakura_server_chain::hash::parse_display(refund).unwrap();
+        let mut found: Vec<_> = changes.into_iter().map(|(r, t, c)| (t, r, c)).collect();
+        found.sort_by_key(|c| c.0);
+        let mut expected = [
+            ([7; 32], receiver(1), PayoutChange::Found),
+            (refund, receiver(1), PayoutChange::Found),
+        ];
+        expected.sort_by_key(|c| c.0);
+        assert_eq!(found, expected);
     }
 
     /// A completion ages from when a read saw it, not when the read began: after a read
@@ -1175,7 +1251,7 @@ mod tests {
             ];
             PayoutStore::open(&path)
                 .unwrap()
-                .record("near-payout-audit", &payouts, read_at, read_at)
+                .record("near-payout-audit", &payouts, &[], read_at, read_at)
                 .unwrap();
         };
         record(began, seen);
@@ -1631,7 +1707,7 @@ mod tests {
             (receiver(1), [8; 32], now - 7200),
         ];
         provider
-            .record(Feed::Payouts.name(), &payouts, now, now)
+            .record(Feed::Payouts.name(), &payouts, &[], now, now)
             .unwrap();
         let audit = audit(&provider_path, &index_path);
         let review = |provider: &mut PayoutStore, at| {
@@ -1964,7 +2040,10 @@ mod tests {
         )
         .unwrap();
         for r in store.open_refunds(now - COHORT_SECS).unwrap() {
-            let found = matched(&r, |receiver, txid| reader.paid_in(receiver, txid)).unwrap();
+            let found = matched(&r.receiver, &r.candidates, |receiver, txid| {
+                reader.paid_in(receiver, txid)
+            })
+            .unwrap();
             if found || r.candidates.is_empty() {
                 continue;
             }
