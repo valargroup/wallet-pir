@@ -692,16 +692,25 @@ impl PayoutStore {
     }
 
     /// Commits completed payouts and their cursor atomically, keeping the first
-    /// observation. Each payout is also opened for the audit (see [`audit`]).
+    /// observation. Each payout is also opened for the audit (see [`audit`]). Each
+    /// `(swap, receiver, txid)` in `swaps` links a payout to the swap that listed it,
+    /// for a swap listing several transactions, any of which may be the payout.
     pub fn record(
         &mut self,
         feed: &str,
         completions: &[(ReceiverBytes, Hash, i64)],
+        swaps: &[(Hash, ReceiverBytes, Hash)],
         cursor: i64,
         read_at: i64,
     ) -> Result<(), Error> {
         let tx = self.db.transaction()?;
         audit::record_feed(&tx, feed, cursor, read_at)?;
+        for (swap, receiver, txid) in swaps {
+            tx.execute(
+                "INSERT OR IGNORE INTO payout_swaps VALUES (?1,?2,?3)",
+                params![swap.as_slice(), receiver.as_slice(), txid.as_slice()],
+            )?;
+        }
         for (receiver, txid, seen_at) in completions {
             tx.execute(
                 "INSERT INTO payouts VALUES (?1,?2,?3) ON CONFLICT(receiver,txid)

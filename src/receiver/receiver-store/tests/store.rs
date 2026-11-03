@@ -41,11 +41,17 @@ fn provider_store_keeps_latest_times_and_never_rewinds_its_cursor() {
     // A read that saw no completion.
     let read = |store: &mut PayoutStore, cursor, read_at| {
         store
-            .record("near-payout-audit", &[], cursor, read_at)
+            .record("near-payout-audit", &[], &[], cursor, read_at)
             .unwrap()
     };
     store
-        .record("near-payout-audit", &[(payout, [1; 32], 300)], 100, 300)
+        .record(
+            "near-payout-audit",
+            &[(payout, [1; 32], 300)],
+            &[],
+            100,
+            300,
+        )
         .unwrap();
     read(&mut store, 90, 250);
     // A read behind the cursor advances neither the cursor nor the read time, even
@@ -67,6 +73,7 @@ fn provider_store_keeps_latest_times_and_never_rewinds_its_cursor() {
         .record(
             "near-payout-audit",
             &[(payout, [1; 32], 500), (payout, [2; 32], 500)],
+            &[],
             110,
             500,
         )
@@ -81,6 +88,7 @@ fn provider_store_keeps_latest_times_and_never_rewinds_its_cursor() {
             .record(
                 "near-payout-audit",
                 &[(payout, [2; 32], read_at)],
+                &[],
                 110,
                 read_at,
             )
@@ -116,7 +124,13 @@ fn a_failed_provider_read_records_nothing() {
         .unwrap();
     let payout = receiver();
     assert!(store
-        .record("near-payout-audit", &[(payout, [1; 32], 300)], 100, 300)
+        .record(
+            "near-payout-audit",
+            &[(payout, [1; 32], 300)],
+            &[],
+            100,
+            300
+        )
         .is_err());
     drop(store);
     let store = PayoutStore::open(&path).unwrap();
@@ -177,7 +191,13 @@ fn the_previous_release_reopens_the_audit_store_after_this_one() {
     previous(&path, "near-payouts", Some(40), 100, 300);
     let mut store = PayoutStore::open(&path).unwrap();
     store
-        .record("near-payout-audit", &[(receiver(), [1; 32], 400)], 110, 400)
+        .record(
+            "near-payout-audit",
+            &[(receiver(), [1; 32], 400)],
+            &[],
+            110,
+            400,
+        )
         .unwrap();
     drop(store);
     let store = PayoutStore::open(&path).unwrap();
@@ -198,7 +218,7 @@ fn the_previous_release_reopens_the_audit_store_after_this_one() {
     let fresh = dir.path().join("fresh.sqlite");
     PayoutStore::open(&fresh)
         .unwrap()
-        .record("near-payout-audit", &[], 100, 300)
+        .record("near-payout-audit", &[], &[], 100, 300)
         .unwrap();
     previous(&fresh, "near-payouts", Some(50), 100, 300);
     assert_eq!(previous_reads(&fresh, "near-payouts"), (Some(50), 1));
@@ -213,7 +233,13 @@ fn reconciliation_opens_payouts_a_rolled_back_release_recorded() {
     let path = dir.path().join("providers.sqlite");
     let mut store = PayoutStore::open(&path).unwrap();
     store
-        .record("near-payout-audit", &[(receiver(), [1; 32], 100)], 100, 100)
+        .record(
+            "near-payout-audit",
+            &[(receiver(), [1; 32], 100)],
+            &[],
+            100,
+            100,
+        )
         .unwrap();
     store
         .settle_payouts(&[(receiver(), [1; 32], PayoutChange::Retire)], 200)
@@ -244,12 +270,16 @@ fn a_provider_view_reads_one_state() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("providers.sqlite");
     let mut store = PayoutStore::open(&path).unwrap();
-    store.record("near-payout-audit", &[], 100, 300).unwrap();
+    store
+        .record("near-payout-audit", &[], &[], 100, 300)
+        .unwrap();
     let mut writer = PayoutStore::open(&path).unwrap();
     let reads = store
         .view(|view| -> Result<_, receiver_store::Error> {
             let before = view.read("near-payout-audit")?;
-            writer.record("near-payout-audit", &[], 200, 400).unwrap();
+            writer
+                .record("near-payout-audit", &[], &[], 200, 400)
+                .unwrap();
             Ok((before, view.read("near-payout-audit")?))
         })
         .unwrap();

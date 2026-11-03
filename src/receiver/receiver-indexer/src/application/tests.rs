@@ -1885,6 +1885,7 @@ async fn a_paused_chain_refreshes_its_report_without_rebuilding() {
         .record(
             "near-payout-audit",
             &[(payout, [7; 32], NOW - 10)],
+            &[],
             NOW - 50,
             NOW - 10,
         )
@@ -1995,6 +1996,7 @@ async fn a_future_block_time_reports_no_payout_missing_early() {
         .record(
             "near-payout-audit",
             &[(payout, [7; 32], now - 10)],
+            &[],
             now - 50,
             now - 10,
         )

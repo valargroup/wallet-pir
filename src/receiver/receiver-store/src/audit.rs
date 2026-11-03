@@ -22,6 +22,9 @@ pub(crate) const SCHEMA: &str = "
         found_at INTEGER, retired_at INTEGER, PRIMARY KEY(receiver,txid)) WITHOUT ROWID;
     CREATE INDEX IF NOT EXISTS payout_active ON payout_open(receiver) WHERE retired_at IS NULL;
     CREATE INDEX IF NOT EXISTS payouts_seen ON payouts(seen_at);
+    CREATE TABLE IF NOT EXISTS payout_swaps (swap BLOB NOT NULL CHECK(length(swap)=32),
+        receiver BLOB NOT NULL, txid BLOB NOT NULL, PRIMARY KEY(receiver,txid,swap)) WITHOUT ROWID;
+    CREATE INDEX IF NOT EXISTS payout_swaps_swap ON payout_swaps(swap);
     CREATE TABLE IF NOT EXISTS audit_state (key TEXT PRIMARY KEY, value INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS refunds (swap BLOB PRIMARY KEY CHECK(length(swap)=32),
         feed TEXT NOT NULL, receiver BLOB NOT NULL CHECK(length(receiver)=43),
@@ -44,6 +47,16 @@ pub struct OpenPayout {
     pub txid: Hash,
     pub seen_at: i64,
     pub found_at: Option<i64>,
+    /// The other transactions NEAR listed with this one for a swap to the same
+    /// receiver; see [`PayoutStore::record`].
+    pub others: Vec<Hash>,
+}
+
+impl OpenPayout {
+    /// The payout's transaction, then the others its swap lists.
+    pub fn candidates(&self) -> impl Iterator<Item = &Hash> {
+        std::iter::once(&self.txid).chain(&self.others)
+    }
 }
 
 /// What the audit task learned about an open payout.
@@ -149,7 +162,7 @@ impl PayoutStore {
         )?)
     }
 
-    /// Every unretired payout.
+    /// Every unretired payout, with the other transactions its swap lists.
     pub fn open_payouts(&self) -> Result<Vec<OpenPayout>, Error> {
         let mut query = self.db.prepare(
             "SELECT o.receiver,o.txid,p.seen_at,o.found_at FROM payout_open o
@@ -164,13 +177,23 @@ impl PayoutStore {
                 r.get(3)?,
             ))
         })?;
+        let mut others = self.db.prepare(
+            "SELECT DISTINCT b.txid FROM payout_swaps a JOIN payout_swaps b
+             ON b.swap=a.swap AND b.receiver=a.receiver AND b.txid<>a.txid
+             WHERE a.receiver=?1 AND a.txid=?2",
+        )?;
         rows.map(|row| {
             let (receiver, txid, seen_at, found_at) = row?;
+            let others = others
+                .query_map(params![receiver, txid], |r| r.get::<_, Vec<u8>>(0))?
+                .map(|other| other?.try_into().map_err(|_| Error::Malformed))
+                .collect::<Result<_, Error>>()?;
             Ok(OpenPayout {
                 receiver: receiver.try_into().map_err(|_| Error::Malformed)?,
                 txid: txid.try_into().map_err(|_| Error::Malformed)?,
                 seen_at,
                 found_at,
+                others,
             })
         })
         .collect()
@@ -214,12 +237,11 @@ impl PayoutStore {
     }
 
     /// Unretired payouts first seen complete by `until`, for the report's check.
-    pub fn due_payouts(&self, until: i64) -> Result<Vec<(ReceiverBytes, Hash)>, Error> {
+    pub fn due_payouts(&self, until: i64) -> Result<Vec<OpenPayout>, Error> {
         Ok(self
             .open_payouts()?
             .into_iter()
             .filter(|p| p.seen_at <= until)
-            .map(|p| (p.receiver, p.txid))
             .collect())
     }
 
