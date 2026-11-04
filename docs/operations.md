@@ -201,6 +201,10 @@ transaction under the production lock:
 - `/opt/wallet-pir-ops/current`: a link to `releases/<full-sha>`, replaced atomically.
 - `/etc/wallet-pir/fleet.json`: the maintained operator inventory (`0600`), outside
   every release, validated as a complete fleet by the target package itself.
+- `/etc/enhance-pir-v6/workers.json`: optional APM worker inventory, supplied with
+  `--apm-workers`. Each monitoring origin must match an Enhance worker in the
+  candidate fleet. APM reloads this file without a service restart. The transaction
+  retains its previous bytes for reconciliation and rollback.
 - `/etc/wallet-pir/known_hosts`: optional reviewed public host-key pins (`0644`).
   Pins come from a trusted census or from Roman, never from `ssh-keyscan`; the file
   never holds a private key. Inventory entries that name it must pin its digest.
@@ -208,6 +212,11 @@ transaction under the production lock:
 - `/opt/wallet-pir-ops/transactions/<transaction>/`: the coordinator's recovery
   records: the plan, the previous inventory's bytes, per-step intent and completion
   markers and the final status. `latest.json` names the latest transaction.
+
+Use `--fleet-destination /etc/wallet-pir/transparent-fleet.json` when updating the
+older maintained inventory in place. The default remains `/etc/wallet-pir/fleet.json`.
+Rollback recovers this destination and any optional APM inventory from the saved
+transaction; no destination arguments are needed.
 
 A package is *installed* when `current` selects it. That says nothing about which
 code runs a service: a package transaction writes no unit, reloads no daemon and

@@ -2,9 +2,11 @@
 
 The package is the unpacked operations release (`bundle`), kept on the
 coordinator as root-owned `/opt/wallet-pir-ops/releases/<full-sha>`; the
-`current` link selects one. Two managed files live outside the releases: the
+`current` link selects one. Managed files live outside the releases: the
 operator inventory `/etc/wallet-pir/fleet.json` and, when given, the reviewed
-public host-key pins `/etc/wallet-pir/known_hosts`. A package transaction
+public host-key pins `/etc/wallet-pir/known_hosts` and APM worker inventory
+`/etc/enhance-pir-v6/workers.json`. The older maintained inventory path
+`/etc/wallet-pir/transparent-fleet.json` can be selected explicitly. A package transaction
 changes only those paths: no unit is written, reloaded or restarted, so it
 never adopts or changes a service.
 
@@ -39,7 +41,7 @@ changed or unproven release refuses and the current selection stays. A later pla
 a release directory is reused only when a recorded package transaction
 promoted it and its files still match, and is never overwritten.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import base64
 import binascii
 import hashlib
@@ -53,6 +55,7 @@ import sys
 import tempfile
 import time
 import zipfile
+from urllib.parse import urlsplit
 
 from .. import bundle, durable, release
 from .engine import DeployError, file_sha256, mutation_fence
@@ -85,6 +88,8 @@ class Layout:
     known_hosts: str = '/etc/wallet-pir/known_hosts'
     machine_id: str = '/etc/machine-id'
     owner_uid: int = 0
+    apm_workers: str = '/etc/enhance-pir-v6/workers.json'
+    include_apm_workers: bool = False
 
     @property
     def releases(self):
@@ -111,8 +116,47 @@ class Layout:
 
     def managed(self):
         """`(step, path, retained copy name)` of each managed file, in install order."""
-        return (('known-hosts', self.known_hosts, 'previous-known_hosts'),
-                ('fleet', self.fleet, 'previous-fleet.json'))
+        files = (('known-hosts', self.known_hosts, 'previous-known_hosts'),
+                 ('fleet', self.fleet, 'previous-fleet.json'))
+        return files + ((('apm-workers', self.apm_workers, 'previous-apm-workers.json'),)
+                        if self.include_apm_workers else ())
+
+
+def apm_worker_problems(data, fleet):
+    """Accept monitoring origins belonging to configured Enhance workers, with no dangling replicas."""
+    try:
+        groups = json.loads(data)['groups']
+        if not isinstance(groups, list) or not groups:
+            raise ValueError('groups must be a nonempty list')
+        origins = set()
+        for target in fleet['services']['enhance']['roles']['worker']:
+            listen = target.get('settings', {}).get('listen', target.get('vars', {}).get('listen'))
+            address = fleet['hosts'][target['host']]['address']
+            port = urlsplit('http://' + listen).port
+            origins.add((address, port))
+        group_names, worker_names = set(), set()
+        valid_name = re.compile(r'[A-Za-z0-9_-]{1,128}')
+        for group in groups:
+            name = group['name']
+            if not valid_name.fullmatch(name) or name in group_names:
+                raise ValueError('invalid or duplicate group name')
+            group_names.add(name)
+            replicas = group['replicas']
+            if not isinstance(replicas, list) or not replicas:
+                raise ValueError('groups must contain replicas')
+            for replica in replicas:
+                name = replica['name']
+                if not valid_name.fullmatch(name) or name in worker_names:
+                    raise ValueError('invalid or duplicate worker name')
+                worker_names.add(name)
+                url = urlsplit(replica['url'])
+                if (url.scheme not in ('http', 'https') or (url.hostname, url.port) not in origins
+                        or url.username is not None or url.password is not None
+                        or url.query or url.fragment or url.path not in ('', '/') or url.port is None):
+                    raise ValueError('worker %s origin has no matching Enhance worker target in the candidate fleet' % name)
+    except (KeyError, TypeError, ValueError, AttributeError) as error:
+        return ['invalid APM worker inventory: %s' % error]
+    return []
 
 
 class GitHub:
@@ -367,7 +411,7 @@ class Package:
             return [str(error)]
         return []
 
-    def build_plan(self, revision, fleet, run_id=None, archive=None, known_hosts=None):
+    def build_plan(self, revision, fleet, run_id=None, archive=None, known_hosts=None, apm_workers=None):
         """`(plan, problems, archive path)`; reads GitHub, the inputs and the coordinator, changing none."""
         if not REVISION.fullmatch(revision or ''):
             raise PackageError('--sha must be the full 40-hex source revision')
@@ -384,9 +428,13 @@ class Package:
             raise PackageError('give --ci-run-id (or --archive to inspect an unqualified archive)')
         archive = Path(archive).resolve()
         manifest, files, size = bundle.planned_files(archive, revision)
+        self.layout = replace(self.layout, include_apm_workers=apm_workers is not None)
         layout = self.layout
         candidates = {'fleet': Path(fleet).read_bytes(),
                       'known-hosts': Path(known_hosts).read_bytes() if known_hosts else None}
+        if apm_workers is not None:
+            candidates['apm-workers'] = Path(apm_workers).read_bytes()
+            problems += apm_worker_problems(candidates['apm-workers'], json.loads(candidates['fleet']))
         json.loads(candidates['fleet'])
         if candidates['known-hosts'] is not None:
             problems += known_hosts_problems(candidates['known-hosts'])
@@ -492,10 +540,10 @@ class Package:
         for problem in problems:
             self.out('  refused: ' + problem)
 
-    def preflight(self, revision, fleet, run_id=None, archive=None, known_hosts=None):
+    def preflight(self, revision, fleet, run_id=None, archive=None, known_hosts=None, apm_workers=None):
         """The plan plus the read-only mutation fences an install would apply."""
         self.ex.check_identity(self.host)
-        plan, problems, archive = self.build_plan(revision, fleet, run_id, archive, known_hosts)
+        plan, problems, archive = self.build_plan(revision, fleet, run_id, archive, known_hosts, apm_workers)
         try:
             mutation_fence(self.inventory, self.ex)
         except ValueError as error:
@@ -585,7 +633,7 @@ class Package:
             if current == plan['target']['files'][name]:
                 entry = observed['files'][path] or {}
                 if (entry.get('kind') != 'file' or entry.get('uid') != layout.owner_uid
-                        or entry.get('mode') != (0o600 if name == 'fleet' else 0o644)):
+                        or entry.get('mode') != (0o644 if name == 'known-hosts' else 0o600)):
                     return '%s metadata no longer matches the planned file' % path
                 return 'after'
             return '%s is %s, neither the prior nor the planned file' % (path, current)
@@ -689,7 +737,7 @@ class Package:
                 raise PackageError('finishing needs the planned %s file; pass it again' % name)
             path = self.managed_path(name)
             self.locked_effect(self.ex.mkdir, host, str(Path(path).parent), 0o755)
-            self.locked_effect(self.ex.write, host, path, data, 0o600 if name == 'fleet' else 0o644)
+            self.locked_effect(self.ex.write, host, path, data, 0o644 if name == 'known-hosts' else 0o600)
         elif name == 'select':
             self.locked_effect(self.ex.replace_link, host, layout.current, plan['target']['selection'])
         elif name == 'commit':
@@ -750,7 +798,7 @@ class Package:
             finally:
                 self.lock = None
 
-    def install(self, revision, fleet, expect, run_id=None, archive=None, known_hosts=None):
+    def install(self, revision, fleet, expect, run_id=None, archive=None, known_hosts=None, apm_workers=None):
         """Returns the committed journal, or None when the coordinator already matches."""
         if not re.fullmatch('[0-9a-f]{64}', expect or ''):
             raise PackageError('install needs the reviewed plan digest (--expect-plan-sha256)')
@@ -759,7 +807,7 @@ class Package:
             if latest is not None and latest.status not in FINAL:
                 raise PackageError('transaction %s is %s; run %s'
                                    % (latest.id, latest.status, self.next_command(latest.id, latest.status)))
-            plan, problems, trusted = self.build_plan(revision, fleet, run_id, archive, known_hosts)
+            plan, problems, trusted = self.build_plan(revision, fleet, run_id, archive, known_hosts, apm_workers)
             digest = durable.digest(plan)
             if digest != expect:
                 raise PackageError('the coordinator or inputs changed since the reviewed plan (%s, now %s); '
@@ -780,7 +828,7 @@ class Package:
     def next_command(self, identifier, status):
         if status in ('unknown', 'installing'):
             return '%s or %s' % (self.command('ops-package-reconcile', '--transaction', identifier,
-                                              '--fleet', '<fleet.json>', '[--known-hosts <file>]'),
+                                              '--fleet', '<fleet.json>', '[--known-hosts <file>]', '[--apm-workers <file>]'),
                                  self.command('ops-package-rollback', '--transaction', identifier))
         if status in ('refused', 'rolling-back', 'rollback-unknown'):
             return self.command('ops-package-rollback', '--transaction', identifier)
@@ -801,6 +849,15 @@ class Package:
                  % (journal.id, self.host, plan['target']['selection']))
 
     # ------------------------------------------------------------- recovery
+
+    def recorded_layout(self, plan):
+        """Recover only supported managed paths; keep older transactions on their original file set."""
+        if (self.layout.fleet == Layout().fleet
+                and plan['layout']['files'].get('fleet') == '/etc/wallet-pir/transparent-fleet.json'):
+            self.layout = replace(self.layout, fleet='/etc/wallet-pir/transparent-fleet.json')
+        self.layout = replace(self.layout, include_apm_workers='apm-workers' in plan['layout']['files'])
+        if plan['layout']['files'] != {step: path for step, path, _ in self.layout.managed()}:
+            raise PackageError('recorded managed paths differ from this runner layout')
 
     def load(self, identifier):
         """The transaction's plan and runner journal, from this runner or the coordinator's record."""
@@ -834,9 +891,10 @@ class Package:
                                      'created_unix': int(time.time()), 'hosts': [], 'baseline_before': None,
                                      'events': [], 'plan': plan})
             journal.save()
+        self.recorded_layout(plan)
         return journal, plan
 
-    def reconcile(self, identifier=None, archive=None, fleet=None, known_hosts=None):
+    def reconcile(self, identifier=None, archive=None, fleet=None, known_hosts=None, apm_workers=None):
         """Finish an unfinished install whose every observed step state matches its record."""
         def action():
             journal, plan = self.load(identifier)
@@ -848,6 +906,8 @@ class Package:
                 return journal
             self.candidates = {'fleet': Path(fleet).read_bytes() if fleet else None,
                                'known-hosts': Path(known_hosts).read_bytes() if known_hosts else None}
+            if self.layout.include_apm_workers:
+                self.candidates['apm-workers'] = Path(apm_workers).read_bytes() if apm_workers else None
             source = archive
             artifact = plan['qualification'].get('artifact')
             if source is None and artifact:
@@ -917,7 +977,7 @@ class Package:
                         if sha256(previous) != prior:
                             raise PackageError('the retained previous %s of %s is missing or altered'
                                                % (path, journal.id))
-                        self.locked_effect(self.ex.write, host, path, previous, 0o600 if step == 'fleet' else 0o644)
+                        self.locked_effect(self.ex.write, host, path, previous, 0o644 if step == 'known-hosts' else 0o600)
                     journal.event('done', step='restore-' + step)
                 if self.ex.package_tree(host, self.staged_path(journal.id))['root'] is not None:
                     journal.event('intent', step='discard-staging')
@@ -945,8 +1005,14 @@ class Package:
     def status(self):
         """What the coordinator selects, whether it is intact, and the next command if a transaction is open."""
         self.ex.check_identity(self.host)
-        layout = self.layout
         observed = self.observe('0' * 40)
+        if observed['pointer']:
+            identifier = json.loads(observed['pointer'])['id']
+            record = self.remote_record(identifier)
+            if record:
+                self.recorded_layout(record['plan'])
+                observed = self.observe('0' * 40)
+        layout = self.layout
         selection = (observed['current'] or {}).get('target')
         result = {'operation': 'ops-package-status', 'host': self.host, 'machine_id': observed['machine_id'],
                   'selection': selection, 'revision': None, 'integrity': None, 'qualification': None,

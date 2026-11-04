@@ -25,13 +25,6 @@
     "router-01": {
       "address": "192.0.2.14"
     },
-    "enhance-pir-gpu-01": {
-      "address": "192.0.2.19",
-      "user": "paperspace",
-      "sudo": true,
-      "jump": "coordinator",
-      "accelerator": "cuda"
-    },
     "status-01": {
       "address": "192.0.2.17"
     },
@@ -99,37 +92,6 @@
                 ]
               }
             }
-          },
-          {
-            "host": "enhance-pir-gpu-01",
-            "unit": "enhance-pir-gpu-worker.service",
-            "artifact_kind": "enhance-pir-native-cuda",
-            "vars": {
-              "listen": "192.0.2.19:8091"
-            },
-            "settings": {
-              "listen": "192.0.2.19:8091",
-              "data_dir": "/srv/enhance-pir/worker",
-              "sealed_shards": 6,
-              "matvec_backend": "cuda",
-              "cuda_device": 0,
-              "credentials": [
-                "/etc/enhance-pir/internal-token.env"
-              ],
-              "synchronization": {
-                "publisher_origin": "https://publisher.example.invalid",
-                "trusted_ca": null,
-                "download_budget_bytes": 8589934592,
-                "cache_limit_bytes": 8589934592,
-                "shards": [
-                  0
-                ]
-              }
-            },
-            "health_equals": {
-              "matvec.matvec_backend": "cuda",
-              "matvec.cuda_device": 0
-            }
           }
         ],
         "packing-router": [
@@ -152,8 +114,7 @@
                 "cache_limit_bytes": 8589934592,
                 "workers": {
                   "0": [
-                    "http://192.0.2.15:8091",
-                    "http://192.0.2.19:8091"
+                    "http://192.0.2.15:8091"
                   ],
                   "1": [
                     "http://192.0.2.16:8091"

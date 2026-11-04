@@ -1,5 +1,9 @@
 # Optional CUDA matrix-vector evaluation
 
+The production fleet is being retired to CPU-only serving. Keep this guide and
+`cuda-deploy-inventory.example.json` for optional GPU deployments and hardware
+qualification; the default fleet inventory does not deploy a GPU worker.
+
 CUDA is an opt-in build and a per-worker runtime choice. The default build and
 normal release bundles remain CPU-only. The CUDA worker is `pir-query-server`,
 not the publisher. GPU hosts do not run the publisher as the worker.

@@ -52,7 +52,7 @@ class FleetInventoryTests(unittest.TestCase):
         self.assertNotIn('deploy', drivers['transparent-history'])
         self.assertIn('deploy', drivers['enhance'])
         cuda = [r for r in view['roles'] if r['artifact_kind'] == 'enhance-pir-native-cuda']
-        self.assertEqual([r['host'] for r in cuda], ['enhance-pir-gpu-01'])
+        self.assertEqual(cuda, [])
         self.assertEqual(sorted(view['retired_hosts'])[:1], ['transparent-archive-03'])
         # Two history workers on one host keep distinct keys.
         keys = [t.key for t in descriptors.targets(SERVICES['transparent-history'], self.fleet().inventory)]
@@ -153,15 +153,23 @@ class FleetInventoryTests(unittest.TestCase):
                 self.fleet(change)
 
     def test_artifact_variants_are_explicit_for_cuda(self):
+        def with_cuda(change):
+            def configured(d):
+                cuda = json.loads((ROOT / 'tools/enhance/deploy/cuda-deploy-inventory.example.json').read_text())
+                d['hosts']['enhance-pir-gpu-01'] = {**cuda['hosts']['enhance-pir-gpu-01'], 'accelerator': 'cuda'}
+                d['services']['enhance']['roles']['worker'].append(cuda['services']['enhance']['roles']['worker'][0])
+                d['services']['enhance']['roles']['worker'][-1]['artifact_kind'] = 'enhance-pir-native-cuda'
+                change(d)
+            return configured
         def implicit(d):
             d['services']['enhance']['roles']['worker'][2].pop('artifact_kind')
-        self.refused(implicit, 'only an explicit CUDA artifact_kind')
+        self.refused(with_cuda(implicit), 'only an explicit CUDA artifact_kind')
         def cpu_host(d):
             d['hosts']['enhance-pir-gpu-01'].pop('accelerator')
-        self.refused(cpu_host, 'only a CUDA host runs one')
+        self.refused(with_cuda(cpu_host), 'only a CUDA host runs one')
         def unverified(d):
             d['services']['enhance']['roles']['worker'][2].pop('health_equals')
-        self.refused(unverified, 'matvec.matvec_backend')
+        self.refused(with_cuda(unverified), 'matvec.matvec_backend')
 
     def test_operations_and_controller_owned_fields(self):
         self.refused(lambda d: d['ancillary']['coordinator-edge'].update(operations=['inspect', 'restart']),
@@ -185,7 +193,7 @@ class FleetInventoryTests(unittest.TestCase):
         self.assertTrue(fleet.describe()['roles'])
         self.assertTrue(any('services missing' in p for p in fleet.problems(complete=True)))
         targets = descriptors.targets(SERVICES['enhance'], fleet.inventory)
-        self.assertEqual(len(targets), 5)
+        self.assertEqual(len(targets), 4)
 
 
     def test_hosts_may_use_their_own_identity_and_pin(self):

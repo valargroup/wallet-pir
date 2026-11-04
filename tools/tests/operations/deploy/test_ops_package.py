@@ -91,7 +91,8 @@ class PackageCase(unittest.TestCase):
         self.layout = package.Layout(root=str(self.dir / 'opt/wallet-pir-ops'),
                                      fleet=str(self.dir / 'etc/wallet-pir/fleet.json'),
                                      known_hosts=str(self.dir / 'etc/wallet-pir/known_hosts'),
-                                     machine_id=str(self.dir / 'machine-id'), owner_uid=os.getuid())
+                                     machine_id=str(self.dir / 'machine-id'), owner_uid=os.getuid(),
+                                     apm_workers=str(self.dir / 'etc/enhance-pir-v6/workers.json'))
         self.state = self.dir / 'state'
         self.inventory_path = self.dir / 'inventory.json'
         self.inventory_path.write_text(json.dumps({
@@ -161,6 +162,93 @@ class PackageCase(unittest.TestCase):
     def staged(self):
         staging = Path(self.layout.staging)
         return list(staging.iterdir()) if staging.exists() else []
+
+
+class ApmWorkerInventoryTests(PackageCase):
+    def candidate(self):
+        path = self.dir / 'workers.json'
+        path.write_text(json.dumps({'groups': [{'name': 'cpu', 'replicas': [
+            {'name': 'enhance-pir-worker-01', 'url': 'http://192.0.2.15:8091'},
+            {'name': 'enhance-pir-worker-02', 'url': 'http://192.0.2.16:8091'},
+        ]}]}))
+        return path
+
+    def test_removal_is_bound_to_plan_and_restored_from_another_runner(self):
+        workers = self.candidate()
+        previous = Path(self.layout.apm_workers)
+        previous.parent.mkdir(parents=True)
+        before = json.loads(workers.read_text())
+        before['groups'].append({'name': 'gpu', 'replicas': [
+            {'name': 'enhance-pir-gpu-01', 'url': 'http://192.0.2.19:8091'}]})
+        original = (json.dumps(before) + '\n').encode()
+        previous.write_bytes(original)
+        self.archive(A)
+        runner = self.package()
+        plan, problems, _ = runner.build_plan(A, self.fleet, RUNS[A], apm_workers=workers)
+        self.assertEqual(problems, [])
+        self.assertIn('apm-workers', plan['target']['files'])
+        journal = runner.install(A, self.fleet, durable.digest(plan), RUNS[A], apm_workers=workers)
+        self.assertEqual(previous.read_bytes(), workers.read_bytes())
+        self.assertEqual(previous.stat().st_mode & 0o777, 0o600)
+        recovered = self.package(state=self.dir / 'another-runner')
+        self.assertEqual(recovered.status()['files']['apm-workers'], package.sha256(workers.read_bytes()))
+        recovered.rollback(journal.id)
+        self.assertEqual(previous.read_bytes(), original)
+        self.assertIsNone(self.fleet_bytes())
+
+    def test_dangling_origins_and_empty_or_duplicate_inventory_are_refused_without_writes(self):
+        workers = self.candidate()
+        original = json.loads(workers.read_text())
+        self.archive(A)
+        variants = [
+            {'groups': []},
+            {'groups': [{'name': 'empty', 'replicas': []}]},
+            {'groups': original['groups'] * 2},
+            {'groups': [{'name': 'gpu', 'replicas': [
+                {'name': 'enhance-pir-gpu-01', 'url': 'http://192.0.2.19:8091'}]}]},
+        ]
+        for document in variants:
+            with self.subTest(document=document):
+                workers.write_text(json.dumps(document))
+                runner = self.package()
+                plan, problems, _ = runner.build_plan(A, self.fleet, RUNS[A], apm_workers=workers)
+                self.assertTrue(any('invalid APM worker inventory' in problem for problem in problems), problems)
+                with self.assertRaises(package.PackageError):
+                    runner.install(A, self.fleet, durable.digest(plan), RUNS[A], apm_workers=workers)
+                self.assertEqual(self.host.mutations(), [])
+
+    def test_changed_candidate_does_not_match_reviewed_plan(self):
+        workers = self.candidate()
+        self.archive(A)
+        runner = self.package()
+        plan, problems, _ = runner.build_plan(A, self.fleet, RUNS[A], apm_workers=workers)
+        self.assertEqual(problems, [])
+        workers.write_text(workers.read_text() + '\n')
+        with self.assertRaisesRegex(package.PackageError, 'inputs changed since the reviewed plan'):
+            runner.install(A, self.fleet, durable.digest(plan), RUNS[A], apm_workers=workers)
+        self.assertEqual(self.host.mutations(), [])
+
+    def test_lost_inventory_write_reply_is_reconciled_and_first_install_rolls_back_to_absence(self):
+        workers = self.candidate()
+        self.archive(A)
+        runner = self.package()
+        plan, problems, _ = runner.build_plan(A, self.fleet, RUNS[A], apm_workers=workers)
+        self.assertEqual(problems, [])
+
+        def lose_reply(operation, arguments):
+            if operation == 'write' and arguments.get('path') == self.layout.apm_workers:
+                self.host.after = None
+                raise RemoteError('lost reply after installing the monitoring inventory')
+
+        self.host.after = lose_reply
+        with self.assertRaisesRegex(package.PackageError, 'outcome.*unknown'):
+            runner.install(A, self.fleet, durable.digest(plan), RUNS[A], apm_workers=workers)
+        recovered = self.package(state=self.dir / 'recovery-runner')
+        journal = recovered.reconcile(fleet=self.fleet, apm_workers=workers)
+        self.assertEqual(journal.status, 'committed')
+        self.assertEqual(Path(self.layout.apm_workers).read_bytes(), workers.read_bytes())
+        recovered.rollback(journal.id)
+        self.assertFalse(Path(self.layout.apm_workers).exists())
 
 
 class PlanTests(PackageCase):

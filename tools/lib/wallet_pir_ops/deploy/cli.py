@@ -86,16 +86,19 @@ production lock.
   ancillary-status NAME
       Read-only systemd state of one shared routing or supervision unit.
 
-  ops-package-{plan,preflight} --sha REV --ci-run-id N --fleet F [--known-hosts F] [--archive F] [--host H]
+  ops-package-{plan,preflight} --sha REV --ci-run-id N --fleet F [--known-hosts F] [--apm-workers F] [--archive F] [--host H]
   ops-package-install ...same... --expect-plan-sha256 H
   ops-package-status [--host H]
-  ops-package-reconcile [--transaction ID] [--archive F] [--fleet F] [--known-hosts F]
+  ops-package-reconcile [--transaction ID] [--archive F] [--fleet F] [--known-hosts F] [--apm-workers F]
   ops-package-rollback [--transaction ID]
       Install the operations package on the coordinator as root-owned
       /opt/wallet-pir-ops/releases/<sha> selected by the `current` link, with the
       operator inventory /etc/wallet-pir/fleet.json and optional public host-key pins
       /etc/wallet-pir/known_hosts. The archive is the wallet-pir-ops-<sha> artifact of
       full-CI run N on main, downloaded through gh; a local --archive must equal it.
+      --fleet-destination selects the maintained inventory path (default fleet.json;
+      transparent-fleet.json for older installations). --apm-workers also replaces
+      the APM worker inventory, which the running sidecar reloads.
       Journaled under the production lock; never touches a unit.
 
 The inventory (hosts, SSH, lock) is --inventory or WALLET_PIR_DEPLOY_INVENTORY.
@@ -150,6 +153,10 @@ def parser():
                              help='the successful full-CI run on main whose wallet-pir-ops-<sha> artifact installs')
         command.add_argument('--archive', help='a local copy; accepted only if it equals the artifact\'s archive')
         command.add_argument('--fleet', required=True, help='the complete operator inventory to install')
+        command.add_argument('--fleet-destination', choices=['/etc/wallet-pir/fleet.json',
+                             '/etc/wallet-pir/transparent-fleet.json'], default='/etc/wallet-pir/fleet.json',
+                             help='maintained inventory path on the coordinator')
+        command.add_argument('--apm-workers', help='APM worker inventory for /etc/enhance-pir-v6/workers.json')
         command.add_argument('--known-hosts', help='reviewed public host-key pins for /etc/wallet-pir/known_hosts')
         command.add_argument('--host', help='coordinator inventory host (default: the remote lock host)')
         if name == 'ops-package-install':
@@ -162,6 +169,7 @@ def parser():
         if name == 'ops-package-reconcile':
             command.add_argument('--archive', help='the planned archive (default: this runner\'s artifact copy)')
             command.add_argument('--fleet', help='the planned inventory, if it is not yet installed')
+            command.add_argument('--apm-workers', help='the planned APM worker inventory, if not yet installed')
             command.add_argument('--known-hosts', help='the planned host-key pins, if not yet installed')
     transparent_cli().register(commands)
     from . import cache_storage
@@ -180,12 +188,15 @@ def run_package(args, inventory, executor, layout, github, out):
     """One `ops-package-*` command; see `package.Package`."""
     from . import package
     log = (lambda message: None) if args.json else out
+    if hasattr(args, 'fleet_destination') and layout is None:
+        layout = package.Layout(fleet=args.fleet_destination)
     target = package.Package(inventory, executor, args.state_dir, args.host, layout, out=log,
                              inventory_path=args.inventory, github=github)
     command = args.command[len('ops-package-'):]
     inputs = {}
     if command in ('plan', 'preflight', 'install'):
-        inputs = {'run_id': args.ci_run_id, 'archive': args.archive, 'known_hosts': args.known_hosts}
+        inputs = {'run_id': args.ci_run_id, 'archive': args.archive,
+                  'known_hosts': args.known_hosts, 'apm_workers': args.apm_workers}
     if command in ('plan', 'preflight'):
         if command == 'plan':
             target.ex.check_identity(target.host)
@@ -194,8 +205,10 @@ def run_package(args, inventory, executor, layout, github, out):
             plan, problems = target.preflight(args.sha, args.fleet, **inputs)
         digest = package.durable.digest(plan)
         install = target.command('ops-package-install', '--sha', args.sha, '--fleet', args.fleet,
+                                 '--fleet-destination', target.layout.fleet,
                                  *(['--ci-run-id', str(args.ci_run_id)] if args.ci_run_id else []),
                                  *(['--known-hosts', args.known_hosts] if args.known_hosts else []),
+                                 *(['--apm-workers', args.apm_workers] if args.apm_workers else []),
                                  '--expect-plan-sha256', digest)
         if args.json:
             out(json.dumps({'operation': args.command, 'plan': plan, 'plan_sha256': digest,
@@ -213,7 +226,7 @@ def run_package(args, inventory, executor, layout, github, out):
     if command == 'install':
         journal = target.install(args.sha, args.fleet, args.expect_plan_sha256, **inputs)
     elif command == 'reconcile':
-        journal = target.reconcile(args.transaction, args.archive, args.fleet, args.known_hosts)
+        journal = target.reconcile(args.transaction, args.archive, args.fleet, args.known_hosts, args.apm_workers)
     else:
         journal = target.rollback(args.transaction)
     result = {'operation': args.command, 'transaction': journal.id if journal else None,
