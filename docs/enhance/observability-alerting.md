@@ -702,10 +702,10 @@ txid display controller.
 | Key (after `quality.<name>.`) | Kinds | Severity | Fires when | Hold |
 | --- | --- | --- | --- | --- |
 | `inventory` | both | warning | roster or worker list invalid | 45 s |
-| `publication_canonical` | both | critical | published block hash differs from the node's | – |
-| `publication_origins` | both | critical | a public origin serves another map (only with origins) | 30 s; 180 s (`origin_lag_hold_seconds`) while every differing origin still serves the previous map, for that long after the publication |
+| `publication_canonical` | both | critical | published block hash differs from the node's | 60 s |
+| `publication_origins` | both | critical | a public origin serves another map (only with origins) | 30 s; 180 s (`origin_lag_hold_seconds`) while every differing origin serves an older publication (its `covered_through` below the published height, or the previous map if it reports none), for that long after the coordinator published past it |
 | `publication_*_coverage` | both | warning | that check unavailable | 45 s |
-| `publication_warning` | history | warning | oldest unpublished block > 30 s | – |
+| `publication_warning` | history | warning | oldest unpublished block > 30 s | 30 s |
 | `publication_critical` | history | critical | oldest unpublished block > 60 s | 60 s |
 | `publication_critical` | txid | critical | oldest unpublished block > 180 s | – |
 | `publication_lag` | both | warning | coordinator ≥ 2 blocks behind its node | 5 min |

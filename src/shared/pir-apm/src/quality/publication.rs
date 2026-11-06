@@ -19,18 +19,23 @@ pub struct View {
     /// When the sampling loop first saw the current map, which bounds how long
     /// an origin serving `previous_map` counts as propagation.
     pub map_seen_at: Option<u64>,
+    /// Each distinct published height and when the sampling loop first saw it,
+    /// oldest first; see [`View::lag_started`].
+    #[serde(skip)]
+    pub heights_seen: Vec<(u64, u64)>,
     /// One entry per configured origin (at most two), in configuration order.
     pub origins: Vec<Origin>,
 }
 /// One public origin's answer. It holds only the configured origin's scheme,
-/// host and port, the HTTP status, a validated map digest and a fixed reason:
-/// never a response body, path, query or credential.
+/// host and port, the HTTP status, a validated map digest, the height that map
+/// covers and a fixed reason: never a response body, path, query or credential.
 #[derive(Clone, Debug, Default, Serialize, PartialEq, Eq)]
 pub struct Origin {
     pub origin: String,
     pub observed_at: u64,
     pub http_status: Option<u16>,
     pub map_sha256: Option<String>,
+    pub covered_through: Option<u64>,
     pub failure: Option<&'static str>,
 }
 /// Why the origin check did not find agreement, most specific first.
@@ -42,7 +47,8 @@ pub enum Finding {
     ObservationRace,
     /// An origin could not be read or returned no valid map.
     FailedObservation,
-    /// An origin still serves the previously published map.
+    /// An origin still serves an older publication: one below the published
+    /// height, or the previous map when it reports no height.
     LaggingOrigin,
     /// An origin serves a map the coordinator has not recently published.
     Mismatch,
@@ -91,10 +97,13 @@ async fn observe(client: &reqwest::Client, origin: &str, index: usize, path: &st
     };
     match body.and_then(|bytes| serde_json::from_slice::<Value>(&bytes).map_err(|_| "invalid JSON"))
     {
-        Ok(value) => match hex64(&value["map_sha256"]) {
-            Some(map) => observed.map_sha256 = Some(map),
-            None => observed.failure = Some("no valid map_sha256"),
-        },
+        Ok(value) => {
+            observed.covered_through = value["covered_through"].as_u64();
+            match hex64(&value["map_sha256"]) {
+                Some(map) => observed.map_sha256 = Some(map),
+                None => observed.failure = Some("no valid map_sha256"),
+            }
+        }
         Err(reason) => observed.failure = Some(reason),
     }
     observed
@@ -121,13 +130,41 @@ impl View {
             .collect::<Vec<_>>();
         if differing.is_empty() {
             None
-        } else if self.previous_map.is_some()
-            && differing.iter().all(|o| o.map_sha256 == self.previous_map)
-        {
+        } else if differing.iter().all(|o| self.behind(o)) {
             Some(Finding::LaggingOrigin)
         } else {
             Some(Finding::Mismatch)
         }
+    }
+    /// Whether `origin` serves an older publication. Its reported height decides
+    /// when known: publications can land between samples, so its map may be one
+    /// the sampling loop never saw.
+    fn behind(&self, origin: &Origin) -> bool {
+        match (origin.covered_through, self.public_height) {
+            (Some(covered), Some(height)) => covered < height,
+            _ => self.previous_map.is_some() && origin.map_sha256 == self.previous_map,
+        }
+    }
+    /// When the coordinator published past the longest-lagging origin, as the
+    /// sampling loop first saw it: the first height above the one that origin
+    /// covers, or the current map for an origin that reports no height. `None`
+    /// when any lagging origin cannot be dated.
+    pub fn lag_started(&self) -> Option<u64> {
+        self.origins
+            .iter()
+            .filter(|o| o.map_sha256 != self.map_sha256)
+            .map(|o| match (o.covered_through, self.public_height) {
+                (Some(covered), Some(_)) => self
+                    .heights_seen
+                    .iter()
+                    .filter(|&&(height, _)| height > covered)
+                    .map(|&(_, seen)| seen)
+                    .min(),
+                _ => self.map_seen_at,
+            })
+            .collect::<Option<Vec<_>>>()?
+            .into_iter()
+            .min()
     }
     /// Bounded incident evidence: at most two origins of fixed-size fields.
     pub fn evidence(&self) -> String {
@@ -148,7 +185,10 @@ impl View {
                 origin.observed_at,
                 origin.http_status.map_or("none".into(), |s| s.to_string()),
                 match (&origin.map_sha256, origin.failure) {
-                    (Some(map), _) => format!("map {map}"),
+                    (Some(map), _) => match origin.covered_through {
+                        Some(height) => format!("map {map} through {height}"),
+                        None => format!("map {map}"),
+                    },
                     (None, reason) => reason.unwrap_or("unread").into(),
                 },
             ));
@@ -288,6 +328,7 @@ mod tests {
                     observed_at: 1,
                     http_status: Some(200),
                     map_sha256: map.map(|m| m.repeat(32)),
+                    covered_through: None,
                     failure: map.is_none().then_some("HTTP failure"),
                 })
                 .collect(),
@@ -319,6 +360,30 @@ mod tests {
         let evidence = sampled(&[Some("aa"), None]).evidence();
         assert!(evidence.starts_with("failed observation; expected map "));
         assert!(evidence.contains("https://o1.example at 1: HTTP 200, HTTP failure"));
+    }
+
+    /// Publications that land between samples leave an origin on a map the loop
+    /// never saw; its height, not the map, says it is behind.
+    #[test]
+    fn an_origin_below_the_published_height_lags_from_when_it_was_passed() {
+        let mut view = sampled(&[Some("aa"), Some("cc")]);
+        view.map_seen_at = Some(30);
+        view.heights_seen = vec![(5, 10), (6, 20), (7, 30)];
+        assert_eq!(view.finding(), Some(Finding::Mismatch));
+        view.origins[1].covered_through = Some(5);
+        assert_eq!(view.finding(), Some(Finding::LaggingOrigin));
+        assert_eq!(view.lag_started(), Some(20), "height 6 passed it");
+        assert!(view
+            .evidence()
+            .contains(&format!("map {} through 5", "cc".repeat(32))));
+        // A different map at the published height is a disagreement.
+        view.origins[1].covered_through = Some(7);
+        assert_eq!(view.finding(), Some(Finding::Mismatch));
+        // Without a height, the previous map and its successor's first sighting decide.
+        let mut previous = sampled(&[Some("aa"), Some("bb")]);
+        previous.map_seen_at = Some(30);
+        assert_eq!(previous.finding(), Some(Finding::LaggingOrigin));
+        assert_eq!(previous.lag_started(), Some(30));
     }
 
     #[test]
@@ -373,7 +438,9 @@ mod tests {
                     "/a/v2/shards/init",
                     get(move || {
                         let map = origin_map.clone();
-                        async move { axum::Json(serde_json::json!({ "map_sha256": map })) }
+                        async move {
+                            axum::Json(serde_json::json!({ "map_sha256": map, "covered_through": 7 }))
+                        }
                     }),
                 )
                 .route(
@@ -412,6 +479,7 @@ mod tests {
             failed.origins[0].map_sha256.as_deref(),
             Some(first.as_str())
         );
+        assert_eq!(failed.origins[0].covered_through, Some(7));
         assert_eq!(failed.origins[1].http_status, Some(503));
         assert_eq!(failed.origins[1].failure, Some("HTTP failure"));
         let evidence = failed.evidence();
