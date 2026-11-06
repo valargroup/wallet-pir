@@ -36,10 +36,11 @@ pub struct Policy {
     pub unit_forecast_ratio: f64,
     pub unit_memory_ratio: f64,
     pub unit_memory_hold_seconds: u64,
-    /// How long after a publication a public origin may keep serving the
-    /// previous map before the origin check fires (see
-    /// [`Finding::LaggingOrigin`]). Counted from the publication, not from the
-    /// disagreement, so unknown samples cannot extend it. Otherwise 30 s.
+    /// How long after the coordinator publishes past a public origin's map the
+    /// origin may keep serving it before the origin check fires (see
+    /// [`Finding::LaggingOrigin`] and `publication::View::lag_started`). Counted
+    /// from that publication, not from the disagreement, so unknown samples
+    /// cannot extend it. Otherwise 30 s.
     pub origin_lag_hold_seconds: u64,
 }
 impl Default for Policy {
@@ -472,11 +473,13 @@ fn service_rules(a: &mut Adder, svc: &ServiceView, view: &View, now: u64, p: &Po
                 verdict.filter(|_| publication_fresh).map(|v| !v),
                 "critical",
                 match key {
-                    "canonical" => 0,
+                    // A short reorg strands the published anchor until the next
+                    // publication; only one that outlasts it is an incident.
+                    "canonical" => 60,
                     // Origins pick up a new publication within about a minute.
                     _ if publication.finding() == Some(Finding::LaggingOrigin)
-                        && publication.map_seen_at.is_some_and(|seen| {
-                            now.saturating_sub(seen) < p.origin_lag_hold_seconds
+                        && publication.lag_started().is_some_and(|since| {
+                            now.saturating_sub(since) < p.origin_lag_hold_seconds
                         }) =>
                     {
                         p.origin_lag_hold_seconds
@@ -690,8 +693,9 @@ fn publication_rules(a: &mut Adder, kind: Kind, name: &str, s: &Source, now: u64
     // lag rule for its warning.
     let age = gauge(c.oldest_unpublished);
     let ages: Vec<(&str, f64, u64)> = match kind {
+        // Held like the critical rule, so one slow publication cycle does not alert.
         Kind::History => vec![
-            ("warning", p.history_unpublished_warning_seconds, 0),
+            ("warning", p.history_unpublished_warning_seconds, 30),
             ("critical", p.history_unpublished_critical_seconds, 60),
         ],
         Kind::Txid => vec![("critical", p.txid_unpublished_critical_seconds, 0)],
@@ -1081,6 +1085,17 @@ mod tests {
             firing(&f, "transparent", "publication_critical"),
             Some(false)
         );
+        let hold = |rule: &str| {
+            f.services["transparent"]
+                .iter()
+                .find(|c| c.key == format!("quality.transparent.{rule}"))
+                .unwrap()
+                .hold_seconds
+        };
+        assert_eq!(
+            (hold("publication_warning"), hold("publication_critical")),
+            (30, 60)
+        );
     }
 
     #[test]
@@ -1399,6 +1414,7 @@ mod tests {
                     observed_at: 99,
                     http_status: Some(200),
                     map_sha256: Some("aa".repeat(32)),
+                    covered_through: None,
                     failure: None,
                 },
                 publication::Origin {
@@ -1406,6 +1422,7 @@ mod tests {
                     observed_at: 99,
                     http_status: Some(200),
                     map_sha256: Some("bb".repeat(32)),
+                    covered_through: None,
                     failure: None,
                 },
             ],
@@ -1461,6 +1478,7 @@ mod tests {
                 observed_at: 99,
                 http_status: Some(200),
                 map_sha256: Some("cc".repeat(32)),
+                covered_through: None,
                 failure: None,
             }],
             ..Default::default()
@@ -1476,6 +1494,54 @@ mod tests {
             .unwrap();
         assert_eq!((origins.firing, origins.hold_seconds), (Some(true), 30));
         assert!(origins.observed.starts_with("map mismatch"));
+    }
+
+    /// An origin left on a map the sampling loop never saw lags by height, and
+    /// its window runs from the first height above its own, not the newest map.
+    #[test]
+    fn an_origin_behind_by_height_lags_until_its_window_from_being_passed_ends() {
+        let mut svc = service("transparent", Kind::History);
+        svc.public_origins = vec!["https://a.example".into()];
+        svc.publication = publication::View {
+            sampled_at: 100,
+            public_height: Some(7),
+            canonical: Some(true),
+            origins_agree: Some(false),
+            map_sha256: Some("aa".repeat(32)),
+            map_after: Some("aa".repeat(32)),
+            previous_map: Some("bb".repeat(32)),
+            map_seen_at: Some(95),
+            heights_seen: vec![(5, 40), (6, 60), (7, 95)],
+            origins: vec![publication::Origin {
+                origin: "https://a.example".into(),
+                observed_at: 99,
+                http_status: Some(200),
+                map_sha256: Some("cc".repeat(32)),
+                covered_through: Some(5),
+                failure: None,
+            }],
+            ..Default::default()
+        };
+        let mut v = view(
+            vec![svc],
+            vec![("r", source("transparent", "recent-replica", 100, &[]))],
+        );
+        let rule = |v: &View, now: u64, key: &str| {
+            conditions(v, now, &Policy::default()).services["transparent"]
+                .iter()
+                .find(|c| c.key == format!("quality.transparent.{key}"))
+                .map(|c| (c.firing, c.hold_seconds))
+                .unwrap()
+        };
+        assert_eq!(rule(&v, 105, "publication_origins"), (Some(true), 180));
+        // A reorg's stale anchor is held past the next publication.
+        assert_eq!(rule(&v, 105, "publication_canonical"), (Some(false), 60));
+        v.services[0].publication.sampled_at = 245;
+        assert_eq!(
+            rule(&v, 245, "publication_origins"),
+            (Some(true), 30),
+            "180 s after height 6 passed it, though the newest map is younger"
+        );
     }
 
     #[test]

@@ -536,6 +536,9 @@ pub fn start(dashboard: SharedDashboard, config: &Config) -> Result<()> {
             // The last two distinct published maps; an origin serving the
             // older one is lagging rather than disagreeing.
             let (mut last, mut before, mut seen_at) = (None, None, None);
+            // At most one new height per sample, so 32 reach back at least seven
+            // minutes, past the default origin lag window.
+            let mut heights = VecDeque::new();
             loop {
                 tick.tick().await;
                 let mut result = publication::check(&client, &service).await;
@@ -543,8 +546,17 @@ pub fn start(dashboard: SharedDashboard, config: &Config) -> Result<()> {
                     before = std::mem::replace(&mut last, result.map_sha256.clone());
                     seen_at = Some(result.sampled_at);
                 }
+                if let Some(height) = result.public_height {
+                    if heights.back().is_none_or(|&(seen, _)| seen != height) {
+                        heights.push_back((height, result.sampled_at));
+                        if heights.len() > 32 {
+                            heights.pop_front();
+                        }
+                    }
+                }
                 result.previous_map = before.clone();
                 result.map_seen_at = seen_at;
+                result.heights_seen = heights.iter().copied().collect();
                 if let Some(s) = dashboard
                     .write()
                     .await
