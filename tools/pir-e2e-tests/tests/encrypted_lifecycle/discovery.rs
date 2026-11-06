@@ -185,19 +185,29 @@ async fn a_later_major_mismatch_stops_the_whole_host_with_its_typed_error() {
 
 /// Run one pass and report whether it reached the product endpoints and
 /// whether its failure stops synchronization.
-async fn pass<T: SyncTask<Error = pir_sync_manager::Error>>(
+async fn pass<
+    T: SyncTask<
+        Error = pir_sync_manager::Error,
+        Report = Option<pir_query_server::enhance::synchronization::Deferral>,
+    >,
+>(
     task: &mut T,
     control: &Path,
 ) -> (bool, bool) {
     let before = lines(&control.with_extension("requests"));
-    let error = task
-        .synchronize()
-        .await
-        .err()
-        .expect("refused product routes");
+    let terminal = match task.synchronize().await {
+        Ok(deferral) => {
+            assert!(
+                deferral.is_some(),
+                "refused routes cannot complete adoption"
+            );
+            false
+        }
+        Err(error) => task.terminal(&error),
+    };
     (
         lines(&control.with_extension("requests")) > before,
-        task.terminal(&error),
+        terminal,
     )
 }
 

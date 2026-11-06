@@ -119,6 +119,24 @@ async fn run_with_period(config: Config, dashboard: SharedDashboard, period: std
         let entry_sources: Vec<_> = entry_urls.iter().map(|url| &sources[url]).collect();
         let routers: Vec<_> = router_urls.iter().map(|url| &sources[url]).collect();
         let mut init = summarize(&entry_sources, "init");
+        if !entry_sources.is_empty()
+            && entry_sources.iter().all(|s| {
+                s.ok && s
+                    .rolling
+                    .latest()
+                    .and_then(|m| m.endpoints.get("init_publication_wait"))
+                    .is_some_and(|e| !e.processing.buckets.is_empty())
+            })
+        {
+            init.stages.insert(
+                "publication_wait".into(),
+                RollingMetrics::entrypoint(
+                    &entry_sources.iter().map(|s| &s.rolling).collect::<Vec<_>>(),
+                    "init_publication_wait",
+                )
+                .processing,
+            );
+        }
         let mut query = summarize(&entry_sources, "query");
         let timings_available = inventory_ok
             && !routers.is_empty()

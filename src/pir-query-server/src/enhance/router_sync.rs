@@ -22,7 +22,7 @@ use enhance_shared::{
 };
 use pir_control::admission::{read_body, BodyError, Queue, Refusal};
 use pir_pipeline::{
-    consumer::{polling::SyncTask, ConsumerEngine},
+    consumer::{polling::SyncTask, ConsumerEngine, ConsumerPass},
     Input,
 };
 use pir_publication::VerifiedObjects;
@@ -882,7 +882,7 @@ impl ConsumerRole for RouterConsumer {
     }
 }
 impl Synchronizer {
-    pub async fn poll_once(&mut self) -> Result<(), Error> {
+    pub async fn poll_once(&mut self) -> Result<ConsumerPass<()>, Error> {
         let router = self.engine.context().role.router.clone();
         router.maintain().await;
         pir_pipeline::consumer::polling::maintain_during(
@@ -891,7 +891,6 @@ impl Synchronizer {
             || router.maintain(),
         )
         .await
-        .map(|_| ())
     }
 }
 impl SyncTask for Synchronizer {
@@ -899,7 +898,7 @@ impl SyncTask for Synchronizer {
     type Error = Error;
     async fn synchronize(&mut self) -> Result<Option<Deferral>, Error> {
         let result = self.poll_once().await;
-        self.pacing.finish("router", result)
+        self.pacing.finish_pass("router", result)
     }
     async fn wait_until(&mut self, deadline: tokio::time::Instant) {
         let router = self.engine.context().role.router.clone();

@@ -13,9 +13,32 @@ pub struct Placement {
 
 #[derive(Clone, Debug, serde::Deserialize)]
 pub struct Published {
-    generation: u64,
+    pub generation: u64,
     manifest_sha256: String,
     domains: BTreeSet<u64>,
+    eligible: Option<bool>,
+}
+#[derive(Clone, Copy, Debug, serde::Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Unavailable {
+    MissingSample,
+    StaleSample,
+    GenerationDisagreement,
+    ManifestDisagreement,
+    MissingAssignments,
+    Withdrawn,
+}
+impl Unavailable {
+    fn text(self) -> &'static str {
+        match self {
+            Self::MissingSample => "missing sample",
+            Self::StaleSample => "stale sample",
+            Self::GenerationDisagreement => "generation disagreement",
+            Self::ManifestDisagreement => "manifest disagreement",
+            Self::MissingAssignments => "missing assignments",
+            Self::Withdrawn => "known withdrawal; recovery in progress",
+        }
+    }
 }
 impl Published {
     pub fn parse(body: &str) -> Option<Self> {
@@ -99,57 +122,81 @@ impl Report {
 /// inconsistent or unconfigured serving observations. A coherent older serving
 /// generation is observable, but never described as the newest publication.
 pub fn update(data: &mut crate::dashboard::DashboardData, now: SystemTime) {
-    if let Some((placement, replicas, at)) = collect(data, now) {
-        data.placement = Some(placement);
-        data.domain_ready_replicas = replicas;
-        data.placement_success = Some(at);
-        data.placement_error = false;
-    } else {
-        data.placement_error = true;
+    match collect(data, now) {
+        Ok((placement, replicas, at)) => {
+            data.placement = Some(placement);
+            data.domain_ready_replicas = replicas;
+            data.placement_success = Some(at);
+            data.placement_error = false;
+            data.placement_unavailable = None;
+        }
+        Err(reason) => {
+            data.placement_error = true;
+            data.placement_unavailable = Some(reason);
+        }
     }
 }
 fn collect(
     data: &crate::dashboard::DashboardData,
     now: SystemTime,
-) -> Option<(Placement, BTreeMap<u64, f64>, SystemTime)> {
+) -> Result<(Placement, BTreeMap<u64, f64>, SystemTime), Unavailable> {
+    use Unavailable::*;
     let fresh = |at: SystemTime| {
         now.duration_since(at)
             .ok()
             .is_some_and(|age| age.as_secs() <= 45)
     };
     if data.scrape_error.is_some()
-        || !data.last_scrape.is_some_and(fresh)
         || data.inventory_error.is_some()
         || data.packing_inventory_error.is_some()
-        || data.packing_routers.is_empty()
     {
-        return None;
+        return Err(MissingSample);
     }
-    let generation = *data.snapshot_gauges.get("enhance_published_generation")?;
-    let published = data.enhance_publication.as_ref()?;
+    let mut at = data.last_scrape.ok_or(MissingSample)?;
+    if !fresh(at) {
+        return Err(StaleSample);
+    }
+    let published = data.enhance_publication.as_ref().ok_or(MissingSample)?;
+    match published.eligible {
+        Some(false) => return Err(Withdrawn),
+        None => return Err(MissingSample),
+        Some(true) => {}
+    }
+    if data.packing_routers.is_empty() {
+        return Err(MissingAssignments);
+    }
+    let generation = *data
+        .snapshot_gauges
+        .get("enhance_published_generation")
+        .ok_or(MissingSample)?;
     if !generation.is_finite() || generation <= 0. || generation.fract() != 0. {
-        return None;
+        return Err(MissingSample);
     }
     if generation != published.generation as f64 {
-        return None;
+        return Err(GenerationDisagreement);
     }
-    let mut at = data.last_scrape?;
     let mut serving: Option<(u64, &str)> = None;
     let mut assignments: BTreeMap<u64, BTreeSet<String>> = BTreeMap::new();
     let mut eligible: BTreeMap<u64, BTreeSet<String>> = BTreeMap::new();
     for router in data.packing_routers.values() {
-        let sampled = router.sample.success.filter(|at| fresh(*at))?;
+        let sampled = router.sample.success.ok_or(MissingSample)?;
+        if !fresh(sampled) {
+            return Err(StaleSample);
+        }
         if router.sample.error.is_some() {
-            return None;
+            return Err(MissingSample);
         }
         at = at.min(sampled);
-        let report = router.placement.as_ref()?;
+        let report = router.placement.as_ref().ok_or(MissingAssignments)?;
         if report.generation > published.generation
-            || (report.generation == published.generation
-                && report.active != published.manifest_sha256)
-            || serving.is_some_and(|s| s != (report.generation, report.active.as_str()))
+            || serving.is_some_and(|s| s.0 != report.generation)
         {
-            return None;
+            return Err(GenerationDisagreement);
+        }
+        if (report.generation == published.generation && report.active != published.manifest_sha256)
+            || serving.is_some_and(|s| s.1 != report.active)
+        {
+            return Err(ManifestDisagreement);
         }
         serving = Some((report.generation, report.active.as_str()));
         for (domain, workers) in &report.domains {
@@ -161,9 +208,9 @@ fn collect(
                     .map(|(name, _)| name.clone())
                     .collect();
                 if names.len() != 1 {
-                    return None;
+                    return Err(MissingAssignments);
                 }
-                let name = names.into_iter().next()?;
+                let name = names.into_iter().next().ok_or(MissingAssignments)?;
                 assignments.entry(*domain).or_default().insert(name.clone());
                 if *ready {
                     eligible.entry(*domain).or_default().insert(name);
@@ -172,7 +219,7 @@ fn collect(
         }
     }
     if assignments.keys().copied().collect::<BTreeSet<_>>() != published.domains {
-        return None;
+        return Err(MissingAssignments);
     }
     let replicas = assignments
         .keys()
@@ -187,7 +234,7 @@ fn collect(
         .into_iter()
         .map(|(domain, workers)| (domain, workers.into_iter().collect()))
         .collect();
-    Some((
+    Ok((
         Placement {
             domains,
             revision: serving.map(|s| s.0),
@@ -196,6 +243,33 @@ fn collect(
         replicas,
         at,
     ))
+}
+
+/// Bounded serving evidence; reachability remains a separate observation.
+pub fn evidence(data: &crate::dashboard::DashboardData, now: u64) -> String {
+    let age = |at: Option<SystemTime>| {
+        at.and_then(|at| {
+            at.duration_since(SystemTime::UNIX_EPOCH)
+                .ok()
+                .map(|at| now.saturating_sub(at.as_secs()))
+        })
+    };
+    let number = |n: Option<u64>| n.map_or_else(|| "unknown".into(), |n| n.to_string());
+    let mut text = format!(
+        "placement {}; publisher generation {}, age {}s",
+        data.placement_unavailable
+            .map_or("observed", Unavailable::text),
+        number(data.enhance_publication.as_ref().map(|p| p.generation)),
+        number(age(data.last_scrape))
+    );
+    for (name, router) in data.packing_routers.iter().take(8) {
+        text.push_str(&format!(
+            "; router {name}: generation {}, age {}s",
+            number(router.placement.as_ref().map(|p| p.generation)),
+            number(age(router.sample.success))
+        ));
+    }
+    text
 }
 
 #[cfg(test)]
@@ -237,7 +311,7 @@ mod tests {
             ("enhance_publication_blocked".into(), 0.),
         ]);
         d.enhance_publication = Published::parse(
-            r#"{"generation":28049,"manifest_sha256":"ef33dcbb13d3c0b1f2a782dda4e5111666ba2f84e94a55d9ae1bcd5159e7f799","domains":[0]}"#,
+            r#"{"generation":28049,"manifest_sha256":"ef33dcbb13d3c0b1f2a782dda4e5111666ba2f84e94a55d9ae1bcd5159e7f799","domains":[0],"eligible":true}"#,
         );
         d.monitoring.chain = Chain {
             sampled_at: t,
@@ -256,6 +330,27 @@ mod tests {
         r.sample.values.insert("domain_eligible_0".into(), 2.);
         update(&mut d, at(t));
         d
+    }
+    #[test]
+    fn unavailable_placement_explains_withdrawal_staleness_and_missing_evidence() {
+        let mut d = view(1000);
+        d.enhance_publication.as_mut().unwrap().eligible = Some(false);
+        update(&mut d, at(1001));
+        assert_eq!(d.placement_unavailable, Some(Unavailable::Withdrawn));
+        assert!(evidence(&d, 1001).contains("publisher generation 28049, age 1s"));
+        d.enhance_publication.as_mut().unwrap().eligible = Some(true);
+        update(&mut d, at(1046));
+        assert_eq!(d.placement_unavailable, Some(Unavailable::StaleSample));
+        d.last_scrape = None;
+        update(&mut d, at(1046));
+        assert_eq!(d.placement_unavailable, Some(Unavailable::MissingSample));
+        let mut d = view(1000);
+        d.packing_routers.get_mut("router").unwrap().placement = None;
+        update(&mut d, at(1001));
+        assert_eq!(
+            d.placement_unavailable,
+            Some(Unavailable::MissingAssignments)
+        );
     }
     #[test]
     fn current_router_assignments_exclude_unused_workers_and_deduplicate_replicas() {
@@ -349,6 +444,14 @@ mod tests {
             d.packing_routers.insert("second".into(), second);
             update(&mut d, at(1001));
             assert!(d.placement_error);
+            assert_eq!(
+                d.placement_unavailable,
+                Some(if future {
+                    Unavailable::GenerationDisagreement
+                } else {
+                    Unavailable::ManifestDisagreement
+                })
+            );
         }
     }
     #[test]

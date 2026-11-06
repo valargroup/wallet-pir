@@ -68,11 +68,20 @@ impl Controller {
     }
 }
 
-pub fn status_router(status: Arc<RwLock<Value>>, metrics: Arc<Metrics>) -> axum::Router {
+pub fn status_router(
+    status: Arc<RwLock<Value>>,
+    metrics: Arc<Metrics>,
+    distribution: super::super::distribution::Distribution,
+) -> axum::Router {
     use axum::{routing::get, Json, Router};
     let current = move || {
         let status = status.clone();
-        async move { Json(status.read().unwrap().clone()) }
+        let distribution = distribution.clone();
+        async move {
+            let mut status = status.read().unwrap().clone();
+            status["publication_observation"] = distribution.observation().into();
+            Json(status)
+        }
     };
     let rendered = move || {
         let metrics = metrics.clone();

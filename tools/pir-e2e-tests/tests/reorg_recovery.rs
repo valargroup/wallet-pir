@@ -265,6 +265,7 @@ impl Node {
 /// every consumer request.
 struct Publisher {
     child: tokio::process::Child,
+    config: PathBuf,
     log: PathBuf,
     tls: Tls,
     edge: PathBuf,
@@ -286,25 +287,43 @@ impl Publisher {
         });
         std::fs::write(&config, serde_json::to_vec_pretty(&document).unwrap()).unwrap();
         let log = root.join("publisher.log");
-        let file = std::fs::File::create(&log).unwrap();
-        let child = tokio::process::Command::new(env!("CARGO_BIN_EXE_pir-publisher-test"))
-            .arg("--config")
-            .arg(&config)
-            .env(
-                "RUST_LOG",
-                std::env::var("RUST_LOG").unwrap_or("info".into()),
-            )
-            .kill_on_drop(true)
-            .stdout(file.try_clone().unwrap())
-            .stderr(file)
-            .spawn()
-            .unwrap();
+        let child = Self::spawn(&config, &log);
         Self {
             child,
+            config,
             log,
             tls,
             edge,
         }
+    }
+    fn spawn(config: &Path, log: &Path) -> tokio::process::Child {
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(log)
+            .unwrap();
+        tokio::process::Command::new(
+            std::env::var_os("WALLET_PIR_PUBLISHER_BIN")
+                .unwrap_or_else(|| env!("CARGO_BIN_EXE_pir-publisher-test").into()),
+        )
+        .arg("--config")
+        .arg(config)
+        .env(
+            "RUST_LOG",
+            std::env::var("RUST_LOG").unwrap_or("info".into()),
+        )
+        .kill_on_drop(true)
+        .stdout(file.try_clone().unwrap())
+        .stderr(file)
+        .spawn()
+        .unwrap()
+    }
+    async fn restart(&mut self) {
+        tokio::time::timeout(Duration::from_secs(10), self.child.kill())
+            .await
+            .unwrap()
+            .unwrap();
+        self.child = Self::spawn(&self.config, &self.log);
     }
     /// The consumers' publisher source. Budgets follow the deployment
     /// inventory example (8 GiB), so the fixture adds no tighter cache bound.
@@ -1046,6 +1065,107 @@ fn alert_model(probes: &[Probe], start: u64, end: u64) -> serde_json::Value {
     })
 }
 
+/// Measure an available replacement without the deliberately held source used
+/// by the refusal test. Each decrypted answer uses the independent block oracle.
+/// Acceptance jobs set the recovery limit; qualification keeps its functional
+/// timeout because its runners may share CPUs with other services.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[cfg_attr(
+    not(feature = "qualification-tests"),
+    ignore = "deployed geometry: qualification-tests"
+)]
+async fn warm_shallow_replacements_return_correct_records() {
+    let _serial = DEPLOYED.lock().await;
+    let mut chain = ChainFixture::new(Instant::now());
+    let tx = Transactions::new(&chain.shared);
+    let tip = ACTIVATION_HEIGHT + 1;
+    chain.put(
+        ACTIVATION_HEIGHT,
+        &[support::fixture()],
+        &[Fixture(0), Fixture(1)],
+        0,
+    );
+    let original = [
+        tx.same_block.clone(),
+        tx.without_outputs.clone(),
+        tx.with_outputs.clone(),
+    ];
+    let original_kinds = [
+        mixed(0, false),
+        mixed(1, false),
+        mixed(0, true),
+        mixed(1, true),
+    ];
+    let first = chain.put(tip, &original, &original_kinds, 1);
+    let mut stack = Stack::start(chain, 2).await;
+    let cold = stack
+        .until("cold publication answer", PREPARATION_BUDGET, |o| {
+            o.first_answer(&first, 0).map(|p| p.done)
+        })
+        .await;
+    let limit = std::env::var("WALLET_PIR_RECOVERY_MAX_MS")
+        .ok()
+        .map(|s| s.parse::<u64>().expect("recovery limit in milliseconds"));
+    let mut results = Vec::new();
+    for nonce in [2, 3, 1] {
+        let changed = stack.now();
+        let changed_unix_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+        let anchor = if nonce == 2 {
+            stack.chain.put(
+                tip,
+                &[
+                    tx.same_block.clone(),
+                    tx.with_outputs.clone(),
+                    tx.without_outputs.clone(),
+                ],
+                &[
+                    mixed(0, true),
+                    mixed(1, true),
+                    mixed(0, false),
+                    mixed(1, false),
+                ],
+                nonce,
+            )
+        } else if nonce == 3 {
+            stack.chain.put(
+                tip,
+                &[tx.same_block.clone(), tx.without_outputs.clone()],
+                &[mixed(0, false), mixed(1, false)],
+                nonce,
+            )
+        } else {
+            stack.chain.put(tip, &original, &original_kinds, nonce)
+        };
+        let answer = stack
+            .until("warm replacement answer", PREPARATION_BUDGET, |o| {
+                o.first_answer(&anchor, changed)
+                    .filter(|p| p.sent >= changed)
+                    .map(|p| p.done)
+            })
+            .await;
+        let mut result = stack.recovery("warm one-block replacement", changed, &anchor);
+        result["changed_unix_ms"] = json!(changed_unix_ms);
+        result["return_to_seen_fork"] = json!(nonce == 1);
+        stack.assert_single_publication(&result);
+        stack.assert_legitimate();
+        results.push(result);
+        stack.report(
+            "warm-shallow-replacements",
+            json!({"cold_first_answer_ms":cold,"warm":results}),
+        );
+        if let Some(limit) = limit {
+            assert!(
+                answer - changed <= limit,
+                "warm recovery took {} ms, limit {limit} ms",
+                answer - changed
+            );
+        }
+    }
+}
+
 /// A one-block reorganization withdraws authority and serves only the
 /// replacement; a second reorganization that returns to the original block
 /// does the same; a node outage and a publisher edge outage refuse wallets
@@ -1189,6 +1309,42 @@ async fn reorganizations_and_source_outages_never_answer_invalidated_records() {
         .count());
     stack.assert_single_publication(&result);
     results.push(result);
+
+    // Restart after durable withdrawal, while the replacement source is still
+    // held. Old leases and cached material must not restore serving authority.
+    stack.chain.shared.lock().unwrap().hold = Some(tip);
+    let changed = stack.now();
+    let restarted = stack.chain.put(tip, &original, &original_kinds, 4);
+    stack
+        .until("withdrawal before restart", WITHDRAWAL_BUDGET, |o| {
+            o.first(changed, "publisher", |s| {
+                matches!(
+                    s,
+                    Seen::Publisher {
+                        eligible: false,
+                        ..
+                    }
+                )
+            })
+        })
+        .await;
+    stack.publisher.restart().await;
+    stack.wait_until(changed + LIFETIME_MS + 3_000).await;
+    let (answered, refused) = stack.refusals_since(changed + LIFETIME_MS);
+    assert_eq!(
+        answered, 0,
+        "restart restored invalidated publication authority"
+    );
+    assert!(refused >= 10, "too few probes across restart withdrawal");
+    stack.chain.shared.lock().unwrap().hold = None;
+    stack
+        .until(
+            "answer after restart during recovery",
+            PREPARATION_BUDGET,
+            |o| o.first_answer(&restarted, changed).map(|_| ()),
+        )
+        .await;
+    results.push(stack.recovery("restart during recovery", changed, &restarted));
 
     // Source outages: the node, then the publisher's TLS edge, refuse every
     // request. Wallets are refused once the last lease ends, and serving

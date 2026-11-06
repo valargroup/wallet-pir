@@ -236,6 +236,13 @@ fn worker_link(data: &DashboardData, name: &str) -> String {
 }
 fn domain_topology(data: &DashboardData) -> String {
     let mut out = String::new();
+    out.push_str(&format!(
+        "<p class=\"summary\">{}</p>",
+        escape(&crate::placement::evidence(
+            data,
+            pir_apm::incidents::unix_time()
+        ))
+    ));
     let fresh = !data.placement_error
         && data
             .placement_success

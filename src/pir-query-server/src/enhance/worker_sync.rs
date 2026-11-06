@@ -23,7 +23,7 @@ use enhance_shared::{
 };
 use pir_pipeline::consumer::reservations::NoPeers;
 use pir_pipeline::{
-    consumer::{polling::SyncTask, ConsumerEngine},
+    consumer::{polling::SyncTask, ConsumerEngine, ConsumerPass},
     Input,
 };
 use pir_publication::VerifiedObjects;
@@ -418,8 +418,8 @@ pub struct Synchronizer {
     pacing: Pacing,
 }
 impl Synchronizer {
-    pub async fn poll_once(&mut self) -> Result<(), Error> {
-        self.engine.synchronize().await.map(|_| ())
+    pub async fn poll_once(&mut self) -> Result<ConsumerPass<()>, Error> {
+        self.engine.synchronize().await
     }
 }
 struct WorkerConsumer {
@@ -569,7 +569,7 @@ impl SyncTask for Synchronizer {
     type Error = Error;
     async fn synchronize(&mut self) -> Result<Option<Deferral>, Error> {
         let result = self.poll_once().await;
-        self.pacing.finish("worker", result)
+        self.pacing.finish_pass("worker", result)
     }
     async fn wait_until(&mut self, deadline: tokio::time::Instant) {
         tokio::time::sleep_until(self.pacing.deadline(deadline)).await;

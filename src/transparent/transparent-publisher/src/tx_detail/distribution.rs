@@ -388,6 +388,18 @@ impl Distribution {
             .as_ref()
             .map(|(current, _)| current.revision)
     }
+    /// A single observation of retained publication identity and withdrawal.
+    pub(super) fn observation(&self) -> Option<serde_json::Value> {
+        let active = self.0.active.read().unwrap();
+        let (current, publication) = active.as_ref()?;
+        Some(serde_json::json!({
+            "height": current.anchor_height,
+            "hash": current.anchor_hash,
+            "map_sha256": publication.inventory.map_sha256,
+            "revision": current.revision,
+            "withdrawn": !current.eligible(),
+        }))
+    }
     /// Recheck the exact source before the caller enters its commit guard.
     pub(super) async fn canonical(
         &self,

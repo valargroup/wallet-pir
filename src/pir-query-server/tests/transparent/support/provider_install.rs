@@ -774,7 +774,19 @@ async fn installation_case(case: Case) {
     assert_eq!(refused.status(), 503);
     let observed = status(&origin).await;
     assert_eq!(observed["archive_reachability"]["state"], "refused");
-    assert_eq!(observed["runtime_readiness"]["warm"], true);
+    // Readiness admits serving while local runtimes warm in the background.
+    // An unreachable archive must not prevent that independent local warming.
+    tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        while status(&origin).await["runtime_readiness"]["warm"] != true {
+            assert!(
+                child.try_wait().unwrap().is_none(),
+                "provider exited while warming"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("local runtimes must warm with the archive offline");
     row_query(&origin, &set, 1).await;
     child.kill().await.unwrap();
     child.wait().await.unwrap();

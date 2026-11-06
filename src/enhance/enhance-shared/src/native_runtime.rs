@@ -3,6 +3,7 @@ use crate::packing_budget::{Charge, PackingBudget};
 use crate::{native as n, protocol::*};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use ipir_sp::{server::CrsBlock, YpirSchemeParams};
+use rayon::prelude::*;
 use reinspiring::native::NativePreprocessed;
 use sha2::{Digest, Sha256};
 
@@ -21,8 +22,10 @@ impl NativePacking {
             return Err("native hint block count".into());
         }
         let setup = n::packing_setup();
+        // The six independent blocks retain their wire order. Use the existing
+        // Rayon pool so nested transforms share the same bounded worker set.
         let pre = hint
-            .iter()
+            .par_iter()
             .map(|b| NativePreprocessed::build_two_mask(&setup, &b.rows))
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?;
@@ -122,5 +125,79 @@ impl NativePacking {
         let mut out = binding.encode();
         out.extend(n::pack(&self.pre, &keys, intermediate)?);
         Ok(out)
+    }
+}
+
+#[cfg(all(test, feature = "qualification-tests", target_os = "linux"))]
+mod memory_tests {
+    use super::*;
+
+    /// Run alone in a fresh Linux test process: the process high-water mark
+    /// includes every test in that process. Full-width coefficients exercise
+    /// the deployed matrices with two resident predecessors during replacement.
+    #[test]
+    #[ignore = "isolated deployed-size memory qualification"]
+    fn native_replacement_peak_fits_its_memory_reservations() {
+        use rand_chacha::{
+            rand_core::{RngCore, SeedableRng},
+            ChaCha20Rng,
+        };
+        use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+        let budget = PackingBudget::coordinator();
+        let peak = AtomicU64::new(0);
+        let finished = AtomicBool::new(false);
+        struct Finish<'a>(&'a AtomicBool);
+        impl Drop for Finish<'_> {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::Relaxed);
+            }
+        }
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                while !finished.load(Ordering::Relaxed) {
+                    peak.fetch_max(budget.charged_bytes(), Ordering::Relaxed);
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+            });
+            let _finish = Finish(&finished);
+            let mut rng = ChaCha20Rng::from_seed([73; 32]);
+            let hint = (0..n::COLS / n::D)
+                .map(|_| CrsBlock {
+                    rows: (0..n::D)
+                        .map(|_| (0..n::D).map(|_| rng.next_u64() & (n::Q - 1)).collect())
+                        .collect(),
+                })
+                .collect::<Vec<_>>();
+            let result = (|| -> Result<(), String> {
+                let mut resident = Vec::new();
+                for _ in 0..3 {
+                    let packing = NativePacking::new(32768, &hint, &budget)?;
+                    packing.write_prepared(&mut std::io::sink())?;
+                    resident.push(packing);
+                }
+                Ok(())
+            })();
+            finished.store(true, Ordering::Relaxed);
+            result.unwrap();
+        });
+        let status = std::fs::read_to_string("/proc/self/status").unwrap();
+        let rss = status
+            .lines()
+            .find_map(|line| {
+                line.strip_prefix("VmHWM:")
+                    .and_then(|s| s.split_whitespace().next())
+                    .map(|s| s.parse::<u64>().unwrap() * 1024)
+            })
+            .unwrap();
+        let charged = peak.load(Ordering::Relaxed);
+        let fixture_bytes = (n::COLS * n::D * 8) as u64;
+        eprintln!("native replacement peak: rss_bytes={rss}, charged_bytes={charged}, fixture_bytes={fixture_bytes}");
+        assert_eq!(
+            budget.charged_bytes(),
+            0,
+            "all preparations release their reservations"
+        );
+        assert!(rss <= charged + fixture_bytes + 256 * 1024 * 1024,
+            "resident packing and temporary workspaces exceed their charge plus fixture and process overhead");
     }
 }

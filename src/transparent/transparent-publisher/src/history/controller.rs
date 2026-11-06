@@ -468,6 +468,25 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn rpc_follow_publishes_empty_blocks_and_recovers_a_sealed_reorg() {
         use std::os::unix::fs::PermissionsExt;
+        async fn observation(authority: &Authority) -> serde_json::Value {
+            use tower::ServiceExt;
+            let response = authority
+                .router()
+                .oneshot(
+                    Request::builder()
+                        .uri("/v1/status")
+                        .body(axum::body::Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = axum::body::to_bytes(response.into_body(), 1 << 20)
+                .await
+                .unwrap();
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap()["publication_observation"]
+                .clone()
+        }
         let root = tempfile::tempdir().unwrap();
         let chain: Chain = Arc::new(RwLock::new(Vec::new()));
         extend(&mut chain.write().unwrap(), 5, 1);
@@ -724,6 +743,16 @@ mod tests {
             .publication
             .map_sha256
             .clone();
+        let before = observation(&authority).await;
+        assert_eq!(before["height"], 4);
+        assert_eq!(
+            before["hash"],
+            hash(&chain.read().unwrap()[4]).to_display_hex()
+        );
+        assert_eq!(before["map_sha256"], old);
+        assert_eq!(before["withdrawn"], false);
+        // The cached controller status deliberately lags the live authority.
+        authority.0.status.write().unwrap()["publication_observation"] = before.clone();
         // Same-height fork of the published tip.
         {
             let mut blocks = chain.write().unwrap();
@@ -755,6 +784,12 @@ mod tests {
                 StatusCode::SERVICE_UNAVAILABLE,
                 "orphaned coverage must be withdrawn before a slow ancestor search"
             );
+            let withdrawn = observation(&authority).await;
+            assert_eq!(withdrawn["height"], before["height"]);
+            assert_eq!(withdrawn["hash"], before["hash"]);
+            assert_eq!(withdrawn["map_sha256"], before["map_sha256"]);
+            assert_eq!(withdrawn["withdrawn"], true);
+            assert!(withdrawn["revision"].as_u64().unwrap() > before["revision"].as_u64().unwrap());
             node.resume.notify_one();
             ingest.await.unwrap();
         }
@@ -763,6 +798,15 @@ mod tests {
             .await
             .unwrap();
         assert!(!authority.0.withdrawn.load(Ordering::Acquire));
+        let after = observation(&authority).await;
+        assert_eq!(after["height"], 4);
+        assert_eq!(
+            after["hash"],
+            hash(&chain.read().unwrap()[4]).to_display_hex()
+        );
+        assert_eq!(after["withdrawn"], false);
+        assert_ne!(after["map_sha256"], before["map_sha256"]);
+        assert!(after["revision"].as_u64().unwrap() > before["revision"].as_u64().unwrap());
         {
             let active = authority.0.active.read().unwrap();
             assert_eq!(active.publication.height, 4);

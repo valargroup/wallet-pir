@@ -130,30 +130,25 @@ async fn autonomous_ingress_keeps_wallet_bindings_during_independent_router_upda
         let init_url = format!("{}/v1/enhance/init", ingress_http.url);
         let endpoint = format!("{}/v1/enhance/query", ingress_http.url);
         ingress_sync.poll_once().await.unwrap();
-        assert!(!http
-            .get(&init_url)
-            .send()
-            .await
-            .unwrap()
-            .status()
-            .is_success());
+        let init_request = http.get(&init_url).timeout(QUALIFICATION_BUDGET).send();
+        tokio::pin!(init_request);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), &mut init_request)
+                .await
+                .is_err(),
+            "initialization must wait for serving authority"
+        );
         worker_sync.poll_once().await.unwrap();
         ingress_sync.poll_once().await.unwrap();
         assert!(
-            !http
-                .get(&init_url)
-                .send()
+            tokio::time::timeout(Duration::from_millis(100), &mut init_request)
                 .await
-                .unwrap()
-                .status()
-                .is_success(),
+                .is_err(),
             "workers alone do not authorize ingress"
         );
         router_sync.poll_once().await.unwrap();
         ingress_sync.poll_once().await.unwrap();
-        let initial: Manifest = http
-            .get(&init_url)
-            .send()
+        let initial: Manifest = init_request
             .await
             .unwrap()
             .error_for_status()
@@ -396,36 +391,27 @@ async fn autonomous_ingress_keeps_wallet_bindings_during_independent_router_upda
         let mut ingress_sync = ingress.synchronizer().unwrap();
         let listener = serve(ingress.public_router()).await;
         let init_url = format!("{}/v1/enhance/init", listener.url);
+        let restarted_init = http.get(&init_url).send();
+        tokio::pin!(restarted_init);
         assert!(
-            !http
-                .get(&init_url)
-                .send()
+            tokio::time::timeout(Duration::from_millis(100), &mut restarted_init)
                 .await
-                .unwrap()
-                .status()
-                .is_success(),
+                .is_err(),
             "cached metadata cannot authorize ingress restart"
         );
         ingress_sync.poll_once().await.unwrap();
-        assert!(http
-            .get(&init_url)
-            .send()
-            .await
-            .unwrap()
-            .status()
-            .is_success());
+        assert!(restarted_init.await.unwrap().status().is_success());
         fixture
             .distribution
             .withdraw(&Revocation::default())
             .unwrap();
         assert!(ingress_sync.poll_once().await.is_err());
-        assert!(!http
-            .get(&init_url)
-            .send()
-            .await
-            .unwrap()
-            .status()
-            .is_success());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), http.get(&init_url).send())
+                .await
+                .is_err(),
+            "withdrawn initialization waits for a new serving authority"
+        );
     })
     .await
     .expect("autonomous ingress wallet flow exceeded qualification budget");
