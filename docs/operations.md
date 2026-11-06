@@ -49,6 +49,13 @@ so two deploys never overlap, and it opens APM's deployment window (see below):
 | Everything | `pir-deploy all <sha>` | Publisher, then every query role |
 | Monitoring | `pir-deploy product monitoring <sha>` | `pir-apm` on the coordinator and `pir-monitor` on the monitor host |
 
+The Deploy workflow's inventory leaves out the monitor host, so its `product monitoring`
+restarts only `pir-apm`. That host accepts the deploy key only for the coordinator's
+node RPC tunnel, which keeps the independent checker out of the workflow's reach.
+Update `pir-monitor` from a workstation whose inventory adds the line
+`<monitor host> monitor monitoring`: run `pir-deploy self-update <sha>`, then
+`pir-deploy product monitoring <sha>`.
+
 Every host is prepared before anything restarts. If any component in a wave fails, the
 deploy stops: the components of that wave that had already moved are rolled back, and
 later waves never start. A partial mode refuses a release whose contract major differs
