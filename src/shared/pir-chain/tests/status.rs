@@ -66,4 +66,16 @@ async fn canonical_blocks_list_every_transaction_in_protocol_order() {
         rpc.status_mempool().await,
         Err(NodeError::Block(_))
     ));
+    // So is a block this build cannot decode. pir-monitor matches this message to
+    // report `block_undecodable`.
+    let rpc = client(Mock {
+        raw: "00".into(),
+        hash,
+        txid: String::new(),
+    })
+    .await;
+    assert!(matches!(
+        rpc.status_block(1).await,
+        Err(NodeError::Block(message)) if message.starts_with("cannot decode raw block: ")
+    ));
 }

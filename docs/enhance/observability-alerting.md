@@ -267,6 +267,7 @@ Investigate by check family:
 | `domain_*` | Check published placement and eligible replicas, then router authority and generation-specific worker health. |
 | `coverage_*` | Restore the named scraper/source/inventory before trusting retained values. |
 | `canary_*` | Inspect transport/category and pinned oracle validity; distinguish wrong bytes from unavailable service. |
+| `service_canary_*` | Run the probe's configured command by hand on the monitor host to read its error. `block_undecodable` usually means the probe predates a network upgrade ([refresh it](#seven-day-quality-history-and-transparent-page)). |
 | `external_monitor`, `apm_progress` | Inspect systemd, loop progress, and state-database permissions on the named monitoring host. |
 | `receiver_payout_crosscheck_paused`, `receiver_health` | Read the Receiver health route on the coordinator, then the publisher journal for `near feed deferred`; a feed with no stored cursor starts from `near_since`. |
 | `receiver_*_crosscheck_idle` | Read `indexer` on the Receiver health route. Uncheckable counts point at the explorer not reporting txids. Otherwise compare with recent NEAR Intents traffic and the chain tip before suspecting the feed. |
@@ -538,6 +539,15 @@ The existing Enhance canary remains unchanged. A probe's `service` is one of
 `status`, `transparent`, `receiver` or `txid`; the `txid` probe runs
 `txid-quality-canary`, one private `/v2/txid` lookup checked against a pinned
 entry hash ([Transparent deployment](../transparent/deployment.md#independent-canaries-under-v2)).
+
+Releases do not update these probes: each command names a binary installed by
+hand on the monitor host, and `pir-monitor` reads the config only at start. The
+Status probe decodes the manifest's anchor block, so a build that predates a
+network upgrade fails every run once the upgrade activates, reporting
+`block_undecodable`. Before an upgrade activates, install each probe from a
+release that supports it (for Status, the `pir-publisher` in the release's
+`pir-probe.tar.gz`, run as `pir-publisher status probe-live`), run its command by
+hand on the monitor host, then restart `pir-monitor`.
 
 The Transparent canary refuses with `oracle_invalid` whenever the service's shard
 schema differs from its fixture's, so a schema cutover fails it on every sample
