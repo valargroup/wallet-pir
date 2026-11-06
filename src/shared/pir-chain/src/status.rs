@@ -24,7 +24,7 @@ mod rpc {
         pub async fn status_block(&self, height: u64) -> Result<StatusBlock, NodeError> {
             let raw = self.raw_block(height.to_string()).await?;
             let block = Block::zcash_deserialize(&mut raw.as_slice())
-                .map_err(|error| NodeError::Block(error.to_string()))?;
+                .map_err(|error| NodeError::Block(format!("cannot decode raw block: {error}")))?;
             let hash = block.hash();
             let canonical = self
                 .block_hash_display(height)

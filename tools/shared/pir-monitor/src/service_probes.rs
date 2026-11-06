@@ -181,6 +181,8 @@ async fn run(config: &Config) -> Result<Outcome> {
         "answer_mismatch"
     } else if err.contains("not canonical") || err.contains("raw block hash differs") {
         "oracle_invalid"
+    } else if err.contains("cannot decode raw block") {
+        "block_undecodable"
     } else {
         "request_failed"
     };
@@ -339,5 +341,33 @@ mod tests {
                 .firing,
             None
         );
+    }
+    /// A failed run's stderr names its category; these are the Status probe's messages.
+    #[tokio::test]
+    async fn status_probe_errors_name_their_category() {
+        for (stderr, category) in [
+            (
+                r#"Error: Block("cannot decode raw block: unknown consensus branch ID 0x77190ad9")"#,
+                "block_undecodable",
+            ),
+            (
+                r#"Error: "live encrypted answer differs from canonical block oracle""#,
+                "answer_mismatch",
+            ),
+            (
+                r#"Error: "live manifest anchor is not canonical""#,
+                "oracle_invalid",
+            ),
+            ("Error: Status(503)", "request_failed"),
+        ] {
+            let config = Config {
+                service: "status".into(),
+                command: ["/bin/sh", "-c", r#"printf %s "$0" >&2; exit 1"#, stderr]
+                    .map(String::from)
+                    .into(),
+                timeout_seconds: 5,
+            };
+            assert_eq!(run(&config).await.unwrap().category, category);
+        }
     }
 }
