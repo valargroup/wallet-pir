@@ -7,7 +7,9 @@
 #   <ssh destination> <component> <group> [wave]
 #
 # group is publisher, unified, a product (enhance, status, transparent, txid,
-# receiver) or monitoring (APM and pir-monitor, deployed with `product monitoring`). Lines with the same wave restart together; waves run in ascending order
+# receiver) or monitoring (APM and pir-monitor, deployed with `product monitoring`;
+# the Deploy workflow's inventory omits pir-monitor, see docs/operations.md).
+# Lines with the same wave restart together; waves run in ascending order
 # (default 1), so a product's workers can restart before its router. The publisher's
 # host also holds the deploy lease and the APM alert window, which pauses alerts for
 # 10 minutes (an hour with --cold) or until the deploy ends.
