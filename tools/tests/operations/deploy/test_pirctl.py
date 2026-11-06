@@ -5,12 +5,14 @@ resolving its ExecStart under that directory, records the process as
 `proc/<pid>/exe`, and writes the health document the executable's marker files ask
 for. Releases are served from a local directory through `file://` URLs.
 """
+import fcntl
 import hashlib
 import io
 import json
 import os
 from pathlib import Path
 import shutil
+import stat
 import subprocess
 import tarfile
 import tempfile
@@ -22,6 +24,27 @@ PIRCTL = ROOT / 'tools/deploy/pirctl'
 DRIVER = ROOT / 'tools/deploy/pir-deploy'
 SHA_A = 'a' * 40
 SHA_B = 'b' * 40
+PRODUCTION_LOCK = 'run/lock/wallet-pir-production.lock'
+SCHEMA = 'srv/transparent-activity/ops/schema'
+
+# flock(1) for hosts that lack it (macOS): `flock [-n] <fd|path> [command...]`. A lock
+# taken on an inherited descriptor outlives this process, as with the real tool.
+FLOCK = r'''#!/usr/bin/env python3
+import fcntl, os, subprocess, sys
+args = sys.argv[1:]
+mode = fcntl.LOCK_EX
+if args[0] == '-n':
+    mode |= fcntl.LOCK_NB
+    args = args[1:]
+target, command = args[0], args[1:]
+fd = int(target) if target.isdigit() else os.open(target, os.O_RDWR | os.O_CREAT, 0o600)
+try:
+    fcntl.flock(fd, mode)
+except BlockingIOError:
+    sys.exit(1)
+if command:
+    sys.exit(subprocess.run(command, pass_fds=() if target.isdigit() else (fd,)).returncode)
+'''
 
 SYSTEMCTL = r'''#!/usr/bin/env python3
 import json, os, re, sys
@@ -48,6 +71,18 @@ command = args[0]
 if command == 'restart':
     unit = args[1]
     s = unit_state(unit)
+    if os.environ.get('LOCK_LOG'):
+        # Records whether a restart ran while someone held the coordinator's production lock.
+        import fcntl
+        probe = os.open(os.environ['LOCK_FILE'], os.O_RDONLY)
+        try:
+            fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            held = False
+        except BlockingIOError:
+            held = True
+        os.close(probe)
+        with open(os.environ['LOCK_LOG'], 'a') as log:
+            log.write('%s %s\n' % (unit, 'held' if held else 'free'))
     binary = Path(os.path.realpath(str(root) + exec_start(unit)))
     s['pid'] = max(v['pid'] for v in state.values()) + 1
     s['restarts'] += 1
@@ -112,7 +147,7 @@ class Fleet:
         self.bin.mkdir()
         write_executable(self.bin / 'systemctl', SYSTEMCTL)
         if not shutil.which('flock'):
-            write_executable(self.bin / 'flock', '#!/bin/sh\nexit 0\n')
+            write_executable(self.bin / 'flock', FLOCK)
         self.releases = self.base / 'releases'
         self.hosts = self.base / 'hosts'
 
@@ -165,6 +200,15 @@ class Fleet:
 
     def pirctl(self, root, *args):
         return subprocess.run([str(PIRCTL), *args], env=self.env(root), capture_output=True, text=True, timeout=60)
+
+    def hold(self, root, owner):
+        """`pirctl hold` running in the background, once it has the lock."""
+        process = subprocess.Popen([str(PIRCTL), 'hold', owner], env=self.env(root), stdin=subprocess.PIPE,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if process.stdout.readline() != 'locked\n':
+            process.kill()
+            raise AssertionError('pirctl hold failed: ' + process.communicate()[1])
+        return process
 
     def current(self, root, component):
         link = root / 'opt/wallet-pir' / component / 'current'
@@ -296,6 +340,37 @@ class PirctlTest(unittest.TestCase):
         self.assertEqual(self.fleet.pirctl(self.host, 'lease', 'drop', 'mac').returncode, 0)
         self.assertEqual(self.fleet.pirctl(self.host, 'lease', 'take', 'ci', '0').returncode, 0)
         self.assertEqual(self.fleet.pirctl(self.host, 'lease', 'take', 'mac', '60').returncode, 0)
+
+    def test_hold_refuses_while_another_operation_holds_the_production_lock(self):
+        lock = self.host / PRODUCTION_LOCK
+        lock.parent.mkdir(parents=True)
+        lock.write_text('')
+        with open(lock, 'rb') as other:
+            fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            refused = self.fleet.pirctl(self.host, 'hold', 'ci')
+        self.assertEqual(refused.returncode, 1)
+        self.assertIn('production lock is held by a wallet-pir-deploy.py or Transparent operation', refused.stderr)
+        holder = self.fleet.hold(self.host, 'mac')
+        try:
+            self.assertIn('pir-deploy mac since', lock.read_text())
+            second = self.fleet.pirctl(self.host, 'hold', 'ci')
+            self.assertIn('the production lock is held by pir-deploy mac since', second.stderr)
+        finally:
+            holder.communicate(timeout=10)
+        self.assertEqual(holder.returncode, 0)
+        self.assertEqual(lock.read_text(), '')
+
+    def test_fence_refuses_an_unfinished_schema_transaction(self):
+        source = (ROOT / 'tools/lib/wallet_pir_ops/schema_fence.py').read_text()
+        fence = lambda: subprocess.run([str(PIRCTL), 'fence'], input=source, env=self.fleet.env(self.host),
+                                       capture_output=True, text=True, timeout=60)
+        self.assertEqual(fence().returncode, 0)
+        write_schema(self.host, 'interrupted')
+        refused = fence()
+        self.assertEqual(refused.returncode, 1)
+        self.assertIn('unfinished schema transaction', refused.stderr)
+        write_schema(self.host, 'committed')
+        self.assertEqual(fence().returncode, 0, fence().stderr)
 
     def test_adopt_moves_a_running_unit_onto_the_release_layout(self):
         old = self.host / 'opt/enhance-pir/releases/9b89/pir-query-server'
@@ -528,6 +603,48 @@ PIRCTL_ROOT=%(hosts)s/$host PIRCTL_PROC=%(hosts)s/$host/proc exec %(pirctl)s "$@
         self.assertEqual(self.fleet.current(status, 'status-router'), SHA_A[:12])
         self.assertIn('status-router: probe passed', result.stderr)
 
+    def test_a_deploy_holds_the_production_lock_until_it_ends(self):
+        self.fleet.release(SHA_A)
+        log = self.fleet.base / 'locks.log'
+        self.env.update(LOCK_LOG=str(log), LOCK_FILE=str(self.coordinator / PRODUCTION_LOCK))
+        result = self.run_driver('all', SHA_A)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(log.read_text().splitlines()), 4)
+        self.assertNotIn('free', log.read_text())
+        # The Python side refuses a lock file that is not private.
+        self.assertEqual(stat.S_IMODE((self.coordinator / PRODUCTION_LOCK).stat().st_mode), 0o600)
+        self.assertEqual((self.coordinator / PRODUCTION_LOCK).read_text(), '')
+        with open(self.coordinator / PRODUCTION_LOCK, 'rb') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    def test_a_python_operation_holding_the_production_lock_blocks_a_deploy(self):
+        self.fleet.release(SHA_A)
+        lock = self.coordinator / PRODUCTION_LOCK
+        lock.parent.mkdir(parents=True)
+        lock.write_text('')
+        with open(lock, 'rb') as operation:
+            fcntl.flock(operation, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            result = self.run_driver('unified', SHA_A)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('the production lock is held by a wallet-pir-deploy.py or Transparent operation', result.stderr)
+        self.assertIn('could not take the production lock on coordinator', result.stderr)
+        self.assertIsNone(self.fleet.current(self.query, 'query'))
+        self.assertFalse((self.coordinator / 'run/wallet-pir/deploy.lease').exists())
+
+    def test_an_unfinished_schema_transaction_blocks_a_deploy_and_a_dry_run(self):
+        self.fleet.release(SHA_A)
+        write_schema(self.coordinator, 'interrupted')
+        for args in (('unified', SHA_A), ('--dry-run', 'unified', SHA_A), ('rollback', 'unified')):
+            result = self.run_driver(*args)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('unfinished schema transaction', result.stderr)
+            self.assertIn('an unfinished operation fences the fleet', result.stderr)
+        self.assertIsNone(self.fleet.current(self.query, 'query'))
+        self.assertEqual(self.fleet.restarts(self.query, 'query.service'), 0)
+        write_schema(self.coordinator, 'committed')
+        result = self.run_driver('unified', SHA_A)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_a_held_lease_blocks_a_second_deploy(self):
         self.fleet.release(SHA_A)
         self.fleet.pirctl(self.coordinator, 'lease', 'take', 'ci', '600')
@@ -535,6 +652,16 @@ PIRCTL_ROOT=%(hosts)s/$host PIRCTL_PROC=%(hosts)s/$host/proc exec %(pirctl)s "$@
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('lease held by ci', result.stderr)
         self.assertIsNone(self.fleet.current(self.query, 'query'))
+
+
+def write_schema(root, status):
+    """The coordinator's record of one Transparent schema transaction, in `status`."""
+    state = root / SCHEMA
+    state.mkdir(parents=True, exist_ok=True)
+    identifier = 'transparent-schema-test'
+    (state / 'latest-transparent-schema.json').write_text(json.dumps({'id': identifier}))
+    (state / (identifier + '.json')).write_text(json.dumps({'journal_version': 1, 'id': identifier,
+                                                            'status': status, 'events': []}))
 
 
 if __name__ == '__main__':

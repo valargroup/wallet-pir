@@ -7,7 +7,9 @@ and systemd. Nothing else in the package opens a connection.
 import atexit
 import base64
 import contextlib
+import errno
 import json
+import os
 from pathlib import Path
 import shlex
 import shutil
@@ -44,6 +46,19 @@ class RemoteError(RuntimeError):
 
 class LockHeld(RuntimeError):
     pass
+
+
+# A lock file may name its holder: `pirctl hold` writes `pir-deploy <owner> since
+# <time>` into the production lock for the length of a binary rollout. Whoever takes
+# a lock clears the name, so a refusal never names an earlier holder.
+HOLDER_BYTES = 300
+
+
+def held_message(path, host, holder):
+    where = '%s on %s' % (path, host) if host else str(path)
+    if holder:
+        return '%s is held by %s; wait for it to finish' % (where, ' '.join(holder.split()))
+    return '%s is held%s' % (where, ' (or the host refused the session)' if host else '')
 
 
 class Executor:
@@ -320,7 +335,8 @@ class SSHExecutor(Executor):
         # The session has a connection of its own, never a shared master, and
         # keepalives: an idle session dropped by NAT would otherwise leave the
         # host holding the lock after this process is gone.
-        command = shlex.join(['flock', '-n', path, 'sh', '-c', 'echo locked; exec cat >/dev/null'])
+        command = (shlex.join(['flock', '-n', path, 'sh', '-c', ': >"$0"; echo locked; exec cat >/dev/null', path])
+                   + ' || head -c %d %s' % (HOLDER_BYTES, shlex.quote(path)))
         transport = self.transport(host)
         if transport and any(Path(part).name == 'ssh' for part in transport[:3]):
             transport = [*transport[:-1], '-o', 'ControlMaster=no', '-o', 'ControlPath=none', *KEEPALIVE,
@@ -328,11 +344,16 @@ class SSHExecutor(Executor):
         process = subprocess.Popen(transport + [command], stdin=subprocess.PIPE,
                                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, **inherited_lock.options())
         try:
-            if process.stdout.readline() != b'locked\n':
-                raise LockHeld('%s is held on %s (or the host refused the session)' % (path, host))
+            first = process.stdout.readline()
+            if first != b'locked\n':
+                # A refused flock prints the lock file, which may name its holder.
+                process.stdin.close()
+                holder = (first + process.stdout.read(HOLDER_BYTES)).decode(errors='replace')
+                raise LockHeld(held_message(path, host, holder))
             yield RemoteLock(process, host, path)
         finally:
             process.stdin.close()
+            process.stdout.close()
             try:
                 process.wait(timeout=30)
             except subprocess.TimeoutExpired:
@@ -349,8 +370,25 @@ class RemoteLock:
 
 
 class ProductionLock(hostlock.PinnedHostLock):
-    """The production lock taken directly, when the runner is the pinned coordinator."""
+    """The production lock taken directly, when the runner is the pinned coordinator.
+
+    A refusal names the holder the lock file records, such as a binary rollout.
+    """
     PATH = Path(LOCK_PATH)
+
+    def __enter__(self):
+        try:
+            super().__enter__()
+        except BlockingIOError:
+            try:
+                with open(self.PATH, 'rb') as handle:
+                    holder = handle.read(HOLDER_BYTES).decode(errors='replace')
+            except OSError:
+                holder = ''
+            raise BlockingIOError(errno.EWOULDBLOCK, held_message(self.PATH, None, holder)) from None
+        if self.fd is not None:
+            os.ftruncate(self.fd, 0)
+        return self
 
 
 @contextlib.contextmanager
