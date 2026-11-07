@@ -1,6 +1,11 @@
 use super::services::{Kind, Service};
 use serde::Serialize;
 use serde_json::Value;
+/// How long a worker may keep serving a replaced map, counted from when the
+/// sampling loop first saw its successor. Workers poll for publications,
+/// skipping any replaced meanwhile, and back off 10 s, then 20 s after a
+/// refused pass, so in a burst of blocks they trail the newest map.
+pub const WORKER_ADOPTION_SECONDS: u64 = 45;
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct View {
     pub sampled_at: u64,
@@ -23,6 +28,10 @@ pub struct View {
     /// oldest first; see [`View::lag_started`].
     #[serde(skip)]
     pub heights_seen: Vec<(u64, u64)>,
+    /// Maps the sampling loop saw replaced within [`WORKER_ADOPTION_SECONDS`],
+    /// each with when it first saw the successor; see [`View::follows`].
+    #[serde(skip)]
+    pub replaced: Vec<(String, u64)>,
     /// One entry per configured origin (at most two), in configuration order.
     pub origins: Vec<Origin>,
 }
@@ -165,6 +174,17 @@ impl View {
             .collect::<Option<Vec<_>>>()?
             .into_iter()
             .min()
+    }
+    /// Whether a worker serving `map` follows the publication: `map` is the
+    /// current one, or was replaced less than [`WORKER_ADOPTION_SECONDS`]
+    /// before `now`.
+    pub fn follows(&self, map: Option<&str>, now: u64) -> bool {
+        map.is_some_and(|map| {
+            self.map_sha256.as_deref() == Some(map)
+                || self.replaced.iter().any(|(replaced, at)| {
+                    replaced == map && now.saturating_sub(*at) < WORKER_ADOPTION_SECONDS
+                })
+        })
     }
     /// Bounded incident evidence: at most two origins of fixed-size fields.
     pub fn evidence(&self) -> String {

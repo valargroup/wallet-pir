@@ -529,8 +529,9 @@ fn service_rules(a: &mut Adder, svc: &ServiceView, view: &View, now: u64, p: &Po
             a.add(
                 format!("ready_{source_name}"),
                 source_name,
-                (fresh && publication_fresh && publication.map_sha256.is_some())
-                    .then_some(s.ready != Some(true) || s.publication != publication.map_sha256),
+                (fresh && publication_fresh && publication.map_sha256.is_some()).then_some(
+                    s.ready != Some(true) || !publication.follows(s.publication.as_deref(), now),
+                ),
                 "critical",
                 60,
                 s.sampled_at,
@@ -566,7 +567,9 @@ fn service_rules(a: &mut Adder, svc: &ServiceView, view: &View, now: u64, p: &Po
                 && recent.iter().all(|s| s.fresh(now));
             let ready = recent
                 .iter()
-                .filter(|s| s.ready == Some(true) && s.publication == publication.map_sha256)
+                .filter(|s| {
+                    s.ready == Some(true) && publication.follows(s.publication.as_deref(), now)
+                })
                 .count();
             a.add(
                 "recent_availability",
@@ -1562,6 +1565,76 @@ mod tests {
         v.sources.get_mut("k8").unwrap().publication = Some(map);
         let f = conditions(&v, 105, &Policy::default());
         assert_eq!(firing(&f, "txid", "ready_k8"), Some(false));
+    }
+
+    #[test]
+    fn workers_trailing_a_burst_stay_ready_but_a_stuck_one_fires() {
+        // As at 15:30 UTC on 2026-11-07: a new map every 12 s, sampled every
+        // 15 s, while each worker adopted one only about every 40 s.
+        let map = |t: u64| format!("{:064x}", (t - 1000) / 12);
+        let replay = |stuck: bool| {
+            let mut store =
+                pir_apm::incidents::Store::open(std::path::Path::new(":memory:")).unwrap();
+            let mut svc = service("transparent", Kind::History);
+            svc.min_recent_replicas = 1;
+            let (mut last, mut replaced) = (None, Vec::new());
+            let mut fired = Vec::new();
+            for t in (1005..=1300).step_by(5) {
+                // The sampling loop's bookkeeping, at 1003, 1018, 1033, ...
+                let sampled = t - (t - 1003) % 15;
+                if last != Some(map(sampled)) {
+                    replaced.extend(last.replace(map(sampled)).map(|m| (m, sampled)));
+                }
+                replaced.retain(|(_, at)| sampled - at < publication::WORKER_ADOPTION_SECONDS);
+                svc.publication = publication::View {
+                    sampled_at: sampled,
+                    map_sha256: last.clone(),
+                    replaced: replaced.clone(),
+                    ..Default::default()
+                };
+                // Passes at 1007, 1047, ... adopt the map that was newest 2 s earlier.
+                let adopted = if t < 1007 {
+                    1000
+                } else {
+                    t - (t - 1007) % 40 - 2
+                };
+                let worker = |role: &str, map: String| {
+                    let mut s = source("transparent", role, t, &[]);
+                    s.ready = Some(true);
+                    s.publication = Some(map);
+                    s
+                };
+                let v = view(
+                    vec![svc.clone()],
+                    vec![
+                        (
+                            "archive",
+                            worker("archive-owner", map(if stuck { 1000 } else { adopted })),
+                        ),
+                        ("recent", worker("recent-replica", map(adopted))),
+                    ],
+                );
+                let f = conditions(&v, t, &Policy::default());
+                store
+                    .evaluate(&f.services["transparent"], t, true, "test", "")
+                    .unwrap();
+                for i in store.incidents().unwrap().into_iter().filter(|i| i.active) {
+                    let key = i.condition.unwrap().key;
+                    if (key.ends_with(".ready_archive") || key.ends_with(".recent_availability"))
+                        && !fired.iter().any(|(k, _)| *k == key)
+                    {
+                        fired.push((key, t));
+                    }
+                }
+            }
+            fired
+        };
+        assert_eq!(replay(false), []);
+        // Replaced at 1018, so off the map from 1065 and firing 60 s later.
+        assert_eq!(
+            replay(true),
+            [("quality.transparent.ready_archive".to_string(), 1125)]
+        );
     }
 
     #[test]
