@@ -579,24 +579,45 @@ mod tests {
             "coverage_placement_warning",
             "publication_failure_warning",
         ];
+        // APM confirms placement 20-30 s after the publisher is eligible again,
+        // since it samples the router and the coordinator every 15 s.
+        let catching_up = |t| {
+            let mut d = withdrawn(t);
+            d.snapshot_gauges
+                .insert("enhance_publication_eligible".into(), 1.);
+            d.snapshot_gauges
+                .insert("enhance_publication_blocked".into(), 0.);
+            d
+        };
         let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
-        for t in (1000..=1120).step_by(5) {
-            let d = withdrawn(t);
-            assert!(d.placement_error);
-            let conditions = monitoring::conditions(&d, t, &Policy::default())
+        let mut run = |from: u64, to: u64, view: &dyn Fn(u64) -> DashboardData| {
+            for t in (from..=to).step_by(5) {
+                let d = view(t);
+                assert!(d.placement_error);
+                let conditions = monitoring::conditions(&d, t, &Policy::default())
+                    .into_iter()
+                    .filter(|c| keys.contains(&c.key.as_str()))
+                    .collect::<Vec<_>>();
+                store.evaluate(&conditions, t, true, "test", "").unwrap();
+            }
+            store
+                .incidents()
+                .unwrap()
                 .into_iter()
-                .filter(|c| keys.contains(&c.key.as_str()))
-                .collect::<Vec<_>>();
-            store.evaluate(&conditions, t, true, "test", "").unwrap();
-        }
-        let active: Vec<_> = store
-            .incidents()
-            .unwrap()
-            .into_iter()
-            .filter(|i| i.active)
-            .filter_map(|i| i.condition.map(|c| c.key))
-            .collect();
-        assert_eq!(active, ["publication_failure_warning"]);
+                .filter(|i| i.active)
+                .filter_map(|i| i.condition.map(|c| c.key))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(run(1000, 1120, &withdrawn), ["publication_failure_warning"]);
+        // The catch-up restarts the coverage hold, which a stuck router still exceeds.
+        assert!(run(1125, 1165, &catching_up).is_empty());
+        assert_eq!(
+            run(1170, 1170, &catching_up),
+            [
+                "coverage_domain_0_eligibility_warning",
+                "coverage_placement_warning"
+            ]
+        );
         // Without a fresh publisher scrape, the withdrawal explains nothing.
         let mut d = withdrawn(1125);
         d.scrape_error = Some("timeout".into());
