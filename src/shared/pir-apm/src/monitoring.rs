@@ -1284,7 +1284,15 @@ pub fn conditions(d: &DashboardData, now: u64, p: &Policy) -> Vec<Condition> {
             now,
         );
     }
+    // A withdrawn publisher (before a chain rewind, or after a restart) has
+    // routers refuse serving until the replacement publication is ready, so
+    // placement cannot be confirmed. `publication_failure_*` owns that state.
+    let withdrawn = coord && d.snapshot_gauges.get("enhance_publication_eligible") == Some(&0.);
     for (source, ok) in sources {
+        let held = !ok
+            && withdrawn
+            && (source == "placement"
+                || (source.starts_with("domain_") && source.ends_with("_eligibility")));
         // An unavailable source is observed on each evaluator tick. Recovery
         // needs new source observations, not repeated ticks over one sample.
         let sample = if ok {
@@ -1301,8 +1309,15 @@ pub fn conditions(d: &DashboardData, now: u64, p: &Policy) -> Vec<Condition> {
                 format!("coverage_{source}_{severity}"),
                 source.clone(),
                 severity,
-                Some(!ok),
-                if ok { "fresh" } else { "unavailable" }.into(),
+                (!held).then_some(!ok),
+                if ok {
+                    "fresh"
+                } else if held {
+                    "publisher withdrawn"
+                } else {
+                    "unavailable"
+                }
+                .into(),
                 format!("unavailable for {hold}s"),
                 hold,
                 sample,
