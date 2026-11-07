@@ -84,8 +84,10 @@ once per minute from a separate region, and monitors APM task progress.
 When Status monitoring is configured, `status_init_5xx` and `status_query_5xx`
 alert on HTTP 5xx divided by completed responses in the rolling five-minute
 window (default >5%, at least ten completions). `status_init_latency` and
-`status_query_latency` warn when processing p99 exceeds 2s / 5s respectively
-for 120 seconds, with at least twenty completions. Error ratio, sample minimums,
+`status_query_latency` warn when processing p99 exceeds 5s for 120 seconds, with
+at least twenty completions. `init` waits for a servable publication, and after a
+block that often takes 2-5 s for a few requests, enough to put a five-minute p99 in
+that bucket, so only longer waits count. Error ratio, sample minimums,
 and hold time use the shared policy; Status latency budgets can be set separately
 (up to 5s, the highest finite Status histogram boundary).
 These conditions use the same durable incident/outbox and shadow/active mode as
@@ -171,7 +173,7 @@ Optional `PIR_APM_ALERT_POLICY` names a JSON file. Fields and defaults:
   "latency_min_samples": 20,
   "init_latency_seconds": 2,
   "query_latency_seconds": 5,
-  "status_init_latency_seconds": 2,
+  "status_init_latency_seconds": 5,
   "status_query_latency_seconds": 5,
   "latency_hold_seconds": 120,
   "unavailable_seconds": 30,
