@@ -49,6 +49,12 @@
   after two hours, so each publication checks only recent items instead of every
   payout ever recorded. The audit tables are additive, so a rollback keeps working.
 
+- The NEAR audit finds excess refunds that NEAR lists beside the payout, as a second
+  destination transaction, as it has for most since 2026-11-04. The audit looked
+  only for a second origin transaction, so it saw almost none and pir-apm's
+  `receiver_excess_refund_crosscheck_idle` fired most days, though the refunds
+  reached wallets.
+
 - The wallet inventory and filter head wait up to 15 s instead of answering 503
   while a query server has no Receiver publication loaded: about 2 s after it
   starts, or after a publisher restart hands it new files. A query node's Caddy
