@@ -558,4 +558,55 @@ mod tests {
             after.iter().map(|i| &i.id).collect::<Vec<_>>()
         );
     }
+    #[test]
+    fn a_publisher_withdrawal_holds_placement_coverage_but_reports_a_stuck_one() {
+        // A reorg withdrawal: the refused router still lists its workers, so its
+        // report is unusable while the publisher reports itself ineligible.
+        let withdrawn = |t| {
+            let mut d = view(t);
+            d.snapshot_gauges
+                .insert("enhance_publication_eligible".into(), 0.);
+            d.snapshot_gauges
+                .insert("enhance_publication_blocked".into(), 1.);
+            let r = d.packing_routers.get_mut("router").unwrap();
+            r.ready = Some(false);
+            r.placement = Report::parse(&report().replace("\"ready\":true", "\"ready\":false"));
+            update(&mut d, at(t));
+            d
+        };
+        let keys = [
+            "coverage_domain_0_eligibility_warning",
+            "coverage_placement_warning",
+            "publication_failure_warning",
+        ];
+        let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
+        for t in (1000..=1120).step_by(5) {
+            let d = withdrawn(t);
+            assert!(d.placement_error);
+            let conditions = monitoring::conditions(&d, t, &Policy::default())
+                .into_iter()
+                .filter(|c| keys.contains(&c.key.as_str()))
+                .collect::<Vec<_>>();
+            store.evaluate(&conditions, t, true, "test", "").unwrap();
+        }
+        let active: Vec<_> = store
+            .incidents()
+            .unwrap()
+            .into_iter()
+            .filter(|i| i.active)
+            .filter_map(|i| i.condition.map(|c| c.key))
+            .collect();
+        assert_eq!(active, ["publication_failure_warning"]);
+        // Without a fresh publisher scrape, the withdrawal explains nothing.
+        let mut d = withdrawn(1125);
+        d.scrape_error = Some("timeout".into());
+        let conditions = monitoring::conditions(&d, 1125, &Policy::default());
+        for key in &keys[..2] {
+            assert_eq!(
+                conditions.iter().find(|c| c.key == *key).unwrap().firing,
+                Some(true),
+                "{key}"
+            );
+        }
+    }
 }
