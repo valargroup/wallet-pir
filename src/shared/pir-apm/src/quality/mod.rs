@@ -539,13 +539,18 @@ pub fn start(dashboard: SharedDashboard, config: &Config) -> Result<()> {
             // At most one new height per sample, so 32 reach back at least seven
             // minutes, past the default origin lag window.
             let mut heights = VecDeque::new();
+            let mut replaced: Vec<(String, u64)> = Vec::new();
             loop {
                 tick.tick().await;
                 let mut result = publication::check(&client, &service).await;
                 if result.map_sha256.is_some() && result.map_sha256 != last {
+                    replaced.extend(last.clone().map(|map| (map, result.sampled_at)));
                     before = std::mem::replace(&mut last, result.map_sha256.clone());
                     seen_at = Some(result.sampled_at);
                 }
+                replaced.retain(|(_, at)| {
+                    result.sampled_at.saturating_sub(*at) < publication::WORKER_ADOPTION_SECONDS
+                });
                 if let Some(height) = result.public_height {
                     if heights.back().is_none_or(|&(seen, _)| seen != height) {
                         heights.push_back((height, result.sampled_at));
@@ -557,6 +562,7 @@ pub fn start(dashboard: SharedDashboard, config: &Config) -> Result<()> {
                 result.previous_map = before.clone();
                 result.map_seen_at = seen_at;
                 result.heights_seen = heights.iter().copied().collect();
+                result.replaced = replaced.clone();
                 if let Some(s) = dashboard
                     .write()
                     .await

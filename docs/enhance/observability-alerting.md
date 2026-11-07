@@ -722,8 +722,8 @@ txid display controller.
 | `rebuild_warning` | both | warning | > 5% of 15-min coordinator cycles above 60 s (history) or 30 s (txid) | 60 s |
 | `rebuild_critical` | both | critical | > 5% of 15-min coordinator cycles above 120 s | 60 s |
 | `prepare_<worker>_warning`, `_critical` | both | warning / critical | > 5% of 15-min revision prepares above 32 s / 64 s | 60 s |
-| `ready_<worker>` | archive owner, display worker | critical | not ready on the published map | 60 s |
-| `recent_availability` | history | critical | no recent replica ready on the published map | 60 s |
+| `ready_<worker>` | archive owner, display worker | critical | not ready on the published map, or on one replaced less than 45 s ago | 60 s |
+| `recent_availability` | history | critical | no recent replica ready on the published map, or on one replaced less than 45 s ago | 60 s |
 | `recent_redundancy` | history | warning | fewer ready recent replicas than the service's `min_recent_replicas` (default 2; a one-replica fleet sets 1, leaving only `recent_availability`) | 120 s |
 | `coverage_<source>` | both | warning | source unavailable | 45 s |
 | `http_coverage_<source>` | history | warning | publisher or worker lacks HTTP observation version 1 | 45 s |
@@ -732,6 +732,12 @@ txid display controller.
 | `memory_<source>`, `disk_<source>` | both | warning | host memory < 15% or disk < 10% available | 120 s |
 | `oom_<source>` | both | critical | new OOM kills of the source's main unit | – |
 | `oom_<source>_<unit>` | both | critical | new OOM kills of another unit the host sampler reports | – |
+
+Workers poll for publications and skip any replaced meanwhile, so in a burst of
+blocks they trail the newest map. The readiness and recent replica rules count a
+worker serving a map replaced less than 45 s earlier, from when APM first saw its
+successor, as on the published map. A worker stuck on a map fires about 105 s
+after APM saw that map replaced.
 
 History keeps its 30 s and 60 s unpublished-age rules, which already page
 earlier than 180 s; the txid display seals every block, so it has only the 180 s
