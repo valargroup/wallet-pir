@@ -16,6 +16,19 @@ pub struct Transfer {
     pub elapsed: Duration,
 }
 
+/// An artifact request the publisher answered with this non-success status, typed
+/// so a product can tell a retired or busy artifact from other refusals.
+#[derive(Debug)]
+pub struct Refused(pub reqwest::StatusCode);
+
+impl std::fmt::Display for Refused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "artifact request refused with HTTP {}", self.0)
+    }
+}
+
+impl std::error::Error for Refused {}
+
 impl Response<'_> {
     /// Copy a successful response without buffering the whole object. Every body
     /// chunk uses the source's existing aggregate budget. The caller owns flush,
@@ -29,7 +42,7 @@ impl Response<'_> {
         if !self.status().is_success() {
             let status = self.status();
             self.discard().await?;
-            return Err(format!("artifact request refused with HTTP {status}").into());
+            return Err(Refused(status).into());
         }
         let started = Instant::now();
         let mut remaining = expected_bytes;

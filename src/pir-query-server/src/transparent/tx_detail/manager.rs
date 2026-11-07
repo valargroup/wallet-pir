@@ -3,7 +3,7 @@ use super::{
     live::{DisplayCommand, DisplayLive, DisplayPublication},
     service::DisplayRuntime,
 };
-use crate::transparent::source::{Config, Source};
+use crate::transparent::source::{is_superseded, superseded, Config, Source};
 use pir_pipeline::{
     consumer::{Consumer, ConsumerEngine, ConsumerPass, PeerHandover, PeerReservation},
     Input,
@@ -414,7 +414,7 @@ impl Consumer for DisplaySync {
         loaded: &PreparedDisplay,
     ) -> Result<Self::Validation, Error> {
         if latest != &loaded.current {
-            return Err("display candidate superseded or invalidated".into());
+            return Err(superseded("display candidate superseded or invalidated"));
         }
         Ok((latest.clone(), loaded.anchors.clone()))
     }
@@ -449,7 +449,7 @@ impl Consumer for DisplaySync {
         let final_current =
             refresh_serving(&mut self.source, &root, &live, &mut self.floor, current).await?;
         if final_current != latest {
-            return Err("display current changed during anchor checks".into());
+            return Err(superseded("display current changed during anchor checks"));
         }
         live.restore_verified(&keep)?;
         Ok(())
@@ -506,6 +506,14 @@ impl Consumer for DisplaySync {
     }
     fn terminal(&self, error: &Error) -> bool {
         crate::transparent::source::is_incompatible(error)
+    }
+    /// A pass that a newer publication outran, or that found the publisher
+    /// restarting, retries after a second instead of backing off.
+    fn transient(&self, error: &Error) -> bool {
+        is_superseded(error)
+            || error
+                .downcast_ref::<pir_sync_manager::DiscoveryError>()
+                .is_some_and(pir_sync_manager::DiscoveryError::unavailable)
     }
 }
 

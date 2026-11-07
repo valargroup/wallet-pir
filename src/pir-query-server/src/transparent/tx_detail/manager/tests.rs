@@ -188,6 +188,62 @@ async fn failed_sync_collects_old_downloads_but_preserves_restart_inputs() {
     }
 }
 
+/// A pass that a newer publication outran, or that found the publisher down,
+/// retries after a second; any other failure keeps the backoff.
+#[tokio::test]
+async fn outrun_passes_retry_quickly_and_other_failures_back_off() {
+    use pir_pipeline::consumer::polling::SyncTask;
+    let root = tempfile::tempdir().unwrap();
+    let root = root.path().canonicalize().unwrap();
+    let mut sync = ConsumerEngine::new(
+        DisplaySync::new(
+            Config {
+                publisher: "https://127.0.0.1:1".into(),
+                network: "main".into(),
+                genesis_hash: "22".repeat(32),
+                directory: root.clone(),
+                cache_bytes: 1 << 20,
+                max_download_bytes: 1 << 20,
+                roots: Vec::new(),
+            },
+            crate::transparent::config::ServiceConfig::default(),
+        )
+        .unwrap(),
+    );
+    // Nothing answers discovery, as while the publisher restarts.
+    let down = sync.synchronize().await.unwrap_err();
+    assert!(sync.transient(&down));
+    let loaded = PreparedDisplay {
+        current: current(1),
+        publication: DisplayPublication {
+            directory: root.clone(),
+            map_sha256: "44".repeat(32),
+        },
+        expected: String::new(),
+        anchors: Vec::new(),
+        operation: Arc::new(tokio::sync::Mutex::new(())).lock_owned().await,
+        recovery_error: None,
+    };
+    let outrun = sync.context().validate(&current(2), &loaded).unwrap_err();
+    assert!(sync.transient(&outrun));
+    for (status, quick) in [(404, true), (503, true), (500, false)] {
+        let refused: Error = Box::new(pir_sync_manager::Refused(
+            reqwest::StatusCode::from_u16(status).unwrap(),
+        ));
+        assert_eq!(sync.transient(&refused), quick, "artifact HTTP {status}");
+    }
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(root.join(".sources.lock"))
+        .unwrap();
+    lock.lock().unwrap();
+    let deferred = sync.context().collect().await.unwrap_err();
+    assert!(!sync.transient(&deferred));
+}
+
 #[tokio::test]
 async fn a_failed_first_download_keeps_its_objects_for_the_next_attempt() {
     // A first download refused partway (the publisher retired an artifact)
