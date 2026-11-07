@@ -14,9 +14,11 @@
   from the previous process stay void. It returns only if no recovery or domain fence
   was raised and none of its sessions was revoked since it was published, its
   inventory matches, every object hashes to its digest and its anchor block is still
-  canonical, and never once a start began adopting a rebuilt journal, even if the
-  publisher stopped before publishing from it. Otherwise it stays
-  withdrawn, as before, until the next publication. A restore counts as the
+  canonical. It is not restored after a rebuilt journal replaced the live one, even
+  if the publisher stopped before publishing from that journal. A staged rebuild
+  that fails its checks leaves the live journal in place, and this publication
+  can still be restored. A publication that fails those checks stays withdrawn,
+  as before, until the next publication. A restore counts as the
   publisher's last advancement, so publication monitoring keeps reading its metrics.
 
 - A restarted publisher serves Enhance again sooner. Verification hashes a
