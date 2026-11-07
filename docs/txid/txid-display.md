@@ -344,6 +344,12 @@ result with every candidate.
   revisions, and query servers download them unchanged. They are named by
   revision. Immutable bytes live once in `.objects/`; collection removes them
   only after every retained publication releases its reference.
+- **Synchronization.** A query server switches only to a publication that is
+  still current after its pass downloads, prepares and anchor-checks it. A pass
+  that a newer publication outran (a superseded answer, or a 404 or 503
+  refusal) or that found the publisher restarting starts again after a second,
+  up to 90 times in a row, so fast blocks cannot leave it waiting between
+  passes; other failures back off to 120 s.
 - **Worker.** When a publication directory holds any `.runtime` file, the
   prewarm tries the file for each unsealed table segment before restoring or
   building. It is found by the same identity a disk-cache entry is: revision

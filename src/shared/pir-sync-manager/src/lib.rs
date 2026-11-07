@@ -6,7 +6,7 @@ mod transfer;
 mod transport;
 pub use discovery::{is_incompatible, DiscoveryError, DISCOVERY_DEADLINE};
 pub use pir_service_discovery as service_discovery;
-pub use transfer::{Transfer, Verification};
+pub use transfer::{Refused, Transfer, Verification};
 pub use transport::{HttpsSource, Response};
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;

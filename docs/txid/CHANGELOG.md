@@ -7,6 +7,11 @@ recovery has its own [changelog](CHANGELOG.md). Both are released under one tag.
 
 ## Unreleased
 
+- A query server starts its next synchronization pass after a second, instead
+  of backing off up to 120 s, when a newer publication outran the last one or
+  the publisher was restarting. During fast blocks every pass could lose that
+  race; on 2026-11-07 a query server kept serving one map for 8 minutes.
+
 - Retry publication when a failed background check withdraws authority during
   activation, instead of persisting a controller halt. Activation write
   failures still halt for recovery.

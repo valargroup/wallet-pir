@@ -499,13 +499,18 @@ async fn streamed_objects_propagate_writer_errors_and_reject_refused_bodies() {
         .unwrap();
     assert!(error.downcast_ref::<std::io::Error>().is_some());
     let mut output = Vec::new();
-    assert!(source
+    let refused = source
         .request("fail", None)
         .await
         .unwrap()
         .copy_to(&mut output, 7, Verification::Length)
         .await
-        .is_err());
+        .err()
+        .unwrap();
+    assert_eq!(
+        refused.downcast_ref::<Refused>().map(|refused| refused.0),
+        Some(reqwest::StatusCode::SERVICE_UNAVAILABLE)
+    );
     assert!(output.is_empty());
     assert_eq!(source.downloaded(), 13);
 }

@@ -44,6 +44,44 @@ pub fn is_incompatible(error: &Error) -> bool {
     pir_sync_manager::is_incompatible(error.as_ref())
 }
 
+/// A read that lost a race with the publisher's next publication, so the next pass
+/// can succeed at once: an answer for another revision, a candidate no longer
+/// current, or a refusal. The publisher answers 404 only for an inventory or
+/// artifact its active publication does not list, and 503 while it changes
+/// publications or has none, so a lasting refusal would be a publisher defect.
+#[derive(Debug)]
+pub(crate) struct Superseded(String);
+
+impl std::fmt::Display for Superseded {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for Superseded {}
+
+/// `message` as a [`Superseded`] error.
+pub(crate) fn superseded(message: impl Into<String>) -> Error {
+    Box::new(Superseded(message.into()))
+}
+
+/// Whether a refusal with `status` lost a race; see [`Superseded`].
+fn superseding(status: reqwest::StatusCode) -> bool {
+    matches!(
+        status,
+        reqwest::StatusCode::NOT_FOUND | reqwest::StatusCode::SERVICE_UNAVAILABLE
+    )
+}
+
+/// Whether `error` is [`Superseded`] or an artifact refusal of the same kind.
+#[cfg_attr(not(feature = "transparent-detail"), allow(dead_code))]
+pub(crate) fn is_superseded(error: &Error) -> bool {
+    error.downcast_ref::<Superseded>().is_some()
+        || error
+            .downcast_ref::<pir_sync_manager::Refused>()
+            .is_some_and(|refused| superseding(refused.0))
+}
+
 pub(crate) struct Source {
     transport: pir_sync_manager::HttpsSource,
     observed: Option<Current>,
@@ -86,13 +124,15 @@ impl Source {
         suffix: &str,
     ) -> Result<pir_sync_manager::Response<'_>, Error> {
         let mut response = self.transport.request(suffix, None).await?;
-        if response.status() != reqwest::StatusCode::OK {
+        let status = response.status();
+        if status != reqwest::StatusCode::OK {
             response.discard().await?;
-            return Err(format!(
-                "publisher refused distribution with HTTP {}",
-                response.status()
-            )
-            .into());
+            let refused = format!("publisher refused distribution with HTTP {status}");
+            return Err(if superseding(status) {
+                superseded(refused)
+            } else {
+                refused.into()
+            });
         }
         Ok(response)
     }
@@ -267,7 +307,12 @@ impl Source {
             bytes.extend_from_slice(&chunk);
         }
         if status != reqwest::StatusCode::OK {
-            return Err(format!("publisher refused current with HTTP {status}").into());
+            let refused = format!("publisher refused current with HTTP {status}");
+            return Err(if status == reqwest::StatusCode::SERVICE_UNAVAILABLE {
+                superseded(refused)
+            } else {
+                refused.into()
+            });
         }
         drop(response);
         let current: Current = serde_json::from_slice(&bytes)?;
@@ -299,14 +344,15 @@ impl Source {
                 .small(&format!("anchors/{height}/{hash}"), 16 << 10)
                 .await?,
         )?;
+        if check.revision != current.revision || check.recovery_epoch != current.recovery_epoch {
+            return Err(superseded("canonicality attestation snapshot superseded"));
+        }
         if check.schema != self.schema
-            || check.revision != current.revision
-            || check.recovery_epoch != current.recovery_epoch
             || check.genesis_hash != current.genesis_hash
             || check.height != height
             || check.hash != hash
         {
-            return Err("canonicality attestation identity/snapshot superseded".into());
+            return Err("canonicality attestation has another identity".into());
         }
         Ok(check.canonical)
     }
