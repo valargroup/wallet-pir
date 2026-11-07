@@ -542,6 +542,9 @@ pub struct Policy {
     pub latency_min_samples: f64,
     pub init_latency_seconds: f64,
     pub query_latency_seconds: f64,
+    /// Status `init` waits for a servable publication, which after a block often
+    /// takes 2-5 s, so the default flags only waits past 5 s, the highest finite
+    /// Status histogram bound.
     pub status_init_latency_seconds: f64,
     pub status_query_latency_seconds: f64,
     pub latency_hold_seconds: u64,
@@ -575,7 +578,7 @@ impl Default for Policy {
             latency_min_samples: 20.,
             init_latency_seconds: 2.,
             query_latency_seconds: 5.,
-            status_init_latency_seconds: 2.,
+            status_init_latency_seconds: 5.,
             status_query_latency_seconds: 5.,
             latency_hold_seconds: 120,
             unavailable_seconds: 30,
@@ -1742,6 +1745,35 @@ mod tests {
                 .iter()
                 .all(|i| i.active == (now != 1135)));
         }
+    }
+    /// A few Status `init` requests waiting 2-5 s for the next publication stay under
+    /// the default budget; waits past 5 s, or a stricter budget, still fire.
+    #[test]
+    fn status_init_latency_ignores_waits_for_the_next_publication() {
+        let now = 1000;
+        let mut d = status_view(now, 0, false);
+        let place = |d: &mut DashboardData, bucket: usize| {
+            let (_, sample) = d.status.history.back_mut().unwrap();
+            let mut buckets = [0u64; 12];
+            buckets[bucket] = 100;
+            sample["http_operations"]["init"]["buckets"] = serde_json::json!(buckets);
+        };
+        let init = |d: &DashboardData, p: &Policy| {
+            conditions(d, now, p)
+                .into_iter()
+                .find(|c| c.key == "status_init_latency")
+                .unwrap()
+                .firing
+        };
+        place(&mut d, 10);
+        assert_eq!(init(&d, &Policy::default()), Some(false));
+        let strict = Policy {
+            status_init_latency_seconds: 2.,
+            ..Policy::default()
+        };
+        assert_eq!(init(&d, &strict), Some(true));
+        place(&mut d, 11);
+        assert_eq!(init(&d, &Policy::default()), Some(true));
     }
     #[test]
     fn status_rules_are_opt_in_and_missing_http_metrics_raise_coverage() {
