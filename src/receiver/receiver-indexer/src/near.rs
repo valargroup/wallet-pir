@@ -5,9 +5,10 @@
 //! reported payout and refund so a wallet can find it (zero OVK, Ironwood)? Payouts name
 //! their transaction, though NEAR may list another chain's transaction beside it, so a
 //! payout counts as found when any destination transaction its swap lists pays its
-//! receiver. Refunds name none, so a refund counts as found when any of its swap's
-//! reported origin transactions pays the refund receiver. Index completeness is the
-//! canary's, not this audit's; see [`receiver_store::audit`] for when items retire.
+//! receiver. Refunds name none, so a refund counts as found when any origin or
+//! destination transaction its swap lists pays the refund receiver. Index completeness
+//! is the canary's, not this audit's; see [`receiver_store::audit`] for when items
+//! retire.
 use receiver_store::{
     Confirmation, OpenPayout, OpenRefund, PaymentIndex, PayoutChange, PayoutStore, RefundChange,
     ReportedRefund, Store, RETIRE_AFTER_SECS,
@@ -308,7 +309,7 @@ pub enum Feed {
     /// Failed swaps out of ZEC, refunded to `refundTo`.
     Refunds,
     /// Successful swaps out of ZEC whose unused deposit was refunded to `refundTo`,
-    /// recognised by a second origin transaction.
+    /// recognised by a second listed transaction; see [`reported_refund`].
     ExcessRefunds,
 }
 
@@ -702,8 +703,10 @@ fn parse_hashes<'a>(hashes: impl IntoIterator<Item = &'a String>) -> Vec<Hash> {
 
 /// The refund `swap` reports to an Orchard receiver on `feed`, if it is one: an
 /// origin-chain refund in the feed's status, with any candidates for a refunded swap,
-/// or at least two origin hashes for an excess refund (its deposit and its refund, or
-/// the other chain's payout listed there; see [`Swap::refund_candidates`]).
+/// or for an excess refund a second listed transaction: two parsable origin hashes (its
+/// deposit and its refund, or the other chain's payout listed there) or two destination
+/// entries (the payout, parsable or not, and the refund). See
+/// [`Swap::refund_candidates`].
 fn reported_refund(feed: Feed, swap: &Swap, created_at: i64) -> Option<ReportedRefund> {
     if swap.status.as_deref() != Some(feed.status())
         || swap.refund_type.as_deref() != Some(ORIGIN_CHAIN)
@@ -713,6 +716,7 @@ fn reported_refund(feed: Feed, swap: &Swap, created_at: i64) -> Option<ReportedR
     let receiver = swap.refund_to.as_deref().and_then(orchard_receiver)?;
     if feed == Feed::ExcessRefunds
         && parse_hashes(swap.origin_chain_tx_hashes.iter().flatten()).len() < 2
+        && swap.destination_chain_tx_hashes.iter().flatten().count() < 2
     {
         return None;
     }
@@ -1501,6 +1505,29 @@ mod tests {
             .candidates;
         assert_eq!(candidates.len(), 3);
         assert!(candidates.contains(&zakura_server_chain::hash::parse_display(refund).unwrap()));
+    }
+
+    /// Since 2026-11-04 NEAR lists most excess refunds beside the payout, as a second
+    /// destination entry, with only the deposit (or nothing) under the origin (seen in
+    /// production). One destination entry is a plain swap, even one that parses, as
+    /// Tron payouts do.
+    #[test]
+    fn excess_refunds_listed_beside_the_payout_count() {
+        let deposit = "7f79a9262c301e3da38907fdbfca663c1fcb04b6a890ea737c281fc2ff707e7f";
+        let refund = "6f2e39f1aa4294f3356f8f0c6eac9c023ebaf73031039d1d628116449564c8f2";
+        let tron = "1f79a9262c301e3da38907fdbfca663c1fcb04b6a890ea737c281fc2ff707e7f";
+        let evm = "0x60466152ed1ff222c58eb928b346b515363fdd96b31364abb8b64d2eacd9b662";
+        let pick = |origin: &[&str], destination: &[&str]| {
+            let mut record = swap(SUCCESS, ORIGIN_CHAIN, UA, origin);
+            record.destination_chain_tx_hashes =
+                Some(destination.iter().map(|h| h.to_string()).collect());
+            reported_refund(Feed::ExcessRefunds, &record, 5).map(|r| r.candidates.len())
+        };
+        assert_eq!(pick(&[deposit], &[evm, refund]), Some(2));
+        assert_eq!(pick(&[], &[evm, refund]), Some(1));
+        assert_eq!(pick(&[deposit], &[tron, refund]), Some(3));
+        assert_eq!(pick(&[deposit], &[tron]), None);
+        assert_eq!(pick(&[deposit], &[evm]), None);
     }
 
     /// A refunded swap is found when any candidate pays its receiver, in any order,
