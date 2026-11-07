@@ -29,8 +29,9 @@ once per minute from a separate region, and monitors APM task progress.
   Missing, stale, inconsistent or unconfigured observations fail coverage.
   A withdrawn publisher (`enhance_publication_eligible` 0, before a chain rewind
   or after a restart) instead leaves placement and domain eligibility coverage
-  unknown while routers refuse serving; publication failure alerts report a
-  withdrawal that lasts 120s (warning) / 300s (critical).
+  unknown; their hold restarts once it is eligible again, and publication
+  failure alerts report a withdrawal that lasts 120s (warning) / 300s
+  (critical).
   Worker metrics reachability remains a separate monitoring check.
 - `publication_handover_warning` / `publication_handover_critical` report a
   continuously observed older serving generation for the existing publication
