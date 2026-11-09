@@ -104,6 +104,20 @@ pub(crate) fn muted(tx: &Transaction<'_>, now: u64) -> Result<bool> {
     Ok(true)
 }
 
+/// `(started_at, resumed_at)` of the last deployment, when it passed. Holds
+/// that start inside a passed deployment's window come from the deployment's
+/// own restarts, so the store restarts them once the window ends.
+pub(crate) fn passed_window(tx: &Transaction<'_>) -> Result<Option<(u64, u64)>> {
+    let Some(deployment) = read(tx)? else {
+        return Ok(None);
+    };
+    if deployment.outcome.as_deref() != Some("passed") {
+        return Ok(None);
+    }
+    let resumed = resumed_at(tx)?;
+    Ok((resumed > 0).then_some((deployment.started_at, resumed)))
+}
+
 pub(crate) fn resumed_at(tx: &Transaction<'_>) -> Result<u64> {
     Ok(tx
         .query_row(
@@ -438,6 +452,50 @@ mod tests {
         assert!(messages(&s).is_empty());
         s.evaluate(&[rate(411)], 411, false, "test", "").unwrap();
         assert!(messages(&s)[0].contains("init_5xx"));
+    }
+
+    /// A hold started by a passed deployment's restarts restarts once the
+    /// window ends: a failure that clears within one hold after the deploy
+    /// never pages, and one that outlasts it pages after a full hold.
+    #[test]
+    fn holds_started_inside_a_passed_window_restart_after_it() {
+        let mut s = store();
+        let condition = |now: u64, firing: bool| Condition {
+            retired: false,
+            key: "txid_coverage".into(),
+            resource: "txid".into(),
+            severity: "warning".into(),
+            firing: Some(firing),
+            observed: "unavailable".into(),
+            threshold: "unavailable for 45s".into(),
+            hold_seconds: 45,
+            window_seconds: 0,
+            sample: now,
+        };
+        let fired = |s: &Store| messages(s).iter().filter(|m| m.contains("*FIRED")).count();
+        s.begin_deployment("one", vec!["publisher".into()], MAX_SECONDS, 100)
+            .unwrap();
+        for t in [110, 130, 150] {
+            s.evaluate(&[condition(t, true)], t, false, "test", "")
+                .unwrap();
+        }
+        s.finish_deployment("one", false, 153).unwrap();
+        // Two seconds after the window, 45 s after the hold began: no page.
+        s.evaluate(&[condition(155, true)], 155, false, "test", "")
+            .unwrap();
+        assert_eq!(fired(&s), 0);
+        s.evaluate(&[condition(165, false)], 165, false, "test", "")
+            .unwrap();
+        assert_eq!(fired(&s), 0);
+        // A failure that starts after the window pages after its full hold.
+        for t in [170, 200, 214] {
+            s.evaluate(&[condition(t, true)], t, false, "test", "")
+                .unwrap();
+        }
+        assert_eq!(fired(&s), 0);
+        s.evaluate(&[condition(216, true)], 216, false, "test", "")
+            .unwrap();
+        assert_eq!(fired(&s), 1);
     }
 
     #[test]

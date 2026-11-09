@@ -184,6 +184,7 @@ impl Store {
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let muted = crate::deployment::muted(&tx, now)?;
         let resumed_at = crate::deployment::resumed_at(&tx)?;
+        let passed_window = crate::deployment::passed_window(&tx)?;
         let previous_mode: Option<String> = tx
             .query_row(
                 "SELECT value FROM metadata WHERE key=?",
@@ -216,6 +217,19 @@ impl Store {
             }
             if resumed_at > 0 && c.sample <= resumed_at.saturating_add(c.window_seconds) {
                 continue;
+            }
+            // A hold that began inside a passed deployment's window was started
+            // by the deployment's own restarts. It starts over after the window,
+            // and so does an incident it raised that Slack never heard about, so
+            // a failure that outlasts the deployment still pages after one full
+            // hold. Failed or expired deployments keep announcing as before.
+            if let Some((started, resumed)) = passed_window {
+                if !i.notified && i.since.is_some_and(|s| started <= s && s <= resumed) {
+                    i.since = None;
+                    i.healthy_samples = 0;
+                    i.active = false;
+                    i.announce_pending = false;
+                }
             }
             let fresh = c.sample > previous_sample;
             // Only a known answer advances the watermark. An unknown one carries
