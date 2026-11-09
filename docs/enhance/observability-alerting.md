@@ -727,8 +727,10 @@ a fresh worker configured for it, matching worker origins by scheme, host and
 port, and only through a worker reporting remote readiness 1 unless the worker
 is the router's own. That router must also have such a worker for every other
 published domain it owns, because a router refuses a publication it cannot
-serve in full. A combined role counts only when it owns every domain the answer
-needs. Every answer also needs a publisher health read from the last 45
+serve in full. A worker configured for more than five domains of that
+publication counts as unable to serve any of it, since a worker admits at most
+five while one is growing and refuses the whole publication otherwise. A
+combined role counts only when it owns every domain the answer needs. Every answer also needs a publisher health read from the last 45
 seconds, since its domain list says what must be served.
 
 | Key | Severity | Fires when | Hold |
@@ -736,7 +738,7 @@ seconds, since its domain list says what must be served.
 | `assignment_rollover_warning` | warning | the publication the next domain will create cannot be served, at any number of rows left | – |
 | `assignment_rollover_critical` | critical | the same, with fewer than 1,024 rows (about 34,000 records) left | – |
 | `assignment_unassigned` | critical | a published domain has no configured router and worker | 60 s |
-| `assignment_coverage_warning` / `_critical` | warning / critical | router, worker or publisher evidence is missing, so the answers above are unknown | 45 s / 120 s |
+| `assignment_coverage_warning` / `_critical` | warning / critical | router, worker or publisher evidence is missing, so an answer above is unknown (rows count only while the next domain cannot be served) | 45 s / 120 s |
 
 The warning fires as soon as the current domain is the last one the fleet can
 take, which leaves a full domain of time to add workers or a router. Rows left

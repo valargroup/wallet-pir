@@ -97,20 +97,35 @@ pub fn conditions(d: &DashboardData, now: u64) -> Vec<Condition> {
         0,
         critical.map_or(now, |c| c.1),
     );
-    // An unknown answer must not look healthy: missing evidence pages on its own.
-    let known = unassigned.is_some()
-        && rollover
-            .as_ref()
-            .is_some_and(|r| r.next_domain.assigned.is_some());
+    // An unknown answer must not look healthy: missing evidence pages on its
+    // own. Rows matter only when the next domain cannot be served. A healthy
+    // answer carries the oldest evidence it rests on, so one scrape cannot
+    // count as two recovery samples.
+    let evidence = rollover.as_ref().and_then(|r| {
+        let next = r.next_domain.assigned?;
+        let critical = critical?.0;
+        r.unassigned.as_ref()?;
+        critical?;
+        let mut sample = r.unassigned_sample.min(r.next_domain.sample);
+        if !next {
+            sample = sample.min(r.rows_sample);
+        }
+        Some(sample)
+    });
     for (severity, hold) in [("warning", 45), ("critical", 120)] {
         add(
             &format!("coverage_{severity}"),
             severity,
-            Some(!known),
-            if known { "fresh" } else { "unavailable" }.into(),
+            Some(evidence.is_none()),
+            if evidence.is_some() {
+                "fresh"
+            } else {
+                "unavailable"
+            }
+            .into(),
             &format!("router, worker or publisher assignment evidence unavailable for {hold}s"),
             hold,
-            now,
+            evidence.unwrap_or(now),
         );
     }
     out

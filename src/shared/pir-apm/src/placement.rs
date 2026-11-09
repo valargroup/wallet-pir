@@ -26,6 +26,9 @@ impl Published {
 }
 /// The wallet protocol's domain ceiling (`enhance_shared::protocol::MAX_QUERY_SHARDS`).
 const MAX_DOMAINS: u64 = 24;
+/// Domains a worker admits while one is growing
+/// (`enhance_shared::placement::PlacementPolicy::limit`).
+const MAX_GROWING_DOMAINS: usize = 5;
 
 /// Whether one domain will be served: some fresh router names it with a
 /// fresh worker configured for it. `assigned` is `None` while any router or
@@ -110,43 +113,59 @@ pub fn rollover(data: &crate::dashboard::DashboardData, now: u64) -> Option<Roll
         .collect();
     // Whether a router's named workers will serve `domain`: `Some(at)` with the
     // deciding worker's sample, `None` when proven not, `Err(())` if unknown.
-    let worker_for =
-        |urls: &BTreeSet<String>, domain: u64, own: Option<&String>, samples: &mut Vec<u64>| {
-            let mut unknown = !workers_trusted;
-            for url in urls {
-                let url_origin = origin(url);
-                // Another router can use a worker only through the remote
-                // readiness a standalone worker reports (1). A combined role's
-                // embedded worker reports 0; a worker reporting neither
-                // predates the marker and leaves the answer unknown.
-                let remote = url_origin.as_ref().is_some_and(|o| Some(o) != own);
-                match url_origin.and_then(|o| workers.get(&o)) {
-                    Some((at, values)) if remote && values.get("remote_readiness") == Some(&0.) => {
-                        samples.push(*at);
-                    }
-                    Some((_, values)) if remote && values.get("remote_readiness") != Some(&1.) => {
-                        unknown = true;
-                    }
-                    Some((at, values))
-                        if workers_trusted
-                            && values.get(&format!("configured_domain_{domain}")) == Some(&1.) =>
-                    {
-                        return Ok(Some(*at));
-                    }
-                    Some((at, _)) => samples.push(*at),
-                    None => unknown = true,
+    // A worker admits at most five domains while one is growing
+    // (`PlacementPolicy::limit`), and refuses the whole publication otherwise,
+    // so one configured for more of `publication` cannot serve any of it.
+    let worker_for = |urls: &BTreeSet<String>,
+                      domain: u64,
+                      publication: &BTreeSet<u64>,
+                      own: Option<&String>,
+                      samples: &mut Vec<u64>| {
+        let mut unknown = !workers_trusted;
+        for url in urls {
+            let url_origin = origin(url);
+            // Another router can use a worker only through the remote
+            // readiness a standalone worker reports (1). A combined role's
+            // embedded worker reports 0; a worker reporting neither
+            // predates the marker and leaves the answer unknown.
+            let remote = url_origin.as_ref().is_some_and(|o| Some(o) != own);
+            match url_origin.and_then(|o| workers.get(&o)) {
+                Some((at, values)) if remote && values.get("remote_readiness") == Some(&0.) => {
+                    samples.push(*at);
                 }
+                Some((_, values)) if remote && values.get("remote_readiness") != Some(&1.) => {
+                    unknown = true;
+                }
+                Some((at, values))
+                    if publication
+                        .iter()
+                        .filter(|d| values.get(&format!("configured_domain_{d}")) == Some(&1.))
+                        .count()
+                        > MAX_GROWING_DOMAINS =>
+                {
+                    samples.push(*at);
+                }
+                Some((at, values))
+                    if workers_trusted
+                        && values.get(&format!("configured_domain_{domain}")) == Some(&1.) =>
+                {
+                    return Ok(Some(*at));
+                }
+                Some((at, _)) => samples.push(*at),
+                None => unknown = true,
             }
-            if unknown {
-                Err(())
-            } else {
-                Ok(None)
-            }
-        };
+        }
+        if unknown {
+            Err(())
+        } else {
+            Ok(None)
+        }
+    };
     // A router serves a publication only when every published domain it owns
     // has a ready worker (`PackingRouter::peers`), so `domain` counts as
     // assigned only through a router that can serve all of `required` it owns.
     let assignment = |domain: u64, required: &BTreeSet<u64>| {
+        let publication: BTreeSet<u64> = required.iter().copied().chain([domain]).collect();
         let mut known = routers_complete;
         let mut samples = vec![published_at];
         for (router_at, configured, combined, own) in &routes {
@@ -171,7 +190,7 @@ pub fn rollover(data: &crate::dashboard::DashboardData, now: u64) -> Option<Roll
                 let Some(urls) = configured.get(owned) else {
                     continue;
                 };
-                match worker_for(urls, *owned, own.as_ref(), &mut samples) {
+                match worker_for(urls, *owned, &publication, own.as_ref(), &mut samples) {
                     Ok(Some(at)) => proof.push(at),
                     Ok(None) => verdict = Some(false),
                     Err(()) => {
@@ -1131,6 +1150,10 @@ mod tests {
             .remove("enhance_rows_before_next_carveout");
         assert_eq!(firing(&d, now, "assignment_rollover_warning"), Some(true));
         assert_eq!(firing(&d, now, "assignment_rollover_critical"), None);
+        // The critical cannot be decided without rows, and coverage says so.
+        assert_eq!(firing(&d, now, "assignment_coverage_warning"), Some(true));
+        // Once the next domain is assigned, rows no longer matter.
+        provision(&mut d, now, &[0, 1], &[0, 1]);
         assert_eq!(firing(&d, now, "assignment_coverage_warning"), Some(false));
         // Routers without the new fields: unknown, and coverage says so.
         d.packing_routers.get_mut("router").unwrap().configured = None;
@@ -1139,6 +1162,60 @@ mod tests {
         assert!(monitoring::conditions(&d, now, &Policy::default())
             .iter()
             .all(|c| !c.key.starts_with("assignment_")));
+    }
+
+    /// A worker configured for more than five domains of the publication
+    /// refuses all of it, so it does not count as serving any of them.
+    #[test]
+    fn a_worker_over_the_five_domain_limit_cannot_serve() {
+        let now = pir_apm::incidents::unix_time();
+        let mut d = view(now);
+        let six: Vec<u64> = (0..6).collect();
+        provision(&mut d, now, &six, &six);
+        publish(&mut d, "[0,1,2,3,4,5]");
+        assert_eq!(firing(&d, now, "assignment_unassigned"), Some(true));
+        publish(&mut d, "[0,1,2,3,4]");
+        assert_eq!(firing(&d, now, "assignment_unassigned"), Some(false));
+        // The rollover sees that domain 5 would push them past the limit.
+        d.snapshot_gauges
+            .insert("enhance_rows_before_next_carveout".into(), 500.);
+        assert_eq!(firing(&d, now, "assignment_rollover_critical"), Some(true));
+    }
+
+    /// Coverage recovers only on two distinct healthy scrapes, not on repeated
+    /// evaluations of one.
+    #[test]
+    fn coverage_recovery_needs_two_distinct_scrapes() {
+        let key = "assignment_coverage_warning";
+        let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
+        let active = |store: &Store| {
+            store
+                .incidents()
+                .unwrap()
+                .iter()
+                .any(|i| i.active && i.condition.as_ref().is_some_and(|c| c.key == key))
+        };
+        let step = |store: &mut Store, scraped: u64, t: u64, known: bool| {
+            let mut d = view(scraped);
+            provision(&mut d, scraped, &[0, 1], &[0, 1]);
+            if !known {
+                d.packing_routers.get_mut("router").unwrap().configured = None;
+            }
+            let conditions: Vec<_> = crate::assignment_alerts::conditions(&d, t)
+                .into_iter()
+                .filter(|c| c.key == key)
+                .collect();
+            store.evaluate(&conditions, t, false, "test", "").unwrap();
+        };
+        for t in (1000..=1060).step_by(15) {
+            step(&mut store, t, t, false);
+        }
+        assert!(active(&store));
+        step(&mut store, 1075, 1075, true);
+        step(&mut store, 1075, 1080, true);
+        assert!(active(&store), "one scrape evaluated twice");
+        step(&mut store, 1090, 1090, true);
+        assert!(!active(&store));
     }
 
     #[test]
