@@ -73,8 +73,7 @@ fn announce(
 /// Closes the window and settles the deployment's own incidents
 /// (`Incident::deploy_owned`). Only a pass on the store that owns the window
 /// holds them back. A mirror sees the owner's outcome a poll late, or not at
-/// all, so it releases them like any other outcome does: a pending streak
-/// gets back the start an earlier pass moved, and nothing waits.
+/// all, so it releases them like any other outcome does, and nothing waits.
 fn resume(
     tx: &Transaction<'_>,
     deployment: &mut Deployment,
@@ -91,17 +90,11 @@ fn resume(
         }
         let hold = i.condition.as_ref().map_or(0, |c| c.hold_seconds);
         if !passed {
-            if let (false, Some(first)) = (i.active, i.owned_since) {
-                i.since = Some(first);
-            }
             i.deploy_owned = false;
-            i.owned_since = None;
             i.hold_until = None;
         } else if i.active {
             i.hold_until = Some(now.saturating_add(hold));
         } else if let Some(since) = i.since {
-            i.owned_since.get_or_insert(since);
-            i.since = Some(since.max(now));
             i.hold_until = Some(since.max(now).saturating_add(hold));
         }
         true
@@ -205,7 +198,6 @@ fn open_window(tx: &Transaction<'_>, deployment: &Deployment, now: u64) -> Resul
         if incident.deploy_owned {
             if incident.hold_until.is_some_and(|until| until <= now) {
                 incident.deploy_owned = false;
-                incident.owned_since = None;
             }
             incident.hold_until = None;
             changed = true;
@@ -782,8 +774,8 @@ mod tests {
     }
 
     /// A pending streak whose wait ran out before the next deploy began is
-    /// not taken over by it, and a failed deploy gives a pending streak back
-    /// the start an earlier pass moved.
+    /// not taken over by it, a failed deploy lets a pending streak count from
+    /// its real start, and a streak that went stale starts over unowned.
     #[test]
     fn a_pending_streak_is_carried_only_while_it_waits() {
         let fired = |s: &Store| messages(s).iter().filter(|m| m.contains("*FIRED")).count();
@@ -820,6 +812,29 @@ mod tests {
         s.evaluate(&[held("p", 161, Some(true), 45)], 161, false, "test", "")
             .unwrap();
         assert_eq!(fired(&s), 1, "the streak counts from 110 again");
+
+        let mut s = store();
+        s.begin_deployment("a", vec!["publisher".into()], MAX_SECONDS, 100)
+            .unwrap();
+        for t in [110, 120] {
+            s.evaluate(&[held("p", t, Some(true), 45)], t, false, "test", "")
+                .unwrap();
+        }
+        s.finish_deployment("a", false, 130).unwrap();
+        s.begin_deployment("b", vec!["publisher".into()], MAX_SECONDS, 135)
+            .unwrap();
+        // A 70 s gap restarts the streak at 190.
+        s.evaluate(&[held("p", 190, Some(true), 45)], 190, false, "test", "")
+            .unwrap();
+        s.finish_deployment("b", true, 200).unwrap();
+        for t in [201, 234] {
+            s.evaluate(&[held("p", t, Some(true), 45)], t, false, "test", "")
+                .unwrap();
+        }
+        assert_eq!(fired(&s), 0, "the new streak's hold ends at 235");
+        s.evaluate(&[held("p", 235, Some(true), 45)], 235, false, "test", "")
+            .unwrap();
+        assert_eq!(fired(&s), 1);
     }
 
     /// A deploy that takes over an earlier one's incident and then fails

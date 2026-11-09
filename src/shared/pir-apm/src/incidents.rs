@@ -59,14 +59,12 @@ pub struct Incident {
     #[serde(default)]
     pub deploy_owned: bool,
     /// When a `deploy_owned` incident's wait ends, fixed when its deployment
-    /// passes: the announcement of an active one waits for it, and a later
-    /// deployment takes over only one that is still waiting.
+    /// passes: a pending one is not raised and an active one is not announced
+    /// before it, and a later deployment takes over only one still waiting.
+    /// `since` itself never moves, so a release or an older binary counts the
+    /// streak from its real start.
     #[serde(default)]
     pub hold_until: Option<u64>,
-    /// A `deploy_owned` streak's start before a pass moved it, restored if a
-    /// later deployment that took it over does not pass.
-    #[serde(default)]
-    pub owned_since: Option<u64>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -271,9 +269,15 @@ impl Store {
                         i.healthy_samples = 0;
                         if i.since.is_none() && !i.active {
                             i.deploy_owned = muted;
+                            i.hold_until = None;
                         }
                         let since = *i.since.get_or_insert(now);
-                        if !i.active && fresh && now.saturating_sub(since) >= c.hold_seconds {
+                        let waited = i.hold_until.is_none_or(|until| now >= until);
+                        if !i.active
+                            && fresh
+                            && waited
+                            && now.saturating_sub(since) >= c.hold_seconds
+                        {
                             i.active = true;
                             i.id = format!("{}-{now}", c.key);
                             i.last_reminder = now;
@@ -316,7 +320,6 @@ impl Store {
             {
                 i.deploy_owned = false;
                 i.hold_until = None;
-                i.owned_since = None;
             }
             if let Some(event) = event {
                 let closing = matches!(event, "RECOVERED" | "RETIRED");
