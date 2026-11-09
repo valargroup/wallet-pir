@@ -50,14 +50,16 @@ pub struct Incident {
     /// A FIRED for this incident was queued for delivery; its end must be delivered too.
     #[serde(default)]
     pub notified: bool,
-    /// `started_at` of the deployment window this incident was raised in, when
-    /// its streak also began inside that window: a failure of the deploy's own
-    /// making, whose announcement waits one hold past the window if it passes.
+    /// The streak began while a deployment window was open, so it may come
+    /// from the deploy's own restarts. When the window passes, a pending
+    /// streak restarts at its end and an active incident waits one hold past
+    /// it (`hold_until`). A window that opens before that wait is over takes
+    /// the incident over, so back-to-back deploys are judged from the last
+    /// one's end. Any other outcome, an announcement or a recovery clears it.
     #[serde(default)]
-    pub raised_in: Option<u64>,
-    /// Announcement deadline for an incident marked by `raised_in`, fixed once
-    /// that deployment passes, so a later deployment neither cancels nor
-    /// extends it.
+    pub deploy_owned: bool,
+    /// Announcement deadline of a `deploy_owned` incident, fixed when its
+    /// deployment passes.
     #[serde(default)]
     pub hold_until: Option<u64>,
 }
@@ -194,12 +196,6 @@ impl Store {
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let muted = crate::deployment::muted(&tx, now)?;
         let resumed_at = crate::deployment::resumed_at(&tx)?;
-        let passed_window = crate::deployment::passed_window(&tx)?;
-        let open_started = if muted {
-            crate::deployment::open_started(&tx)?
-        } else {
-            None
-        };
         let previous_mode: Option<String> = tx
             .query_row(
                 "SELECT value FROM metadata WHERE key=?",
@@ -244,15 +240,7 @@ impl Store {
             // confirms it; an unknown input (e.g. right after a restart) waits rather
             // than paging "unavailable", and never clears the incident.
             let mut event = None;
-            // An incident raised by a passed deployment's own restarts is held
-            // back until one hold past that window; see `Incident::raised_in`.
-            // A later deployment has a different `started_at`, so it never
-            // re-arms the wait, and incidents from before the window never wait.
-            if let Some((started, resumed)) = passed_window {
-                if i.active && i.hold_until.is_none() && i.raised_in == Some(started) {
-                    i.hold_until = Some(resumed.saturating_add(c.hold_seconds));
-                }
-            }
+            // See `Incident::deploy_owned`.
             let held_back = i.hold_until.is_some_and(|until| now < until);
             if promoting && i.active && !c.retired {
                 if c.firing == Some(true) && !held_back {
@@ -276,25 +264,14 @@ impl Store {
                     }
                     Some(true) => {
                         i.healthy_samples = 0;
+                        if i.since.is_none() && !i.active {
+                            i.deploy_owned = muted;
+                        }
                         let since = *i.since.get_or_insert(now);
-                        // A passed deployment's own restarts must not use up a
-                        // hold: a streak that began strictly inside its window
-                        // counts from the window's end. Nothing is reset, so
-                        // incident history and shadow state are untouched.
-                        let raw_since = since;
-                        // Stored, so a later deployment cannot undo the shift.
-                        let since = match passed_window {
-                            Some((started, resumed)) if started < since && since <= resumed => {
-                                i.since = Some(resumed);
-                                resumed
-                            }
-                            _ => since,
-                        };
                         if !i.active && fresh && now.saturating_sub(since) >= c.hold_seconds {
                             i.active = true;
                             i.id = format!("{}-{now}", c.key);
                             i.last_reminder = now;
-                            i.raised_in = open_started.filter(|started| *started < raw_since);
                             i.hold_until = None;
                             event = Some("FIRED");
                         } else if event.is_none()
@@ -324,12 +301,16 @@ impl Store {
                         }
                         if i.active && i.healthy_samples >= 2 {
                             i.active = false;
-                            i.raised_in = None;
-                            i.hold_until = None;
                             event = Some("RECOVERED");
                         }
                     }
                 }
+            }
+            if event.is_some_and(|e| e != "REMINDER" && !(e == "FIRED" && muted))
+                || (!i.active && i.since.is_none())
+            {
+                i.deploy_owned = false;
+                i.hold_until = None;
             }
             if let Some(event) = event {
                 let closing = matches!(event, "RECOVERED" | "RETIRED");

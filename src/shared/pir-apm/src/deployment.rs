@@ -19,6 +19,10 @@ pub struct Deployment {
     /// Copied from the APM that owns the window, which alone announces it.
     #[serde(default)]
     pub mirrored: bool,
+    /// When the window closed on the store that owns it, so a mirror that
+    /// learns of the outcome later still measures holds from the real end.
+    #[serde(default)]
+    pub finished_at: Option<u64>,
 }
 
 fn read(tx: &Transaction<'_>) -> Result<Option<Deployment>> {
@@ -70,50 +74,49 @@ fn announce(
     Ok(())
 }
 
-fn resume(
-    tx: &Transaction<'_>,
-    deployment: &mut Deployment,
-    now: u64,
-    outcome: &str,
-) -> Result<()> {
+/// Closes the window as of `at`, the moment alerts resume, and settles the
+/// deployment's own incidents.
+fn resume(tx: &Transaction<'_>, deployment: &mut Deployment, at: u64, outcome: &str) -> Result<()> {
     deployment.outcome = Some(outcome.into());
+    deployment.finished_at = Some(at);
     save(tx, deployment)?;
-    tx.execute("INSERT INTO metadata(key,value) VALUES ('deployment_resumed_at',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [now.to_string()])?;
-    if outcome == "passed" {
-        hold_past(tx, deployment.started_at, now)?;
-    }
-    Ok(())
+    tx.execute("INSERT INTO metadata(key,value) VALUES ('deployment_resumed_at',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [at.to_string()])?;
+    let passed = outcome == "passed";
+    update_incidents(tx, |i| {
+        if !i.deploy_owned {
+            return false;
+        }
+        if !passed {
+            i.deploy_owned = false;
+            i.hold_until = None;
+        } else if i.active {
+            let hold = i.condition.as_ref().map_or(0, |c| c.hold_seconds);
+            i.hold_until = Some(at.saturating_add(hold));
+        } else if let Some(since) = i.since {
+            i.since = Some(since.max(at));
+        }
+        true
+    })
 }
 
-/// Fixes, in the transaction that records a pass, what the deployment's own
-/// restarts must not use up: a streak that began strictly inside the window
-/// restarts at its end, and an incident it raised (`Incident::raised_in`)
-/// waits one hold past it (`Incident::hold_until`). Stored now, so a
-/// deployment that follows before the next evaluation can neither cancel nor
-/// extend either.
-fn hold_past(tx: &Transaction<'_>, started: u64, resumed: u64) -> Result<()> {
+/// Rewrites every incident row for which `change` returns true, in this
+/// transaction. Rows that do not parse are left alone.
+fn update_incidents(
+    tx: &Transaction<'_>,
+    mut change: impl FnMut(&mut crate::incidents::Incident) -> bool,
+) -> Result<()> {
     let rows: Vec<(String, String)> = tx
         .prepare("SELECT key,value FROM incidents")?
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
         .collect::<rusqlite::Result<_>>()?;
     for (key, value) in rows {
-        let Ok(mut i) = serde_json::from_str::<crate::incidents::Incident>(&value) else {
+        let Ok(mut incident) = serde_json::from_str::<crate::incidents::Incident>(&value) else {
             continue;
         };
-        let hold = i.condition.as_ref().map_or(0, |c| c.hold_seconds);
-        let mut changed = false;
-        if i.active && i.hold_until.is_none() && i.raised_in == Some(started) {
-            i.hold_until = Some(resumed.saturating_add(hold));
-            changed = true;
-        }
-        if !i.active && i.since.is_some_and(|s| started < s && s <= resumed) {
-            i.since = Some(resumed);
-            changed = true;
-        }
-        if changed {
+        if change(&mut incident) {
             tx.execute(
                 "UPDATE incidents SET value=? WHERE key=?",
-                params![serde_json::to_string(&i)?, key],
+                params![serde_json::to_string(&incident)?, key],
             )?;
         }
     }
@@ -142,27 +145,6 @@ pub(crate) fn muted(tx: &Transaction<'_>, now: u64) -> Result<bool> {
     Ok(true)
 }
 
-/// `(started_at, resumed_at)` of the last deployment, when it passed. A hold
-/// that starts inside a passed deployment's window comes from the deployment's
-/// own restarts, so `Store::evaluate` counts it from the window's end.
-pub(crate) fn passed_window(tx: &Transaction<'_>) -> Result<Option<(u64, u64)>> {
-    let Some(deployment) = read(tx)? else {
-        return Ok(None);
-    };
-    if deployment.outcome.as_deref() != Some("passed") {
-        return Ok(None);
-    }
-    let resumed = resumed_at(tx)?;
-    Ok((resumed > 0).then_some((deployment.started_at, resumed)))
-}
-
-/// `started_at` of the deployment whose window is open now, if any.
-pub(crate) fn open_started(tx: &Transaction<'_>) -> Result<Option<u64>> {
-    Ok(read(tx)?
-        .filter(|d| d.outcome.is_none())
-        .map(|d| d.started_at))
-}
-
 pub(crate) fn resumed_at(tx: &Transaction<'_>) -> Result<u64> {
     Ok(tx
         .query_row(
@@ -178,8 +160,10 @@ pub(crate) fn resumed_at(tx: &Transaction<'_>) -> Result<u64> {
 /// Pause alerts: save the window and drop queued notifications. Events remain in
 /// history; notifications from before the boundary must not leak into it. An
 /// incident whose notification is dropped here is announced after the
-/// deployment; one Slack already heard about is not announced again.
-fn open_window(tx: &Transaction<'_>, deployment: &Deployment) -> Result<()> {
+/// deployment; one Slack already heard about is not announced again. An
+/// earlier deployment's own incident whose wait is not over yet becomes this
+/// one's (`Incident::deploy_owned`).
+fn open_window(tx: &Transaction<'_>, deployment: &Deployment, now: u64) -> Result<()> {
     save(tx, deployment)?;
     // A dropped reminder follows a FIRED Slack heard; any other dropped message
     // means Slack never heard of the incident.
@@ -202,25 +186,22 @@ fn open_window(tx: &Transaction<'_>, deployment: &Deployment) -> Result<()> {
         "DELETE FROM outbox WHERE incident NOT LIKE 'deployment:%'",
         [],
     )?;
-    let incidents = {
-        let mut statement = tx.prepare("SELECT key,value FROM incidents")?;
-        let rows = statement.query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        })?;
-        rows.collect::<rusqlite::Result<Vec<_>>>()?
-    };
-    for (key, value) in incidents {
-        let mut incident: crate::incidents::Incident = serde_json::from_str(&value)?;
+    update_incidents(tx, |incident| {
+        let mut changed = false;
         if incident.active && (!incident.notified || unsent.contains(&incident.id)) {
             incident.announce_pending = true;
             incident.notified = false;
-            tx.execute(
-                "UPDATE incidents SET value=? WHERE key=?",
-                params![serde_json::to_string(&incident)?, key],
-            )?;
+            changed = true;
         }
-    }
-    Ok(())
+        if incident.deploy_owned {
+            if incident.hold_until.is_some_and(|until| until <= now) {
+                incident.deploy_owned = false;
+            }
+            incident.hold_until = None;
+            changed = true;
+        }
+        changed
+    })
 }
 
 impl Store {
@@ -269,8 +250,9 @@ impl Store {
             expires_at: now.saturating_add(seconds),
             outcome: None,
             mirrored: false,
+            finished_at: None,
         };
-        open_window(&tx, &deployment)?;
+        open_window(&tx, &deployment, now)?;
         announce(
             &tx,
             &deployment,
@@ -309,18 +291,31 @@ impl Store {
                         mirrored: true,
                         ..owner.clone()
                     };
-                    open_window(&tx, &mirrored)?;
+                    // A different id over an open local window means the owner
+                    // finished one deploy and began the next between two
+                    // polls. The pause here never lifted, so `open_window`
+                    // carries the earlier deploy's incidents over.
+                    open_window(&tx, &mirrored, now)?;
                 }
             }
             None => {
                 if let Some(mut local) = local.filter(|l| open && l.mirrored) {
-                    let outcome = owner
-                        .filter(|o| o.id == local.id)
+                    // The owner's outcome for this window, or for a later one
+                    // that began and ended between two polls. Anything else is
+                    // `unknown`, which is not a pass and holds nothing back.
+                    let finished = owner.filter(|o| {
+                        o.outcome.is_some()
+                            && (o.id == local.id || o.started_at >= local.started_at)
+                    });
+                    let outcome = finished
                         .and_then(|o| o.outcome.clone())
-                        // An outcome the owner did not report is not a pass, so
-                        // it never holds alerts back (`passed_window`).
                         .unwrap_or_else(|| "unknown".into());
-                    resume(&tx, &mut local, now, &outcome)?;
+                    let at = finished
+                        .and_then(|o| o.finished_at)
+                        .unwrap_or(now)
+                        .max(local.started_at)
+                        .min(now);
+                    resume(&tx, &mut local, at, &outcome)?;
                 }
             }
         }
@@ -647,8 +642,9 @@ mod tests {
     }
 
     /// Only incidents the deploy itself raised wait. One whose streak began
-    /// before the window is announced on the first sample after it, and a
-    /// later deploy never re-arms the wait for an earlier one.
+    /// before the window is announced on the first sample after it. A deploy
+    /// that starts before an earlier one's wait is over takes the incident
+    /// over, so it waits a hold past the later deploy.
     #[test]
     fn only_the_deploys_own_incidents_wait_and_only_once() {
         let fired = |s: &Store| messages(s).iter().filter(|m| m.contains("*FIRED")).count();
@@ -678,12 +674,29 @@ mod tests {
         s.evaluate(&[held("own", 165, Some(true), 45)], 165, false, "test", "")
             .unwrap();
         s.finish_deployment("b", false, 170).unwrap();
-        s.evaluate(&[held("own", 175, Some(true), 45)], 175, false, "test", "")
+        for t in [175, 198, 214] {
+            s.evaluate(&[held("own", t, Some(true), 45)], t, false, "test", "")
+                .unwrap();
+        }
+        assert_eq!(fired(&s), 0, "B does not cancel the wait");
+        s.evaluate(&[held("own", 215, Some(true), 45)], 215, false, "test", "")
             .unwrap();
-        assert_eq!(fired(&s), 0, "B does not cancel A's wait");
-        s.evaluate(&[held("own", 198, Some(true), 45)], 198, false, "test", "")
+        assert_eq!(fired(&s), 1, "it ends a hold past B");
+        // A wait that ran out before B began is not taken over.
+        let mut s = store();
+        s.begin_deployment("a", vec!["publisher".into()], MAX_SECONDS, 100)
             .unwrap();
-        assert_eq!(fired(&s), 1, "and does not extend it past 198");
+        for t in [101, 130, 146] {
+            s.evaluate(&[held("late", t, Some(true), 45)], t, false, "test", "")
+                .unwrap();
+        }
+        s.finish_deployment("a", false, 153).unwrap();
+        s.begin_deployment("b", vec!["publisher".into()], MAX_SECONDS, 200)
+            .unwrap();
+        s.finish_deployment("b", false, 210).unwrap();
+        s.evaluate(&[held("late", 211, Some(true), 45)], 211, false, "test", "")
+            .unwrap();
+        assert_eq!(fired(&s), 1, "announced right after B");
         // A streak that began in A and had not activated keeps its shifted
         // start through B, with no evaluation between: today's shape, back to
         // back. A blip that clears before A's hold never pages.
@@ -711,6 +724,116 @@ mod tests {
                 .unwrap();
         }
         assert_eq!(fired(&s), 0);
+    }
+
+    /// A second deploy that outlasts the hold does not use up the first one's
+    /// wait inside its own pause, for a pending streak or a raised incident.
+    #[test]
+    fn a_long_second_deploy_does_not_use_up_the_wait() {
+        let fired = |s: &Store| messages(s).iter().filter(|m| m.contains("*FIRED")).count();
+        for first in [110, 101] {
+            let mut s = store();
+            s.begin_deployment("a", vec!["publisher".into()], MAX_SECONDS, 100)
+                .unwrap();
+            for t in [first, 130, 150] {
+                s.evaluate(&[held("x", t, Some(true), 45)], t, false, "test", "")
+                    .unwrap();
+            }
+            s.finish_deployment("a", false, 153).unwrap();
+            s.begin_deployment("b", vec!["publisher".into()], MAX_SECONDS, 155)
+                .unwrap();
+            for t in (160..=295).step_by(15) {
+                s.evaluate(&[held("x", t, Some(true), 45)], t, false, "test", "")
+                    .unwrap();
+            }
+            s.finish_deployment("b", false, 300).unwrap();
+            for t in [305, 330, 344] {
+                s.evaluate(&[held("x", t, Some(true), 45)], t, false, "test", "")
+                    .unwrap();
+            }
+            assert_eq!(fired(&s), 0, "streak from {first}");
+            s.evaluate(&[held("x", 345, Some(true), 45)], 345, false, "test", "")
+                .unwrap();
+            assert_eq!(fired(&s), 1, "streak from {first}");
+        }
+    }
+
+    /// A mirror measures the wait from the owner's finish, not from when it
+    /// heard of it, and keeps it when it misses the poll between two deploys.
+    #[test]
+    fn a_mirror_holds_from_the_owners_finish_across_missed_polls() {
+        let fired = |s: &Store| messages(s).iter().filter(|m| m.contains("*FIRED")).count();
+        let mut owner = store();
+        let mut monitor = store();
+        let a = owner
+            .begin_deployment("a", vec!["publisher".into()], MAX_SECONDS, 100)
+            .unwrap();
+        monitor.mirror_deployment(Some(&a), 100).unwrap();
+        for t in [110, 130, 150] {
+            monitor
+                .evaluate(&[held("m", t, Some(true), 45)], t, false, "test", "")
+                .unwrap();
+        }
+        let a = owner.finish_deployment("a", false, 153).unwrap();
+        monitor.mirror_deployment(Some(&a), 159).unwrap();
+        for t in [160, 197] {
+            monitor
+                .evaluate(&[held("m", t, Some(true), 45)], t, false, "test", "")
+                .unwrap();
+        }
+        assert_eq!(fired(&monitor), 0);
+        monitor
+            .evaluate(&[held("m", 198, Some(true), 45)], 198, false, "test", "")
+            .unwrap();
+        assert_eq!(fired(&monitor), 1, "a hold past 153, not past 159");
+
+        // The owner passes A and opens B between two polls.
+        let mut owner = store();
+        let mut monitor = store();
+        let a = owner
+            .begin_deployment("a", vec!["publisher".into()], MAX_SECONDS, 100)
+            .unwrap();
+        monitor.mirror_deployment(Some(&a), 100).unwrap();
+        for t in [105, 135, 165] {
+            monitor
+                .evaluate(&[held("m", t, Some(true), 60)], t, false, "test", "")
+                .unwrap();
+        }
+        owner.finish_deployment("a", false, 168).unwrap();
+        let b = owner
+            .begin_deployment("b", vec!["publisher".into()], MAX_SECONDS, 169)
+            .unwrap();
+        monitor.mirror_deployment(Some(&b), 180).unwrap();
+        let b = owner.finish_deployment("b", false, 185).unwrap();
+        monitor.mirror_deployment(Some(&b), 190).unwrap();
+        for t in [195, 210, 244] {
+            monitor
+                .evaluate(&[held("m", t, Some(true), 60)], t, false, "test", "")
+                .unwrap();
+        }
+        assert_eq!(fired(&monitor), 0);
+        monitor
+            .evaluate(&[held("m", 245, Some(true), 60)], 245, false, "test", "")
+            .unwrap();
+        assert_eq!(fired(&monitor), 1, "a hold past B's finish at 185");
+
+        // An outcome the owner never reported holds nothing back.
+        let mut owner = store();
+        let mut monitor = store();
+        let a = owner
+            .begin_deployment("a", vec!["publisher".into()], MAX_SECONDS, 100)
+            .unwrap();
+        monitor.mirror_deployment(Some(&a), 100).unwrap();
+        for t in [110, 130, 160] {
+            monitor
+                .evaluate(&[held("m", t, Some(true), 45)], t, false, "test", "")
+                .unwrap();
+        }
+        monitor.mirror_deployment(None, 165).unwrap();
+        monitor
+            .evaluate(&[held("m", 166, Some(true), 45)], 166, false, "test", "")
+            .unwrap();
+        assert_eq!(fired(&monitor), 1, "announced right after an unknown end");
     }
 
     /// Promotion from shadow respects the wait for an incident the deploy raised.
