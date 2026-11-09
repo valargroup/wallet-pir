@@ -118,6 +118,45 @@ permits and fixed request limits. Stale routing and incompatible sessions keep
 the existing refusal behavior; a client refresh does not authorize a different
 anchor on the wallet's behalf.
 
+### Domain responsibilities
+
+Each role names its domains in its own configuration: ingress
+`synchronization.routers`, router `synchronization.workers` and worker
+`synchronization.shards`. A domain holds 1,081,344 records, and the next record
+opens a new one. Ingress refuses a publication with a domain it has no router
+for, so every wallet `init` fails until all three roles list the new domain.
+
+Assign future domains ahead of time, so a new domain serves as soon as it
+opens. Every role already ignores configured domains that are not published.
+
+- Ingress may list every domain below the protocol limit of 24. List them all,
+  pointing at today's router, so domains up to that router's limit open without
+  an ingress change. When a new router takes later domains, repoint those
+  ingress entries at it in the same change. Ingress asks only the routers it
+  lists for a domain, and refuses a publication when that router does not serve
+  it.
+- A router takes at most six domains. A worker admits at most five while one is
+  still growing, which the newest domain always is. So list domains 0 to 4 on a
+  router and on the workers it names for them. Never list more than five on a
+  worker: its configuration check accepts six (`sealed_shards`), but the worker
+  refuses the whole publication once the sixth opens.
+- Workers model memory only for the domains already published, and APM's
+  `capacity_model_*` checks stay unknown until workers report the model fields,
+  so nothing checks ahead of time that a worker can hold all five. Size workers
+  from the qualification results instead. A worker that cannot admit a new
+  domain still reports it as configured. The refusal shows only as unavailable
+  placement coverage and failing `init`.
+
+Routers report every configured domain and its worker origins in
+`/internal/health` as `configured_domains`. Workers report
+`enhance_worker_configured_domains`, one `enhance_worker_configured_domain_<id>`
+gauge per configured domain, and `enhance_worker_remote_readiness` in
+`/internal/metrics` (1 for a standalone worker, 0 for a combined role's embedded
+worker, which only its own router can use). The publisher reports
+`enhance_rows_before_next_carveout` and `enhance_published_domains`. Before the
+last configured domain fills, add a router and workers for the next ones and
+repoint their ingress entries.
+
 ## Cutover checks
 
 Qualify the complete path before requesting the production gate. The reviewable

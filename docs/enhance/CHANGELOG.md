@@ -2,6 +2,16 @@
 
 ## 0.0.1 — Unreleased
 
+- The publisher reports the rows left before the next Enhance domain opens
+  (`enhance_rows_before_next_carveout`) again, which the October 2026 HTTPS
+  cutover had dropped, so APM's `capacity_shard_rollover` has data. Packing
+  routers report every configured domain and its workers, and workers report
+  their configured domains and whether other routers can use them, including
+  domains not yet published. On 2026-11-09 a mainnet burst filled domain 0,
+  domain 1 opened with no role configured for it, and every wallet `init`
+  failed. The deployment docs and example inventory now assign future domains
+  ahead of time, which every role already supports.
+
 - Wallet `init` waits at most its 15 s window for a publisher restart even when an
   authority refresh stalls. The first refresh and every retry are raced against the
   time left in that window, so a refresh stuck behind the shared publisher client

@@ -264,6 +264,15 @@ impl Coverage {
         Ok(())
     }
 
+    /// Whole rows the newest domain can still take before the next record
+    /// opens domain `shards.len()`. Every domain spans `max_shard_rows` rows,
+    /// so a full newest domain leaves zero.
+    pub fn rows_before_next_domain(&self, geometry: Geometry) -> u64 {
+        let span = geometry.max_shard_rows * RECORDS_PER_ROW as u64;
+        let used = self.shards.last().map_or(0, |s| s.records);
+        span.saturating_sub(used) / RECORDS_PER_ROW as u64
+    }
+
     pub fn locate(&self, position: u64) -> Option<(&QueryShard, usize, usize)> {
         if position >= self.records {
             return None;
@@ -652,6 +661,21 @@ mod tests {
         assert_eq!(during.shards[0].units.last().unwrap().allocated_rows, 8192);
         assert_eq!(after.shards[1].global_row_start, 32768);
         assert!(!after.shards.iter().any(|s| s.composed()));
+    }
+
+    #[test]
+    fn rows_before_next_domain_counts_down_to_the_carve_out() {
+        let g = Geometry::default();
+        let row = RECORDS_PER_ROW as u64;
+        let span = 32768 * row;
+        let mut l = Lifecycle::default();
+        let left = |l: &mut Lifecycle, n| l.coverage(n, g).unwrap().rows_before_next_domain(g);
+        assert_eq!(left(&mut l, 1), 32767);
+        assert_eq!(left(&mut l, span - row), 1);
+        assert_eq!(left(&mut l, span - 1), 0);
+        assert_eq!(left(&mut l, span), 0);
+        // The 2026-11-09 mainnet publication: domain 1 holds 6,627 records.
+        assert_eq!(left(&mut l, span + 6627), (span - 6627) / row);
     }
 
     #[test]
