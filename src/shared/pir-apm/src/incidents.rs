@@ -55,6 +55,11 @@ pub struct Incident {
     /// making, whose announcement waits one hold past the window if it passes.
     #[serde(default)]
     pub raised_in: Option<u64>,
+    /// Announcement deadline for an incident marked by `raised_in`, fixed once
+    /// that deployment passes, so a later deployment neither cancels nor
+    /// extends it.
+    #[serde(default)]
+    pub hold_until: Option<u64>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -243,9 +248,12 @@ impl Store {
             // back until one hold past that window; see `Incident::raised_in`.
             // A later deployment has a different `started_at`, so it never
             // re-arms the wait, and incidents from before the window never wait.
-            let held_back = passed_window.is_some_and(|(started, resumed)| {
-                i.raised_in == Some(started) && now < resumed.saturating_add(c.hold_seconds)
-            });
+            if let Some((started, resumed)) = passed_window {
+                if i.active && i.hold_until.is_none() && i.raised_in == Some(started) {
+                    i.hold_until = Some(resumed.saturating_add(c.hold_seconds));
+                }
+            }
+            let held_back = i.hold_until.is_some_and(|until| now < until);
             if promoting && i.active && !c.retired {
                 if c.firing == Some(true) && !held_back {
                     event = Some("FIRED");
@@ -274,8 +282,10 @@ impl Store {
                         // counts from the window's end. Nothing is reset, so
                         // incident history and shadow state are untouched.
                         let raw_since = since;
+                        // Stored, so a later deployment cannot undo the shift.
                         let since = match passed_window {
                             Some((started, resumed)) if started < since && since <= resumed => {
+                                i.since = Some(resumed);
                                 resumed
                             }
                             _ => since,
@@ -285,6 +295,7 @@ impl Store {
                             i.id = format!("{}-{now}", c.key);
                             i.last_reminder = now;
                             i.raised_in = open_started.filter(|started| *started < raw_since);
+                            i.hold_until = None;
                             event = Some("FIRED");
                         } else if event.is_none()
                             && i.active
@@ -314,6 +325,7 @@ impl Store {
                         if i.active && i.healthy_samples >= 2 {
                             i.active = false;
                             i.raised_in = None;
+                            i.hold_until = None;
                             event = Some("RECOVERED");
                         }
                     }

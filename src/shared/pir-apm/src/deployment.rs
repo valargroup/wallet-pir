@@ -79,6 +79,44 @@ fn resume(
     deployment.outcome = Some(outcome.into());
     save(tx, deployment)?;
     tx.execute("INSERT INTO metadata(key,value) VALUES ('deployment_resumed_at',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [now.to_string()])?;
+    if outcome == "passed" {
+        hold_past(tx, deployment.started_at, now)?;
+    }
+    Ok(())
+}
+
+/// Fixes, in the transaction that records a pass, what the deployment's own
+/// restarts must not use up: a streak that began strictly inside the window
+/// restarts at its end, and an incident it raised (`Incident::raised_in`)
+/// waits one hold past it (`Incident::hold_until`). Stored now, so a
+/// deployment that follows before the next evaluation can neither cancel nor
+/// extend either.
+fn hold_past(tx: &Transaction<'_>, started: u64, resumed: u64) -> Result<()> {
+    let rows: Vec<(String, String)> = tx
+        .prepare("SELECT key,value FROM incidents")?
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    for (key, value) in rows {
+        let Ok(mut i) = serde_json::from_str::<crate::incidents::Incident>(&value) else {
+            continue;
+        };
+        let hold = i.condition.as_ref().map_or(0, |c| c.hold_seconds);
+        let mut changed = false;
+        if i.active && i.hold_until.is_none() && i.raised_in == Some(started) {
+            i.hold_until = Some(resumed.saturating_add(hold));
+            changed = true;
+        }
+        if !i.active && i.since.is_some_and(|s| started < s && s <= resumed) {
+            i.since = Some(resumed);
+            changed = true;
+        }
+        if changed {
+            tx.execute(
+                "UPDATE incidents SET value=? WHERE key=?",
+                params![serde_json::to_string(&i)?, key],
+            )?;
+        }
+    }
     Ok(())
 }
 
@@ -279,7 +317,9 @@ impl Store {
                     let outcome = owner
                         .filter(|o| o.id == local.id)
                         .and_then(|o| o.outcome.clone())
-                        .unwrap_or_else(|| "passed".into());
+                        // An outcome the owner did not report is not a pass, so
+                        // it never holds alerts back (`passed_window`).
+                        .unwrap_or_else(|| "unknown".into());
                     resume(&tx, &mut local, now, &outcome)?;
                 }
             }
@@ -640,7 +680,37 @@ mod tests {
         s.finish_deployment("b", false, 170).unwrap();
         s.evaluate(&[held("own", 175, Some(true), 45)], 175, false, "test", "")
             .unwrap();
-        assert_eq!(fired(&s), 1, "B does not restart A's wait");
+        assert_eq!(fired(&s), 0, "B does not cancel A's wait");
+        s.evaluate(&[held("own", 198, Some(true), 45)], 198, false, "test", "")
+            .unwrap();
+        assert_eq!(fired(&s), 1, "and does not extend it past 198");
+        // A streak that began in A and had not activated keeps its shifted
+        // start through B, with no evaluation between: today's shape, back to
+        // back. A blip that clears before A's hold never pages.
+        let mut s = store();
+        s.begin_deployment("a", vec!["publisher".into()], MAX_SECONDS, 100)
+            .unwrap();
+        for t in [110, 130, 150] {
+            s.evaluate(&[held("streak", t, Some(true), 45)], t, false, "test", "")
+                .unwrap();
+        }
+        s.finish_deployment("a", false, 153).unwrap();
+        s.begin_deployment("b", vec!["publisher".into()], MAX_SECONDS, 155)
+            .unwrap();
+        s.evaluate(
+            &[held("streak", 160, Some(true), 45)],
+            160,
+            false,
+            "test",
+            "",
+        )
+        .unwrap();
+        s.finish_deployment("b", false, 170).unwrap();
+        for (t, firing) in [(175, true), (180, false), (185, false)] {
+            s.evaluate(&[held("streak", t, Some(firing), 45)], t, false, "test", "")
+                .unwrap();
+        }
+        assert_eq!(fired(&s), 0);
     }
 
     /// Promotion from shadow respects the wait for an incident the deploy raised.

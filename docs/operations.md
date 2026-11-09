@@ -299,8 +299,8 @@ deploy posts to Slack; a start or a successful finish posts nothing. After the w
   window's end, and an incident raised inside the window whose failure also began
   there waits one full hold past it, so a failure caused by the deploy's own restarts
   pages only if it outlasts the deploy by a full hold. An incident whose failure began
-  before the window is announced right after it, a later deploy never restarts an
-  earlier one's wait, and incident history and shadow state are untouched;
+  before the window is announced right after it, a later deploy neither restarts nor
+  cancels an earlier one's wait, and incident history and shadow state are untouched;
 - after a failed or expired deploy, an incident that fired during the window and
   still fails is announced once;
 - a five-minute rate or latency alert waits until its whole window was sampled after
