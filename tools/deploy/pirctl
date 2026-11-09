@@ -117,7 +117,10 @@ fetch_probe() {
     fetch "$sha" pir-probe.tar.gz "$tmp"
     mkdir "$tmp/probe"
     tar -C "$tmp/probe" -xzf "$tmp/pir-probe.tar.gz"
-    mv "$tmp/probe" "$dir/probe"
+    # A deploy probes every public origin at once, so another call may have
+    # installed the same probe meanwhile; its copy is as good as this one.
+    [ -x "$dir/probe/pir-probe" ] || mv "$tmp/probe" "$dir/probe" 2>/dev/null ||
+      [ -x "$dir/probe/pir-probe" ] || die "could not install the build-$sha probe"
   fi
   rm -rf "$tmp"
 }
