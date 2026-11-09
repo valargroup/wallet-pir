@@ -60,6 +60,23 @@ impl Probe {
 struct Outcome {
     category: String,
     waited_seconds: f64,
+    /// Why a failed run failed, from the probe's JSON `detail` or its last
+    /// stderr line, for the journal only (see [`log_detail`]).
+    detail: String,
+}
+
+/// One bounded, single-line description of a probe failure: control
+/// characters become spaces and the text stops at 300 characters. It goes to
+/// the journal, never to the public monitor status, which carries no request
+/// contents.
+fn log_detail(text: &str) -> String {
+    text.chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect::<String>()
+        .trim()
+        .chars()
+        .take(300)
+        .collect()
 }
 pub type Shared = Arc<RwLock<BTreeMap<String, Probe>>>;
 /// Services a probe may report: Status, the v12 Transparent history, the receiver
@@ -103,11 +120,24 @@ pub fn start() -> Result<Shared> {
                 let result =
                     tokio::time::timeout(Duration::from_secs(config.timeout_seconds), run(&config))
                         .await;
-                let (category, waited) = match result {
-                    Ok(Ok(outcome)) => (outcome.category, outcome.waited_seconds),
-                    Ok(Err(_)) => ("probe_unavailable".into(), 0.),
-                    Err(_) => ("deadline".into(), 0.),
+                let (category, waited, detail) = match result {
+                    Ok(Ok(outcome)) => (outcome.category, outcome.waited_seconds, outcome.detail),
+                    Ok(Err(error)) => ("probe_unavailable".into(), 0., error.to_string()),
+                    Err(_) => (
+                        "deadline".into(),
+                        0.,
+                        format!("no result within {}s", config.timeout_seconds),
+                    ),
                 };
+                // The category alone could not explain the 2026-11-09 receiver
+                // `request_failed` page; keep the probe's own reason.
+                if !category.is_empty() {
+                    eprintln!(
+                        "service probe {} failed: {category}: {}",
+                        config.service,
+                        log_detail(&detail)
+                    );
+                }
                 let mut data = output.write().await;
                 data.get_mut(&config.service).unwrap().record(
                     category,
@@ -141,6 +171,7 @@ async fn run(config: &Config) -> Result<Outcome> {
         return Ok(Outcome {
             category: "invalid_probe_output".into(),
             waited_seconds: 0.,
+            detail: "output over 64 KiB".into(),
         });
     }
     let status = child.wait().await?;
@@ -154,10 +185,24 @@ async fn run(config: &Config) -> Result<Outcome> {
         .and_then(|v| v["waited_seconds"].as_f64())
         .filter(|w| w.is_finite())
         .unwrap_or(0.);
+    let detail = value
+        .as_ref()
+        .map(|v| &v["detail"])
+        .filter(|d| !d.is_null())
+        .map(|d| d.as_str().map_or_else(|| d.to_string(), String::from))
+        .unwrap_or_else(|| {
+            String::from_utf8_lossy(&err)
+                .lines()
+                .rev()
+                .find(|line| !line.trim().is_empty())
+                .unwrap_or("")
+                .to_string()
+        });
     let outcome = |category: &str| {
         Ok(Outcome {
             category: category.into(),
             waited_seconds,
+            detail: detail.clone(),
         })
     };
     if let Some(v) = value {
@@ -263,6 +308,33 @@ pub fn conditions(probes: &BTreeMap<String, Probe>, now: u64) -> Vec<Condition> 
 mod tests {
     use super::*;
     #[test]
+    fn log_detail_is_one_bounded_line() {
+        assert_eq!(
+            log_detail("  Error: Status(503)\n\tretry  "),
+            "Error: Status(503)  retry"
+        );
+        assert_eq!(log_detail(&"x".repeat(400)).len(), 300);
+    }
+    /// A probe that reports JSON keeps its `detail`, so a `request_failed`
+    /// from the receiver probe names the request that failed.
+    #[tokio::test]
+    async fn json_detail_is_kept_for_the_journal() {
+        let config = Config {
+            service: "receiver".into(),
+            command: [
+                "/bin/sh",
+                "-c",
+                r#"echo '{"passed":false,"category":"request_failed","detail":"inventory: HTTP 502"}'; exit 1"#,
+            ]
+            .map(String::from)
+            .into(),
+            timeout_seconds: 5,
+        };
+        let outcome = run(&config).await.unwrap();
+        assert_eq!(outcome.category, "request_failed");
+        assert_eq!(outcome.detail, "inventory: HTTP 502");
+    }
+    #[test]
     fn config_accepts_each_known_service_once() {
         let probe = |service: &str| serde_json::json!({"service": service, "command": ["/usr/local/bin/canary"], "timeout_seconds": 30});
         let all: Vec<_> = SERVICES.iter().map(|s| probe(s)).collect();
@@ -367,7 +439,10 @@ mod tests {
                     .into(),
                 timeout_seconds: 5,
             };
-            assert_eq!(run(&config).await.unwrap().category, category);
+            let outcome = run(&config).await.unwrap();
+            assert_eq!(outcome.category, category);
+            // The failure keeps the probe's own reason for the journal.
+            assert_eq!(outcome.detail, stderr);
         }
     }
 }
