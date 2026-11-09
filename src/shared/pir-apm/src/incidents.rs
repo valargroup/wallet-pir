@@ -218,7 +218,12 @@ impl Store {
                 continue;
             }
             let fresh = c.sample > previous_sample;
-            i.last_sample = i.last_sample.max(c.sample);
+            // Only a known answer advances the watermark. An unknown one carries
+            // whatever time its source reports, and must not make the scrapes a
+            // later known answer rests on look old.
+            if c.firing.is_some() || c.retired {
+                i.last_sample = i.last_sample.max(c.sample);
+            }
             // Promotion announces existing active state only once its current input
             // confirms it; an unknown input (e.g. right after a restart) waits rather
             // than paging "unavailable", and never clears the incident.
@@ -519,6 +524,54 @@ mod tests {
             sample,
         }
     }
+    fn active(store: &Store) -> bool {
+        store.incidents().unwrap().iter().any(|i| i.active)
+    }
+
+    /// An unknown answer stamped with the evaluation time must not raise the
+    /// watermark past the older scrapes a later known failure rests on.
+    #[test]
+    fn unknown_answers_do_not_advance_the_watermark() {
+        let mut store = Store::open(Path::new(":memory:")).unwrap();
+        let mut c = condition(None, 1000);
+        c.hold_seconds = 0;
+        store
+            .evaluate(&[c.clone()], 1000, false, "test", "")
+            .unwrap();
+        c.firing = Some(true);
+        c.sample = 990;
+        store.evaluate(&[c], 1005, false, "test", "").unwrap();
+        assert!(active(&store));
+    }
+
+    /// After a deployment, an unknown answer with a current sample is not
+    /// filtered, so it still breaks a pending hold.
+    #[test]
+    fn unknown_answers_break_holds_after_a_deployment() {
+        let mut store = Store::open(Path::new(":memory:")).unwrap();
+        store
+            .begin_deployment("d", vec!["enhance".into()], 60, 800)
+            .unwrap();
+        store.finish_deployment("d", false, 900).unwrap();
+        let mut c = condition(Some(true), 1000);
+        c.hold_seconds = 60;
+        for (t, firing) in [
+            (1000, Some(true)),
+            (1030, None),
+            (1045, Some(true)),
+            (1070, Some(true)),
+        ] {
+            c.firing = firing;
+            c.sample = t;
+            store.evaluate(&[c.clone()], t, false, "test", "").unwrap();
+            // The hold restarts at 1045, so nothing pages before 1105.
+            assert!(!active(&store), "{t}");
+        }
+        c.sample = 1105;
+        store.evaluate(&[c], 1105, false, "test", "").unwrap();
+        assert!(active(&store));
+    }
+
     #[test]
     fn slack_message_is_escaped_mrkdwn() {
         let mut c = condition(Some(true), 100);
