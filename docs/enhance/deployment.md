@@ -136,7 +136,7 @@ opens. Every role already ignores configured domains that are not published.
   lists for a domain, and refuses a publication when that router does not serve
   it.
 - A router takes at most six domains. A worker admits at most five while one is
-  still growing, which the newest domain always is. So list domains 0 to 4 on a
+  still growing, which the newest domain is until it fills. So list domains 0 to 4 on a
   router and on the workers it names for them. Never list more than five on a
   worker: its configuration check accepts six (`sealed_shards`), but while one
   of its domains is growing or not yet sealed it refuses the whole publication

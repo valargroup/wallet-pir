@@ -728,10 +728,11 @@ port, and only through a worker reporting remote readiness 1 unless the worker
 is the router's own. That router must also have such a worker for every other
 published domain it owns, because a router refuses a publication it cannot
 serve in full. A worker configured for more than five domains of that
-publication, including its newest (always growing) domain, counts as unable to
-serve any of it, since a worker admits at most five while one of its domains is
-growing. One with more than five that does not hold the newest domain is
-unknown, because APM cannot see whether its domains are all sealed. A combined
+publication, including a growing domain, counts as unable to serve any of it,
+since a worker admits at most five while one of its domains is growing. The
+projected next domain is always growing, and the current newest one is while
+the publisher reports rows left in it. Otherwise the answer is unknown, because
+APM cannot see whether the worker's domains are all sealed. A combined
 role counts only when it owns every domain the answer needs. Every answer also
 needs a publisher health read from the last 45 seconds, since its domain list
 says what must be served.

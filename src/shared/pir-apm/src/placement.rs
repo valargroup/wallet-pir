@@ -116,6 +116,9 @@ pub fn rollover(data: &crate::dashboard::DashboardData, now: u64) -> Option<Roll
         .collect();
     // Whether a router's named workers will serve `domain`: `Some(at)` with the
     // deciding worker's sample, `None` when proven not, `Err(())` if unknown.
+    // The newest published domain is growing while rows remain in it; a full
+    // one may already be sealed.
+    let newest_has_rows = rows_left.is_some_and(|rows| rows > 0.);
     // A worker admits at most five domains while one of its own is growing
     // (`PlacementPolicy::limit`) and refuses the whole publication otherwise,
     // so one configured for more of `publication`, including its growing
@@ -147,13 +150,18 @@ pub fn rollover(data: &crate::dashboard::DashboardData, now: u64) -> Option<Roll
                         .count()
                         > MAX_GROWING_DOMAINS =>
                 {
-                    // The newest domain is always growing, so a worker holding
-                    // it is limited to five. Without it, the worker's domains
-                    // may all be sealed (limit `sealed_shards`) or some may
-                    // still be provisional, which APM cannot see.
-                    if publication
-                        .last()
-                        .is_some_and(|d| values.get(&format!("configured_domain_{d}")) == Some(&1.))
+                    // A worker holding a growing domain is limited to five. The
+                    // projected next domain always grows, and the current
+                    // newest one does while rows remain in it. Otherwise the
+                    // worker's domains may all be sealed (limit
+                    // `sealed_shards`) or some still provisional, which APM
+                    // cannot see.
+                    let newest = publication.last().copied();
+                    let growing = newest.is_some_and(|d| d == next || newest_has_rows);
+                    if growing
+                        && newest.is_some_and(|d| {
+                            values.get(&format!("configured_domain_{d}")) == Some(&1.)
+                        })
                     {
                         samples.push(*at);
                     } else {
@@ -1191,6 +1199,9 @@ mod tests {
         let six: Vec<u64> = (0..6).collect();
         provision(&mut d, now, &six, &six);
         publish(&mut d, "[0,1,2,3,4,5]");
+        // Rows remain, so the newest domain is growing.
+        d.snapshot_gauges
+            .insert("enhance_rows_before_next_carveout".into(), 500.);
         assert_eq!(firing(&d, now, "assignment_unassigned"), Some(true));
         publish(&mut d, "[0,1,2,3,4]");
         assert_eq!(firing(&d, now, "assignment_unassigned"), Some(false));
@@ -1280,6 +1291,23 @@ mod tests {
         ]));
         assert_eq!(firing(&d, now, "assignment_unassigned"), Some(true));
         assert_eq!(firing(&d, now, "assignment_coverage_warning"), Some(true));
+    }
+
+    /// A full newest domain may already be sealed, so six domains that include
+    /// it are unknown rather than proven unservable.
+    #[test]
+    fn a_full_newest_domain_is_not_assumed_growing() {
+        let now = pir_apm::incidents::unix_time();
+        let mut d = view(now);
+        let six: Vec<u64> = (0..6).collect();
+        provision(&mut d, now, &six, &six);
+        publish(&mut d, "[0,1,2,3,4,5]");
+        d.snapshot_gauges
+            .insert("enhance_rows_before_next_carveout".into(), 0.);
+        assert_eq!(firing(&d, now, "assignment_unassigned"), None);
+        d.snapshot_gauges
+            .insert("enhance_rows_before_next_carveout".into(), 10.);
+        assert_eq!(firing(&d, now, "assignment_unassigned"), Some(true));
     }
 
     #[test]
