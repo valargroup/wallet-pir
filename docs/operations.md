@@ -295,9 +295,10 @@ APM's monitor status and pauses its own canary notifications with it. Only a fai
 deploy posts to Slack; a start or a successful finish posts nothing. After the window:
 
 - an incident already announced before the deploy is not announced again;
-- after a deploy that passed, a hold that began inside the window, and an incident it
-  raised that was never announced, start over, so a failure caused by the deploy's
-  own restarts pages only if it lasts one full hold after the deploy ends;
+- after a deploy that passed, a hold that began inside the window counts from the
+  window's end, and an incident the window kept from being announced waits one full
+  hold past it, so a failure caused by the deploy's own restarts pages only if it
+  outlasts the deploy by a full hold. Incident history and shadow state are untouched;
 - after a failed or expired deploy, an incident that fired during the window and
   still fails is announced once;
 - a five-minute rate or latency alert waits until its whole window was sampled after

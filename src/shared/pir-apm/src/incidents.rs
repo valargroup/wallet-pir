@@ -218,19 +218,6 @@ impl Store {
             if resumed_at > 0 && c.sample <= resumed_at.saturating_add(c.window_seconds) {
                 continue;
             }
-            // A hold that began inside a passed deployment's window was started
-            // by the deployment's own restarts. It starts over after the window,
-            // and so does an incident it raised that Slack never heard about, so
-            // a failure that outlasts the deployment still pages after one full
-            // hold. Failed or expired deployments keep announcing as before.
-            if let Some((started, resumed)) = passed_window {
-                if !i.notified && i.since.is_some_and(|s| started <= s && s <= resumed) {
-                    i.since = None;
-                    i.healthy_samples = 0;
-                    i.active = false;
-                    i.announce_pending = false;
-                }
-            }
             let fresh = c.sample > previous_sample;
             // Only a known answer advances the watermark. An unknown one carries
             // whatever time its source reports, and must not make the scrapes a
@@ -265,6 +252,24 @@ impl Store {
                     Some(true) => {
                         i.healthy_samples = 0;
                         let since = *i.since.get_or_insert(now);
+                        // A passed deployment's own restarts must not use up a
+                        // hold. A streak that began inside its window counts from
+                        // the window's end, and an announcement the window held
+                        // back waits one full hold past it, so only a failure
+                        // that outlasts the deploy pages. Nothing is reset, so
+                        // incident history and shadow state are untouched; failed
+                        // or expired deployments announce as before.
+                        let (since, announce_after) = match passed_window {
+                            Some((started, resumed)) => (
+                                if started < since && since <= resumed {
+                                    resumed
+                                } else {
+                                    since
+                                },
+                                resumed.saturating_add(c.hold_seconds),
+                            ),
+                            None => (since, 0),
+                        };
                         if !i.active && fresh && now.saturating_sub(since) >= c.hold_seconds {
                             i.active = true;
                             i.id = format!("{}-{now}", c.key);
@@ -276,6 +281,7 @@ impl Store {
                             && !shadow
                             && !muted
                             && fresh
+                            && now >= announce_after
                         {
                             i.last_reminder = now;
                             event = Some("FIRED");

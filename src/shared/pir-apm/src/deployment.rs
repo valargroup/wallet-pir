@@ -104,9 +104,9 @@ pub(crate) fn muted(tx: &Transaction<'_>, now: u64) -> Result<bool> {
     Ok(true)
 }
 
-/// `(started_at, resumed_at)` of the last deployment, when it passed. Holds
-/// that start inside a passed deployment's window come from the deployment's
-/// own restarts, so the store restarts them once the window ends.
+/// `(started_at, resumed_at)` of the last deployment, when it passed. A hold
+/// that starts inside a passed deployment's window comes from the deployment's
+/// own restarts, so `Store::evaluate` counts it from the window's end.
 pub(crate) fn passed_window(tx: &Transaction<'_>) -> Result<Option<(u64, u64)>> {
     let Some(deployment) = read(tx)? else {
         return Ok(None);
@@ -496,6 +496,107 @@ mod tests {
         s.evaluate(&[condition(216, true)], 216, false, "test", "")
             .unwrap();
         assert_eq!(fired(&s), 1);
+    }
+
+    fn held(key: &str, now: u64, firing: Option<bool>, hold: u64) -> Condition {
+        Condition {
+            retired: false,
+            key: key.into(),
+            resource: "txid".into(),
+            severity: "warning".into(),
+            firing,
+            observed: "unavailable".into(),
+            threshold: "unavailable".into(),
+            hold_seconds: hold,
+            window_seconds: 0,
+            sample: now,
+        }
+    }
+
+    /// An incident raised while muted and then made unknown (which clears its
+    /// streak start) still waits a full hold past a passed window before it
+    /// is announced, and is never announced if it recovers first.
+    #[test]
+    fn an_incident_raised_in_a_passed_window_waits_a_hold_past_it() {
+        let fired = |s: &Store| messages(s).iter().filter(|m| m.contains("*FIRED")).count();
+        let mut s = store();
+        s.begin_deployment("one", vec!["publisher".into()], MAX_SECONDS, 100)
+            .unwrap();
+        for t in [101, 130, 146] {
+            s.evaluate(&[held("a", t, Some(true), 45)], t, false, "test", "")
+                .unwrap();
+        }
+        s.evaluate(&[held("a", 151, None, 45)], 151, false, "test", "")
+            .unwrap();
+        s.finish_deployment("one", false, 153).unwrap();
+        for t in [158, 180, 197] {
+            s.evaluate(&[held("a", t, Some(true), 45)], t, false, "test", "")
+                .unwrap();
+        }
+        assert_eq!(fired(&s), 0);
+        s.evaluate(&[held("a", 198, Some(true), 45)], 198, false, "test", "")
+            .unwrap();
+        assert_eq!(fired(&s), 1);
+        // The same sequence that recovers in time never pages.
+        let mut s = store();
+        s.begin_deployment("two", vec!["publisher".into()], MAX_SECONDS, 100)
+            .unwrap();
+        for t in [101, 130, 146] {
+            s.evaluate(&[held("b", t, Some(true), 45)], t, false, "test", "")
+                .unwrap();
+        }
+        s.finish_deployment("two", false, 153).unwrap();
+        for t in [158, 163, 168] {
+            s.evaluate(&[held("b", t, Some(t == 158), 45)], t, false, "test", "")
+                .unwrap();
+        }
+        assert_eq!(fired(&s), 0);
+        assert!(s.incidents().unwrap().iter().all(|i| !i.active));
+    }
+
+    /// An incident active before the window keeps its state when its streak
+    /// restarts inside it, and a hold starting in the second the window opens
+    /// is not treated as the deploy's own.
+    #[test]
+    fn older_incidents_and_same_second_holds_are_left_alone() {
+        let mut s = store();
+        for t in [50, 60] {
+            s.evaluate(&[held("old", t, Some(true), 5)], t, true, "test", "")
+                .unwrap();
+        }
+        s.evaluate(&[held("edge", 100, Some(true), 45)], 100, false, "test", "")
+            .unwrap();
+        s.begin_deployment("one", vec!["publisher".into()], MAX_SECONDS, 100)
+            .unwrap();
+        s.evaluate(&[held("old", 105, Some(false), 5)], 105, true, "test", "")
+            .unwrap();
+        s.evaluate(&[held("old", 110, Some(true), 5)], 110, true, "test", "")
+            .unwrap();
+        s.finish_deployment("one", false, 120).unwrap();
+        s.evaluate(
+            &[
+                held("old", 125, Some(true), 5),
+                held("edge", 145, Some(true), 45),
+            ],
+            145,
+            false,
+            "test",
+            "",
+        )
+        .unwrap();
+        let incidents = s.incidents().unwrap();
+        let state = |key: &str| {
+            incidents
+                .iter()
+                .find(|i| i.condition.as_ref().is_some_and(|c| c.key == key))
+                .unwrap()
+                .active
+        };
+        assert!(state("old"), "a pre-window shadow incident stays active");
+        assert!(
+            state("edge"),
+            "a hold from the window's first second is not shifted"
+        );
     }
 
     #[test]
