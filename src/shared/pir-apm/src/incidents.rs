@@ -50,6 +50,11 @@ pub struct Incident {
     /// A FIRED for this incident was queued for delivery; its end must be delivered too.
     #[serde(default)]
     pub notified: bool,
+    /// `started_at` of the deployment window this incident was raised in, when
+    /// its streak also began inside that window: a failure of the deploy's own
+    /// making, whose announcement waits one hold past the window if it passes.
+    #[serde(default)]
+    pub raised_in: Option<u64>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -185,6 +190,11 @@ impl Store {
         let muted = crate::deployment::muted(&tx, now)?;
         let resumed_at = crate::deployment::resumed_at(&tx)?;
         let passed_window = crate::deployment::passed_window(&tx)?;
+        let open_started = if muted {
+            crate::deployment::open_started(&tx)?
+        } else {
+            None
+        };
         let previous_mode: Option<String> = tx
             .query_row(
                 "SELECT value FROM metadata WHERE key=?",
@@ -229,8 +239,15 @@ impl Store {
             // confirms it; an unknown input (e.g. right after a restart) waits rather
             // than paging "unavailable", and never clears the incident.
             let mut event = None;
+            // An incident raised by a passed deployment's own restarts is held
+            // back until one hold past that window; see `Incident::raised_in`.
+            // A later deployment has a different `started_at`, so it never
+            // re-arms the wait, and incidents from before the window never wait.
+            let held_back = passed_window.is_some_and(|(started, resumed)| {
+                i.raised_in == Some(started) && now < resumed.saturating_add(c.hold_seconds)
+            });
             if promoting && i.active && !c.retired {
-                if c.firing == Some(true) {
+                if c.firing == Some(true) && !held_back {
                     event = Some("FIRED");
                 } else {
                     i.announce_pending = true;
@@ -253,27 +270,21 @@ impl Store {
                         i.healthy_samples = 0;
                         let since = *i.since.get_or_insert(now);
                         // A passed deployment's own restarts must not use up a
-                        // hold. A streak that began inside its window counts from
-                        // the window's end, and an announcement the window held
-                        // back waits one full hold past it, so only a failure
-                        // that outlasts the deploy pages. Nothing is reset, so
-                        // incident history and shadow state are untouched; failed
-                        // or expired deployments announce as before.
-                        let (since, announce_after) = match passed_window {
-                            Some((started, resumed)) => (
-                                if started < since && since <= resumed {
-                                    resumed
-                                } else {
-                                    since
-                                },
-                                resumed.saturating_add(c.hold_seconds),
-                            ),
-                            None => (since, 0),
+                        // hold: a streak that began strictly inside its window
+                        // counts from the window's end. Nothing is reset, so
+                        // incident history and shadow state are untouched.
+                        let raw_since = since;
+                        let since = match passed_window {
+                            Some((started, resumed)) if started < since && since <= resumed => {
+                                resumed
+                            }
+                            _ => since,
                         };
                         if !i.active && fresh && now.saturating_sub(since) >= c.hold_seconds {
                             i.active = true;
                             i.id = format!("{}-{now}", c.key);
                             i.last_reminder = now;
+                            i.raised_in = open_started.filter(|started| *started < raw_since);
                             event = Some("FIRED");
                         } else if event.is_none()
                             && i.active
@@ -281,7 +292,7 @@ impl Store {
                             && !shadow
                             && !muted
                             && fresh
-                            && now >= announce_after
+                            && !held_back
                         {
                             i.last_reminder = now;
                             event = Some("FIRED");
@@ -302,6 +313,7 @@ impl Store {
                         }
                         if i.active && i.healthy_samples >= 2 {
                             i.active = false;
+                            i.raised_in = None;
                             event = Some("RECOVERED");
                         }
                     }

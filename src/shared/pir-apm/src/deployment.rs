@@ -118,6 +118,13 @@ pub(crate) fn passed_window(tx: &Transaction<'_>) -> Result<Option<(u64, u64)>> 
     Ok((resumed > 0).then_some((deployment.started_at, resumed)))
 }
 
+/// `started_at` of the deployment whose window is open now, if any.
+pub(crate) fn open_started(tx: &Transaction<'_>) -> Result<Option<u64>> {
+    Ok(read(tx)?
+        .filter(|d| d.outcome.is_none())
+        .map(|d| d.started_at))
+}
+
 pub(crate) fn resumed_at(tx: &Transaction<'_>) -> Result<u64> {
     Ok(tx
         .query_row(
@@ -597,6 +604,63 @@ mod tests {
             state("edge"),
             "a hold from the window's first second is not shifted"
         );
+    }
+
+    /// Only incidents the deploy itself raised wait. One whose streak began
+    /// before the window is announced on the first sample after it, and a
+    /// later deploy never re-arms the wait for an earlier one.
+    #[test]
+    fn only_the_deploys_own_incidents_wait_and_only_once() {
+        let fired = |s: &Store| messages(s).iter().filter(|m| m.contains("*FIRED")).count();
+        // Streak from before the window, hold completing inside it.
+        let mut s = store();
+        s.evaluate(&[held("pre", 50, Some(true), 60)], 50, false, "test", "")
+            .unwrap();
+        s.begin_deployment("one", vec!["publisher".into()], MAX_SECONDS, 100)
+            .unwrap();
+        s.evaluate(&[held("pre", 110, Some(true), 60)], 110, false, "test", "")
+            .unwrap();
+        s.finish_deployment("one", false, 153).unwrap();
+        s.evaluate(&[held("pre", 158, Some(true), 60)], 158, false, "test", "")
+            .unwrap();
+        assert_eq!(fired(&s), 1, "announced right after the window");
+        // Raised in deploy A; deploy B passes before A's wait ends.
+        let mut s = store();
+        s.begin_deployment("a", vec!["publisher".into()], MAX_SECONDS, 100)
+            .unwrap();
+        for t in [101, 130, 146] {
+            s.evaluate(&[held("own", t, Some(true), 45)], t, false, "test", "")
+                .unwrap();
+        }
+        s.finish_deployment("a", false, 153).unwrap();
+        s.begin_deployment("b", vec!["publisher".into()], MAX_SECONDS, 160)
+            .unwrap();
+        s.evaluate(&[held("own", 165, Some(true), 45)], 165, false, "test", "")
+            .unwrap();
+        s.finish_deployment("b", false, 170).unwrap();
+        s.evaluate(&[held("own", 175, Some(true), 45)], 175, false, "test", "")
+            .unwrap();
+        assert_eq!(fired(&s), 1, "B does not restart A's wait");
+    }
+
+    /// Promotion from shadow respects the wait for an incident the deploy raised.
+    #[test]
+    fn promotion_waits_for_a_deploys_own_incident() {
+        let fired = |s: &Store| messages(s).iter().filter(|m| m.contains("*FIRED")).count();
+        let mut s = store();
+        s.begin_deployment("one", vec!["publisher".into()], MAX_SECONDS, 100)
+            .unwrap();
+        for t in [101, 130, 146] {
+            s.evaluate(&[held("p", t, Some(true), 45)], t, true, "test", "")
+                .unwrap();
+        }
+        s.finish_deployment("one", false, 153).unwrap();
+        s.evaluate(&[held("p", 158, Some(true), 45)], 158, false, "test", "")
+            .unwrap();
+        assert_eq!(fired(&s), 0);
+        s.evaluate(&[held("p", 198, Some(true), 45)], 198, false, "test", "")
+            .unwrap();
+        assert_eq!(fired(&s), 1);
     }
 
     #[test]
