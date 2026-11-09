@@ -336,6 +336,14 @@ pub fn start(dashboard: SharedDashboard, config: Config) -> Result<()> {
         "{} must be shadow or active",
         crate::capacity_alerts::MODE_VAR
     );
+    let mut assignment_store = Store::open(&path)?.with_family("assignment");
+    let assignment_mode =
+        std::env::var(crate::assignment_alerts::MODE_VAR).unwrap_or_else(|_| "shadow".into());
+    anyhow::ensure!(
+        matches!(assignment_mode.as_str(), "shadow" | "active"),
+        "{} must be shadow or active",
+        crate::assignment_alerts::MODE_VAR
+    );
     // Optional and independent: absent PIR_APM_SCALER_STATUS opens nothing.
     let mut scaling = scaling
         .map(|settings| crate::scaling::Family::open(settings, &path))
@@ -486,6 +494,13 @@ pub fn start(dashboard: SharedDashboard, config: Config) -> Result<()> {
                     &capacity_conditions,
                     now,
                     capacity_mode != "active",
+                    &config.environment,
+                    &url,
+                )?;
+                assignment_store.evaluate(
+                    &crate::assignment_alerts::conditions(&snapshot, now),
+                    now,
+                    assignment_mode != "active",
                     &config.environment,
                     &url,
                 )?;

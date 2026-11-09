@@ -136,10 +136,12 @@ opens. Every role already ignores configured domains that are not published.
   lists for a domain, and refuses a publication when that router does not serve
   it.
 - A router takes at most six domains. A worker admits at most five while one is
-  still growing, which the newest domain always is. So list domains 0 to 4 on a
+  still growing, which the newest domain is until it fills. So list domains 0 to 4 on a
   router and on the workers it names for them. Never list more than five on a
-  worker: its configuration check accepts six (`sealed_shards`), but the worker
-  refuses the whole publication once the sixth opens.
+  worker: its configuration check accepts six (`sealed_shards`), but while one
+  of its domains is growing or not yet sealed it refuses the whole publication
+  once it holds a sixth. Only a worker whose domains are all sealed may take
+  six.
 - Workers model memory only for the domains already published, and APM's
   `capacity_model_*` checks stay unknown until workers report the model fields,
   so nothing checks ahead of time that a worker can hold all five. Size workers
@@ -153,7 +155,9 @@ Routers report every configured domain and its worker origins in
 gauge per configured domain, and `enhance_worker_remote_readiness` in
 `/internal/metrics` (1 for a standalone worker, 0 for a combined role's embedded
 worker, which only its own router can use). The publisher reports
-`enhance_rows_before_next_carveout` and `enhance_published_domains`. Before the
+`enhance_rows_before_next_carveout` and `enhance_published_domains`. APM's
+`assignment` family reads these and warns as soon as the next domain cannot be
+served ([alerts](observability-alerting.md#domain-assignment-alerts)). Before the
 last configured domain fills, add a router and workers for the next ones and
 repoint their ingress entries.
 

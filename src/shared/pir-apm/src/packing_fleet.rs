@@ -15,11 +15,23 @@ pub struct PackingRouter {
     pub sample: Worker,
     pub ready: Option<bool>,
     pub placement: Option<crate::placement::Report>,
+    /// Configured domains and their worker origins, including unpublished
+    /// ones; see `placement::configured`.
+    pub configured: Option<BTreeMap<u64, std::collections::BTreeSet<String>>>,
+    /// A combined role, whose own ingress serves only a publication it covers
+    /// in full.
+    pub combined: bool,
 }
 impl PackingRouter {
+    /// Whether this router is responsible for `domain`: its active placement,
+    /// else its last reported configuration, else its inventory entry (where
+    /// an empty list means every domain).
     pub fn serves(&self, domain: u64) -> bool {
         if let Some(report) = &self.placement {
             return report.domains.contains_key(&domain);
+        }
+        if let Some(configured) = &self.configured {
+            return configured.contains_key(&domain);
         }
         self.domains.is_empty() || self.domains.contains(&domain)
     }
@@ -86,6 +98,8 @@ pub fn inventory(text: &str) -> Result<BTreeMap<String, PackingRouter>, String> 
             },
             ready: None,
             placement: None,
+            configured: None,
+            combined: false,
         };
         if result.insert(name.into(), node).is_some() {
             return Err("Duplicate packing router name".into());
@@ -174,10 +188,13 @@ async fn monitor_with_timing(
                             router.sample = old.sample.clone();
                             router.ready = old.ready;
                             router.placement = old.placement.clone();
+                            router.configured = old.configured.clone();
+                            router.combined = old.combined;
                         }
                     }
                     view.packing_routers = routers;
                     view.packing_inventory_error = None;
+                    view.packing_inventory_loaded = Some(SystemTime::now());
                 }
                 Err(error) => view.packing_inventory_error = Some(error),
             }
@@ -213,7 +230,18 @@ async fn monitor_with_timing(
                 let result = match (metrics, health) {
                     (Ok(metrics), Ok(health)) => measurements(&metrics, &health)
                         .map(|(values, ready)| {
-                            (values, ready, crate::placement::Report::parse(&health))
+                            let parsed: Option<serde_json::Value> =
+                                serde_json::from_str(&health).ok();
+                            let combined = parsed.as_ref().is_some_and(|h| h["role"] == "combined");
+                            let configured = parsed
+                                .and_then(|h| crate::placement::configured(&h, &router.sample.url));
+                            (
+                                values,
+                                ready,
+                                crate::placement::Report::parse(&health),
+                                configured,
+                                combined,
+                            )
                         })
                         .map_err(|_| "Packing router measurements unavailable"),
                     _ => Err("Packing router health or metrics request failed"),
@@ -226,10 +254,12 @@ async fn monitor_with_timing(
                 {
                     current.sample.attempted = Some(attempted);
                     match result {
-                        Ok((values, ready, placement)) => {
+                        Ok((values, ready, placement, configured, combined)) => {
                             current.sample.values = values;
                             current.ready = Some(ready);
                             current.placement = placement;
+                            current.configured = configured;
+                            current.combined = combined;
                             current.sample.success = Some(SystemTime::now());
                             current.sample.error = None;
                         }
@@ -282,6 +312,8 @@ mod tests {
             },
             ready: Some(ready),
             placement: None,
+            configured: None,
+            combined: false,
         };
         assert_eq!(router.status(), "not ready");
         router.ready = Some(true);
