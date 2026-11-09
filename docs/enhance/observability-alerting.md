@@ -732,7 +732,11 @@ publication, including a growing domain, counts as unable to serve any of it,
 since a worker admits at most five while one of its domains is growing. The
 projected next domain is always growing, and the current newest one is while
 the publisher reports rows left in it. Otherwise the answer is unknown, because
-APM cannot see whether the worker's domains are all sealed. A combined
+APM cannot see whether the worker's domains are all sealed. A worker that
+legitimately holds six sealed domains therefore keeps `assignment_coverage_*`
+firing. Keep to five per worker, as
+[deployment](deployment.md#domain-responsibilities) says, until the publisher or
+worker reports sealed state. A combined
 role counts only when it owns every domain the answer needs. Every answer also
 needs a publisher health read from the last 45 seconds, since its domain list
 says what must be served.
@@ -742,7 +746,7 @@ says what must be served.
 | `assignment_rollover_warning` | warning | the publication the next domain will create cannot be served, at any number of rows left | – |
 | `assignment_rollover_critical` | critical | the same, with fewer than 1,024 rows (about 34,000 records) left | – |
 | `assignment_unassigned` | critical | a published domain has no configured router and worker | 60 s |
-| `assignment_coverage_warning` / `_critical` | warning / critical | router, worker or publisher evidence is missing for any domain, even one beside a proven gap, so an answer above is unknown or incomplete (rows count only while the next domain cannot be served) | 45 s / 120 s |
+| `assignment_coverage_warning` / `_critical` | warning / critical | router, worker or publisher evidence is missing for any domain, even one beside a proven gap, so an answer above is unknown or incomplete. Rows count while the next domain cannot be served, and for a worker over five domains | 45 s / 120 s |
 
 The warning fires as soon as the current domain is the last one the fleet can
 take, which leaves a full domain of time to add workers or a router. Rows left

@@ -114,11 +114,13 @@ pub fn rollover(data: &crate::dashboard::DashboardData, now: u64) -> Option<Roll
                 .then_some((origin(&w.url)?, (at, &w.values)))
         })
         .collect();
+    // The newest published domain is growing while rows remain in it. At zero
+    // rows it may be full and already sealed (or within a row of full), so the
+    // answer is left unknown.
+    let newest_has_rows = rows_left.is_some_and(|rows| rows > 0.);
+    let rows_sample = coordinator.unwrap_or(now).min(published_at);
     // Whether a router's named workers will serve `domain`: `Some(at)` with the
     // deciding worker's sample, `None` when proven not, `Err(())` if unknown.
-    // The newest published domain is growing while rows remain in it; a full
-    // one may already be sealed.
-    let newest_has_rows = rows_left.is_some_and(|rows| rows > 0.);
     // A worker admits at most five domains while one of its own is growing
     // (`PlacementPolicy::limit`) and refuses the whole publication otherwise,
     // so one configured for more of `publication`, including its growing
@@ -164,6 +166,9 @@ pub fn rollover(data: &crate::dashboard::DashboardData, now: u64) -> Option<Roll
                         })
                     {
                         samples.push(*at);
+                        if newest != Some(next) {
+                            samples.push(rows_sample);
+                        }
                     } else {
                         unknown = true;
                     }
@@ -310,7 +315,7 @@ pub fn rollover(data: &crate::dashboard::DashboardData, now: u64) -> Option<Roll
         next,
         exhausted,
         rows_left,
-        rows_sample: coordinator.unwrap_or(now).min(published_at),
+        rows_sample,
         next_domain,
         unassigned,
         unassigned_sample,
@@ -1205,10 +1210,20 @@ mod tests {
         assert_eq!(firing(&d, now, "assignment_unassigned"), Some(true));
         publish(&mut d, "[0,1,2,3,4]");
         assert_eq!(firing(&d, now, "assignment_unassigned"), Some(false));
-        // The rollover sees that domain 5 would push them past the limit.
+        // The rollover sees that domain 5 would push them past the limit; the
+        // projected next domain always grows, whatever the rows say.
         d.snapshot_gauges
             .insert("enhance_rows_before_next_carveout".into(), 500.);
         assert_eq!(firing(&d, now, "assignment_rollover_critical"), Some(true));
+        d.snapshot_gauges
+            .insert("enhance_rows_before_next_carveout".into(), 0.);
+        assert_eq!(firing(&d, now, "assignment_rollover_critical"), Some(true));
+        d.snapshot_gauges
+            .remove("enhance_rows_before_next_carveout");
+        assert_eq!(firing(&d, now, "assignment_rollover_warning"), Some(true));
+        d.snapshot_gauges
+            .insert("enhance_published_generation".into(), 28048.);
+        assert_eq!(firing(&d, now, "assignment_rollover_warning"), Some(true));
     }
 
     /// Coverage recovers only on two distinct healthy scrapes, not on repeated
@@ -1269,6 +1284,10 @@ mod tests {
         routes.insert(6, [WORKERS[1].to_string()].into());
         d.packing_routers.get_mut("router").unwrap().configured = Some(routes);
         publish(&mut d, "[0,1,2,3,4,5,6]");
+        // Rows remain, so only worker-a's lack of the growing domain makes it
+        // unknown.
+        d.snapshot_gauges
+            .insert("enhance_rows_before_next_carveout".into(), 500.);
         assert_eq!(firing(&d, now, "assignment_unassigned"), None);
         assert_eq!(firing(&d, now, "assignment_coverage_warning"), Some(true));
     }
@@ -1308,6 +1327,17 @@ mod tests {
         d.snapshot_gauges
             .insert("enhance_rows_before_next_carveout".into(), 10.);
         assert_eq!(firing(&d, now, "assignment_unassigned"), Some(true));
+        // Rows from another generation, or none, cannot prove it growing.
+        d.snapshot_gauges
+            .insert("enhance_published_generation".into(), 28048.);
+        assert_eq!(firing(&d, now, "assignment_unassigned"), None);
+        assert_eq!(firing(&d, now, "assignment_coverage_warning"), Some(true));
+        d.snapshot_gauges
+            .insert("enhance_published_generation".into(), 28049.);
+        d.snapshot_gauges
+            .remove("enhance_rows_before_next_carveout");
+        assert_eq!(firing(&d, now, "assignment_unassigned"), None);
+        assert_eq!(firing(&d, now, "assignment_coverage_warning"), Some(true));
     }
 
     #[test]
