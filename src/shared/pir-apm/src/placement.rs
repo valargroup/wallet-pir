@@ -60,6 +60,9 @@ pub struct Rollover {
     /// Published domains that will not be served; `None` while unknown.
     pub unassigned: Option<BTreeSet<u64>>,
     pub unassigned_sample: u64,
+    /// Some domain's answer, published or projected, was unknown, even if a
+    /// proven gap elsewhere already decides `unassigned` or `next_domain`.
+    pub incomplete: bool,
 }
 
 /// Router and worker assignment headroom for the publisher's published
@@ -113,9 +116,10 @@ pub fn rollover(data: &crate::dashboard::DashboardData, now: u64) -> Option<Roll
         .collect();
     // Whether a router's named workers will serve `domain`: `Some(at)` with the
     // deciding worker's sample, `None` when proven not, `Err(())` if unknown.
-    // A worker admits at most five domains while one is growing
-    // (`PlacementPolicy::limit`), and refuses the whole publication otherwise,
-    // so one configured for more of `publication` cannot serve any of it.
+    // A worker admits at most five domains while one of its own is growing
+    // (`PlacementPolicy::limit`) and refuses the whole publication otherwise,
+    // so one configured for more of `publication`, including its growing
+    // newest domain, cannot serve any of it.
     let worker_for = |urls: &BTreeSet<String>,
                       domain: u64,
                       publication: &BTreeSet<u64>,
@@ -143,7 +147,18 @@ pub fn rollover(data: &crate::dashboard::DashboardData, now: u64) -> Option<Roll
                         .count()
                         > MAX_GROWING_DOMAINS =>
                 {
-                    samples.push(*at);
+                    // The newest domain is always growing, so a worker holding
+                    // it is limited to five. Without it, the worker's domains
+                    // may all be sealed (limit `sealed_shards`) or some may
+                    // still be provisional, which APM cannot see.
+                    if publication
+                        .last()
+                        .is_some_and(|d| values.get(&format!("configured_domain_{d}")) == Some(&1.))
+                    {
+                        samples.push(*at);
+                    } else {
+                        unknown = true;
+                    }
                 }
                 Some((at, values))
                     if workers_trusted
@@ -220,6 +235,7 @@ pub fn rollover(data: &crate::dashboard::DashboardData, now: u64) -> Option<Roll
         }
     };
     let exhausted = next >= MAX_DOMAINS;
+    let mut projected_unknown = false;
     // Rollover asks whether the publication that exists once `next` opens can
     // be served: every domain of it, judged against all of it, since a router
     // that gains an unservable domain stops serving the ones it had.
@@ -235,6 +251,7 @@ pub fn rollover(data: &crate::dashboard::DashboardData, now: u64) -> Option<Roll
             .iter()
             .map(|d| assignment(*d, &projected))
             .collect();
+        projected_unknown = answers.iter().any(|a| a.assigned.is_none());
         let pick = |want: Option<bool>| {
             answers
                 .iter()
@@ -289,6 +306,7 @@ pub fn rollover(data: &crate::dashboard::DashboardData, now: u64) -> Option<Roll
         next_domain,
         unassigned,
         unassigned_sample,
+        incomplete: unknown || projected_unknown,
     })
 }
 
@@ -1216,6 +1234,52 @@ mod tests {
         assert!(active(&store), "one scrape evaluated twice");
         step(&mut store, 1090, 1090, true);
         assert!(!active(&store));
+    }
+
+    /// A worker with six domains, none of them the growing newest, may be
+    /// admitting all six sealed, so APM cannot prove it unable: unknown, not a
+    /// false page.
+    #[test]
+    fn six_domains_without_the_growing_one_are_unknown() {
+        let now = pir_apm::incidents::unix_time();
+        let mut d = view(now);
+        let six: Vec<u64> = (0..6).collect();
+        provision(&mut d, now, &six, &six);
+        // worker-b alone takes the growing domain 6.
+        d.fleet.get_mut("worker-b").unwrap().values = BTreeMap::from([
+            ("configured_domains".into(), 1.),
+            ("configured_domain_6".into(), 1.),
+            ("remote_readiness".into(), 1.),
+        ]);
+        let mut routes: BTreeMap<u64, BTreeSet<String>> = six
+            .iter()
+            .map(|id| (*id, [WORKERS[0].to_string()].into()))
+            .collect();
+        routes.insert(6, [WORKERS[1].to_string()].into());
+        d.packing_routers.get_mut("router").unwrap().configured = Some(routes);
+        publish(&mut d, "[0,1,2,3,4,5,6]");
+        assert_eq!(firing(&d, now, "assignment_unassigned"), None);
+        assert_eq!(firing(&d, now, "assignment_coverage_warning"), Some(true));
+    }
+
+    /// A proven gap on one domain must not hide missing evidence for another.
+    #[test]
+    fn a_proven_gap_does_not_hide_missing_evidence() {
+        let now = pir_apm::incidents::unix_time();
+        let mut d = view(now);
+        provision(&mut d, now, &[0, 1], &[0, 1]);
+        publish(&mut d, "[0,1,2]");
+        d.snapshot_gauges
+            .insert("enhance_rows_before_next_carveout".into(), 500.);
+        // Domain 2 has no router: proven. Domain 1's only worker goes missing
+        // from the worker inventory: unknown.
+        let r = d.packing_routers.get_mut("router").unwrap();
+        r.configured = Some(BTreeMap::from([
+            (0, [WORKERS[0].to_string()].into()),
+            (1, ["http://10.142.0.99:8091".to_string()].into()),
+        ]));
+        assert_eq!(firing(&d, now, "assignment_unassigned"), Some(true));
+        assert_eq!(firing(&d, now, "assignment_coverage_warning"), Some(true));
     }
 
     #[test]

@@ -138,8 +138,10 @@ opens. Every role already ignores configured domains that are not published.
 - A router takes at most six domains. A worker admits at most five while one is
   still growing, which the newest domain always is. So list domains 0 to 4 on a
   router and on the workers it names for them. Never list more than five on a
-  worker: its configuration check accepts six (`sealed_shards`), but the worker
-  refuses the whole publication once the sixth opens.
+  worker: its configuration check accepts six (`sealed_shards`), but while one
+  of its domains is growing or not yet sealed it refuses the whole publication
+  once it holds a sixth. Only a worker whose domains are all sealed may take
+  six.
 - Workers model memory only for the domains already published, and APM's
   `capacity_model_*` checks stay unknown until workers report the model fields,
   so nothing checks ahead of time that a worker can hold all five. Size workers

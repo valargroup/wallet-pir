@@ -106,6 +106,9 @@ pub fn conditions(d: &DashboardData, now: u64) -> Vec<Condition> {
         let critical = critical?.0;
         r.unassigned.as_ref()?;
         critical?;
+        if r.incomplete {
+            return None;
+        }
         let mut sample = r.unassigned_sample.min(r.next_domain.sample);
         if !next {
             sample = sample.min(r.rows_sample);
