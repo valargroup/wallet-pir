@@ -58,10 +58,15 @@ pub struct Incident {
     /// one's end. Any other outcome, an announcement or a recovery clears it.
     #[serde(default)]
     pub deploy_owned: bool,
-    /// Announcement deadline of a `deploy_owned` incident, fixed when its
-    /// deployment passes.
+    /// When a `deploy_owned` incident's wait ends, fixed when its deployment
+    /// passes: the announcement of an active one waits for it, and a later
+    /// deployment takes over only one that is still waiting.
     #[serde(default)]
     pub hold_until: Option<u64>,
+    /// A `deploy_owned` streak's start before a pass moved it, restored if a
+    /// later deployment that took it over does not pass.
+    #[serde(default)]
+    pub owned_since: Option<u64>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -241,7 +246,7 @@ impl Store {
             // than paging "unavailable", and never clears the incident.
             let mut event = None;
             // See `Incident::deploy_owned`.
-            let held_back = i.hold_until.is_some_and(|until| now < until);
+            let held_back = i.active && i.hold_until.is_some_and(|until| now < until);
             if promoting && i.active && !c.retired {
                 if c.firing == Some(true) && !held_back {
                     event = Some("FIRED");
@@ -311,6 +316,7 @@ impl Store {
             {
                 i.deploy_owned = false;
                 i.hold_until = None;
+                i.owned_since = None;
             }
             if let Some(event) = event {
                 let closing = matches!(event, "RECOVERED" | "RETIRED");
