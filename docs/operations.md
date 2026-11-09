@@ -295,7 +295,17 @@ APM's monitor status and pauses its own canary notifications with it. Only a fai
 deploy posts to Slack; a start or a successful finish posts nothing. After the window:
 
 - an incident already announced before the deploy is not announced again;
-- an incident that fired during the window and still fails is announced once;
+- after a deploy that passed, a failure that began inside the window pages only if
+  it outlasts the deploy by one full hold, whether it was still pending or already
+  raised when the window closed. A deploy that starts before that wait is over takes
+  the failure over, so back-to-back deploys are judged from the last one's end. A
+  failure that began before the window is announced right after it. A check with no
+  hold, such as a probe that pages after three straight failures, gets no extra wait.
+  `pir-monitor` only pauses and resumes with APM's window and adds no wait, since it
+  learns the outcome a poll late or not at all;
+- after a failed or expired deploy, an incident that fired during the window and
+  still fails is announced once, and a failure an earlier passed deploy was holding
+  back counts from its real start again;
 - a five-minute rate or latency alert waits until its whole window was sampled after
   the deploy ended, so restart errors inside the deploy never fire it.
 

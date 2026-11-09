@@ -50,6 +50,21 @@ pub struct Incident {
     /// A FIRED for this incident was queued for delivery; its end must be delivered too.
     #[serde(default)]
     pub notified: bool,
+    /// The streak began while a deployment window was open, so it may come
+    /// from the deploy's own restarts. When the window passes, a pending
+    /// streak restarts at its end and an active incident waits one hold past
+    /// it (`hold_until`). A window that opens before that wait is over takes
+    /// the incident over, so back-to-back deploys are judged from the last
+    /// one's end. Any other outcome, an announcement or a recovery clears it.
+    #[serde(default)]
+    pub deploy_owned: bool,
+    /// When a `deploy_owned` incident's wait ends, fixed when its deployment
+    /// passes: a pending one is not raised and an active one is not announced
+    /// before it, and a later deployment takes over only one still waiting.
+    /// `since` itself never moves, so a release or an older binary counts the
+    /// streak from its real start.
+    #[serde(default)]
+    pub hold_until: Option<u64>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -228,8 +243,10 @@ impl Store {
             // confirms it; an unknown input (e.g. right after a restart) waits rather
             // than paging "unavailable", and never clears the incident.
             let mut event = None;
+            // See `Incident::deploy_owned`.
+            let held_back = i.active && i.hold_until.is_some_and(|until| now < until);
             if promoting && i.active && !c.retired {
-                if c.firing == Some(true) {
+                if c.firing == Some(true) && !held_back {
                     event = Some("FIRED");
                 } else {
                     i.announce_pending = true;
@@ -250,11 +267,21 @@ impl Store {
                     }
                     Some(true) => {
                         i.healthy_samples = 0;
+                        if i.since.is_none() && !i.active {
+                            i.deploy_owned = muted;
+                            i.hold_until = None;
+                        }
                         let since = *i.since.get_or_insert(now);
-                        if !i.active && fresh && now.saturating_sub(since) >= c.hold_seconds {
+                        let waited = i.hold_until.is_none_or(|until| now >= until);
+                        if !i.active
+                            && fresh
+                            && waited
+                            && now.saturating_sub(since) >= c.hold_seconds
+                        {
                             i.active = true;
                             i.id = format!("{}-{now}", c.key);
                             i.last_reminder = now;
+                            i.hold_until = None;
                             event = Some("FIRED");
                         } else if event.is_none()
                             && i.active
@@ -262,6 +289,7 @@ impl Store {
                             && !shadow
                             && !muted
                             && fresh
+                            && !held_back
                         {
                             i.last_reminder = now;
                             event = Some("FIRED");
@@ -286,6 +314,12 @@ impl Store {
                         }
                     }
                 }
+            }
+            if event.is_some_and(|e| e != "REMINDER" && !(e == "FIRED" && muted))
+                || (!i.active && i.since.is_none())
+            {
+                i.deploy_owned = false;
+                i.hold_until = None;
             }
             if let Some(event) = event {
                 let closing = matches!(event, "RECOVERED" | "RETIRED");
