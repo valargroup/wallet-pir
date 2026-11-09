@@ -64,7 +64,11 @@
                 "download_budget_bytes": 8589934592,
                 "cache_limit_bytes": 8589934592,
                 "shards": [
-                  0
+                  0,
+                  1,
+                  2,
+                  3,
+                  4
                 ]
               }
             }
@@ -88,7 +92,11 @@
                 "download_budget_bytes": 8589934592,
                 "cache_limit_bytes": 8589934592,
                 "shards": [
-                  1
+                  0,
+                  1,
+                  2,
+                  3,
+                  4
                 ]
               }
             }
@@ -114,9 +122,23 @@
                 "cache_limit_bytes": 8589934592,
                 "workers": {
                   "0": [
-                    "http://192.0.2.15:8091"
+                    "http://192.0.2.15:8091",
+                    "http://192.0.2.16:8091"
                   ],
                   "1": [
+                    "http://192.0.2.15:8091",
+                    "http://192.0.2.16:8091"
+                  ],
+                  "2": [
+                    "http://192.0.2.15:8091",
+                    "http://192.0.2.16:8091"
+                  ],
+                  "3": [
+                    "http://192.0.2.15:8091",
+                    "http://192.0.2.16:8091"
+                  ],
+                  "4": [
+                    "http://192.0.2.15:8091",
                     "http://192.0.2.16:8091"
                   ]
                 }
@@ -150,6 +172,138 @@
                     }
                   ],
                   "1": [
+                    {
+                      "control_origin": "http://192.0.2.14:8093",
+                      "query_origin": "http://192.0.2.14:8092"
+                    }
+                  ],
+                  "2": [
+                    {
+                      "control_origin": "http://192.0.2.14:8093",
+                      "query_origin": "http://192.0.2.14:8092"
+                    }
+                  ],
+                  "3": [
+                    {
+                      "control_origin": "http://192.0.2.14:8093",
+                      "query_origin": "http://192.0.2.14:8092"
+                    }
+                  ],
+                  "4": [
+                    {
+                      "control_origin": "http://192.0.2.14:8093",
+                      "query_origin": "http://192.0.2.14:8092"
+                    }
+                  ],
+                  "5": [
+                    {
+                      "control_origin": "http://192.0.2.14:8093",
+                      "query_origin": "http://192.0.2.14:8092"
+                    }
+                  ],
+                  "6": [
+                    {
+                      "control_origin": "http://192.0.2.14:8093",
+                      "query_origin": "http://192.0.2.14:8092"
+                    }
+                  ],
+                  "7": [
+                    {
+                      "control_origin": "http://192.0.2.14:8093",
+                      "query_origin": "http://192.0.2.14:8092"
+                    }
+                  ],
+                  "8": [
+                    {
+                      "control_origin": "http://192.0.2.14:8093",
+                      "query_origin": "http://192.0.2.14:8092"
+                    }
+                  ],
+                  "9": [
+                    {
+                      "control_origin": "http://192.0.2.14:8093",
+                      "query_origin": "http://192.0.2.14:8092"
+                    }
+                  ],
+                  "10": [
+                    {
+                      "control_origin": "http://192.0.2.14:8093",
+                      "query_origin": "http://192.0.2.14:8092"
+                    }
+                  ],
+                  "11": [
+                    {
+                      "control_origin": "http://192.0.2.14:8093",
+                      "query_origin": "http://192.0.2.14:8092"
+                    }
+                  ],
+                  "12": [
+                    {
+                      "control_origin": "http://192.0.2.14:8093",
+                      "query_origin": "http://192.0.2.14:8092"
+                    }
+                  ],
+                  "13": [
+                    {
+                      "control_origin": "http://192.0.2.14:8093",
+                      "query_origin": "http://192.0.2.14:8092"
+                    }
+                  ],
+                  "14": [
+                    {
+                      "control_origin": "http://192.0.2.14:8093",
+                      "query_origin": "http://192.0.2.14:8092"
+                    }
+                  ],
+                  "15": [
+                    {
+                      "control_origin": "http://192.0.2.14:8093",
+                      "query_origin": "http://192.0.2.14:8092"
+                    }
+                  ],
+                  "16": [
+                    {
+                      "control_origin": "http://192.0.2.14:8093",
+                      "query_origin": "http://192.0.2.14:8092"
+                    }
+                  ],
+                  "17": [
+                    {
+                      "control_origin": "http://192.0.2.14:8093",
+                      "query_origin": "http://192.0.2.14:8092"
+                    }
+                  ],
+                  "18": [
+                    {
+                      "control_origin": "http://192.0.2.14:8093",
+                      "query_origin": "http://192.0.2.14:8092"
+                    }
+                  ],
+                  "19": [
+                    {
+                      "control_origin": "http://192.0.2.14:8093",
+                      "query_origin": "http://192.0.2.14:8092"
+                    }
+                  ],
+                  "20": [
+                    {
+                      "control_origin": "http://192.0.2.14:8093",
+                      "query_origin": "http://192.0.2.14:8092"
+                    }
+                  ],
+                  "21": [
+                    {
+                      "control_origin": "http://192.0.2.14:8093",
+                      "query_origin": "http://192.0.2.14:8092"
+                    }
+                  ],
+                  "22": [
+                    {
+                      "control_origin": "http://192.0.2.14:8093",
+                      "query_origin": "http://192.0.2.14:8092"
+                    }
+                  ],
+                  "23": [
                     {
                       "control_origin": "http://192.0.2.14:8093",
                       "query_origin": "http://192.0.2.14:8092"

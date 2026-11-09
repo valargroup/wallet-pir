@@ -151,7 +151,10 @@ async fn metrics(
             combined.ingress.metrics_text(),
             combined.router.metrics_text(false),
             combined.worker.metrics_text(false),
-            crate::enhance::memory_observation::observe().render("enhance_combined_"),
+            // The embedded worker serves only this process's router; see the
+            // standalone worker's `metrics` handler.
+            "enhance_worker_remote_readiness 0\n".to_string()
+                + &crate::enhance::memory_observation::observe().render("enhance_combined_"),
         ),
     )
 }
@@ -216,6 +219,11 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(health["role"], "combined");
         assert_eq!(health["ready"], false);
+        // Responsibilities are reported before any publication covers them.
+        assert_eq!(
+            health["packing"]["configured_domains"],
+            serde_json::json!({"0": ["local"]})
+        );
         for prefix in ["/enhance/v1", "/v1/enhance"] {
             let (status, body) = call(role.public_router(), "GET", &format!("{prefix}/init")).await;
             assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);

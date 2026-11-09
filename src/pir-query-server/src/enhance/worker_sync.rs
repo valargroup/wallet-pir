@@ -649,7 +649,17 @@ impl Worker {
         prometheus::TextEncoder::new()
             .encode(&self.matvec_latency.collect(), &mut histogram)
             .unwrap();
+        // Configured domains, including unpublished ones, as unlabelled gauges
+        // so APM can confirm a router's named workers will serve a new domain.
+        let configured = self.config.shards.iter().fold(
+            format!(
+                "enhance_worker_configured_domains {}\n",
+                self.config.shards.len()
+            ),
+            |text, id| text + &format!("enhance_worker_configured_domain_{id} 1\n"),
+        );
         metrics.finish()
+            + &configured
             + &String::from_utf8(histogram).unwrap()
             + &if memory {
                 crate::enhance::memory_observation::observe().render("enhance_worker_")
@@ -664,9 +674,12 @@ async fn health(State(worker): State<Worker>) -> Json<serde_json::Value> {
 }
 
 async fn metrics(State(worker): State<Worker>) -> impl IntoResponse {
+    // Only a standalone worker's listener serves readiness to remote routers;
+    // a combined role's embedded worker reports through its own listener
+    // without this line, so APM never counts it for another router.
     (
         [("content-type", "text/plain; version=0.0.4")],
-        worker.metrics_text(true),
+        worker.metrics_text(true) + "enhance_worker_remote_readiness 1\n",
     )
 }
 

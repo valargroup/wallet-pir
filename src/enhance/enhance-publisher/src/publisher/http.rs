@@ -45,6 +45,12 @@ pub(super) async fn metrics(
     }
     if let Some(manifest) = current.manifest {
         text.push_str(&format!("enhance_published_anchor_height {}\nenhance_published_generation {}\nenhance_published_records {}\n", manifest.anchor_height, manifest.generation, manifest.coverage.records));
+        // APM's rollover checks read these; see `Coverage::rows_before_next_domain`.
+        text.push_str(&format!(
+            "enhance_published_domains {}\nenhance_rows_before_next_carveout {}\n",
+            manifest.coverage.shards.len(),
+            manifest.coverage.rows_before_next_domain(manifest.geometry)
+        ));
     }
     ([("content-type", "text/plain; version=0.0.4")], text)
 }

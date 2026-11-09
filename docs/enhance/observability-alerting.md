@@ -664,11 +664,17 @@ was pushed into reclaim), `cgroup_memory_max_events_total` and
 `cgroup_oom_kills_total`. The prefix is `enhance_worker_` or
 `enhance_packing_router_`. A field that cannot be read is omitted, never zero.
 These are the signals the focused memory gate fails on; process RSS alone does
-not show them. Workers also report the modelled resident need of their current
-assignment (`model_total_bytes` against `model_limit_bytes`). The coordinator
-reports `enhance_capacity_remaining_rows`, the rows left before placement needs
-more workers, and `enhance_rows_before_next_carveout`, the rows left before the
-growing shard fills.
+not show them. APM reads the modelled resident need of a worker's assignment
+from `model_total_bytes` and `model_limit_bytes` only when the worker also
+reports `memory_model_available`. Current workers report none of these (they
+report `model_reserved_bytes`), so `capacity_model_*` stays unknown, and it
+never covers domains that are not published yet. The coordinator reported
+`enhance_capacity_remaining_rows`, the rows left before placement needs more
+workers, until the October 2026 HTTPS cutover removed it, so the placement
+checks stay unknown. The publisher reports `enhance_rows_before_next_carveout`,
+the rows left before the growing shard fills, and `enhance_published_domains`.
+`capacity_shard_rollover` fires on every rollover, whether or not the next
+domain is assigned ([domain responsibilities](deployment.md#domain-responsibilities)).
 
 Resources are `worker_<name>`, `router_<name>` and `placement`.
 

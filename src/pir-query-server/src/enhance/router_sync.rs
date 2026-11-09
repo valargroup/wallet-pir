@@ -1005,6 +1005,9 @@ impl PackingRouter {
         serde_json::json!({"binary_sha256": pir_control::Identity::process().binary_sha256, "incarnation": self.incarnation, "active": inner.active.as_ref().map(|view| digest(&view.manifest)),
         "generation": inner.active.as_ref().map(|view| view.manifest.generation),
         "domain_workers": domain_workers,
+        // Every configured responsibility and its workers, including domains not
+        // yet published, so APM can tell whether the next domain will be served.
+        "configured_domains": &self.config.workers,
         "packing_charged_bytes": self.budget.charged_bytes(),
         "handover": handover_observation(&inner, now),
         "ready": ready})
