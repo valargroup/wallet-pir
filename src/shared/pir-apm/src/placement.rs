@@ -24,6 +24,300 @@ impl Published {
             .then_some(value)
     }
 }
+/// The wallet protocol's domain ceiling (`enhance_shared::protocol::MAX_QUERY_SHARDS`).
+const MAX_DOMAINS: u64 = 24;
+
+/// Whether one domain will be served: some fresh router names it with a
+/// fresh worker configured for it. `assigned` is `None` while any router or
+/// named worker that could change the answer is stale, failed or predates
+/// the configuration fields. `sample` is the oldest observation the answer
+/// rests on, so recovery needs fresh evidence and an unrelated stale router
+/// cannot hold it back.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Assignment {
+    pub assigned: Option<bool>,
+    pub sample: u64,
+}
+
+/// Domain headroom for the newest publication. A domain opens the moment the
+/// newest one fills, and no role serves a domain it was not configured for,
+/// so assignment must precede growth.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Rollover {
+    /// The domain the next carve-out opens.
+    pub next: u64,
+    /// `next` is at or past the protocol ceiling: no assignment can serve it.
+    pub exhausted: bool,
+    /// Rows the newest domain can still take, from a publisher scrape of the
+    /// same generation as the published domains.
+    pub rows_left: Option<f64>,
+    /// When `rows_left` was observed.
+    pub rows_sample: u64,
+    pub next_domain: Assignment,
+    /// Published domains that will not be served; `None` while unknown.
+    pub unassigned: Option<BTreeSet<u64>>,
+    pub unassigned_sample: u64,
+}
+
+/// Router and worker assignment headroom for the publisher's published
+/// domains, judged at whole-second `now` like every other condition. Needs a
+/// fresh publisher health read: its domain list decides what must be served.
+pub fn rollover(data: &crate::dashboard::DashboardData, now: u64) -> Option<Rollover> {
+    let fresh = |at: Option<SystemTime>| {
+        at.and_then(|at| at.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+            .filter(|at| *at <= now && now - at <= 45)
+    };
+    let published = data.enhance_publication.as_ref()?;
+    let published_at = fresh(data.enhance_publication_sample)?;
+    let next = published.domains.iter().next_back()? + 1;
+    let coordinator = fresh(data.last_scrape).filter(|_| data.scrape_error.is_none());
+    // Publisher health (domains) and metrics (rows) are separate reads that
+    // can straddle a publication; combine them only for one generation.
+    let gauge = |name: &str| data.snapshot_gauges.get(name).copied();
+    let rows_left = coordinator
+        .filter(|_| gauge("enhance_published_generation") == Some(published.generation as f64))
+        .and(gauge("enhance_rows_before_next_carveout"))
+        .filter(|v| v.is_finite() && *v >= 0.);
+    // Router evidence alone can prove a domain unassigned; worker evidence
+    // only matters for the workers a router actually names.
+    // A freshly loaded inventory, even an empty one, makes router evidence
+    // complete; disabled or failing router monitoring leaves it unknown.
+    let mut routers_complete =
+        data.packing_inventory_error.is_none() && fresh(data.packing_inventory_loaded).is_some();
+    let mut routes = Vec::new();
+    for router in data.packing_routers.values() {
+        match (
+            fresh(router.sample.success).filter(|_| router.sample.error.is_none()),
+            router.configured.as_ref(),
+        ) {
+            (Some(at), Some(configured)) => {
+                routes.push((at, configured, router.combined, origin(&router.sample.url)))
+            }
+            _ => routers_complete = false,
+        }
+    }
+    let workers_trusted = data.inventory_error.is_none();
+    let workers: BTreeMap<String, (u64, &BTreeMap<String, f64>)> = data
+        .fleet
+        .values()
+        .filter_map(|w| {
+            let at = fresh(w.success).filter(|_| w.error.is_none())?;
+            w.values
+                .contains_key("configured_domains")
+                .then_some((origin(&w.url)?, (at, &w.values)))
+        })
+        .collect();
+    // Whether a router's named workers will serve `domain`: `Some(at)` with the
+    // deciding worker's sample, `None` when proven not, `Err(())` if unknown.
+    let worker_for =
+        |urls: &BTreeSet<String>, domain: u64, own: Option<&String>, samples: &mut Vec<u64>| {
+            let mut unknown = !workers_trusted;
+            for url in urls {
+                let url_origin = origin(url);
+                // Another router can use a worker only through the remote
+                // readiness a standalone worker reports (1). A combined role's
+                // embedded worker reports 0; a worker reporting neither
+                // predates the marker and leaves the answer unknown.
+                let remote = url_origin.as_ref().is_some_and(|o| Some(o) != own);
+                match url_origin.and_then(|o| workers.get(&o)) {
+                    Some((at, values)) if remote && values.get("remote_readiness") == Some(&0.) => {
+                        samples.push(*at);
+                    }
+                    Some((_, values)) if remote && values.get("remote_readiness") != Some(&1.) => {
+                        unknown = true;
+                    }
+                    Some((at, values))
+                        if workers_trusted
+                            && values.get(&format!("configured_domain_{domain}")) == Some(&1.) =>
+                    {
+                        return Ok(Some(*at));
+                    }
+                    Some((at, _)) => samples.push(*at),
+                    None => unknown = true,
+                }
+            }
+            if unknown {
+                Err(())
+            } else {
+                Ok(None)
+            }
+        };
+    // A router serves a publication only when every published domain it owns
+    // has a ready worker (`PackingRouter::peers`), so `domain` counts as
+    // assigned only through a router that can serve all of `required` it owns.
+    let assignment = |domain: u64, required: &BTreeSet<u64>| {
+        let mut known = routers_complete;
+        let mut samples = vec![published_at];
+        for (router_at, configured, combined, own) in &routes {
+            samples.push(*router_at);
+            if !configured.contains_key(&domain) {
+                continue;
+            }
+            let mut proof = vec![published_at, *router_at];
+            // A combined role's ingress refuses a publication it does not
+            // cover in full (`CoverageMismatch`), and no other ingress can use
+            // its embedded router.
+            let mut verdict =
+                if *combined && required.iter().any(|owned| !configured.contains_key(owned)) {
+                    Some(false)
+                } else {
+                    Some(true)
+                };
+            for owned in required.iter().chain([&domain]) {
+                if verdict == Some(false) {
+                    break;
+                }
+                let Some(urls) = configured.get(owned) else {
+                    continue;
+                };
+                match worker_for(urls, *owned, own.as_ref(), &mut samples) {
+                    Ok(Some(at)) => proof.push(at),
+                    Ok(None) => verdict = Some(false),
+                    Err(()) => {
+                        if verdict == Some(true) {
+                            verdict = None;
+                        }
+                    }
+                }
+                if verdict == Some(false) {
+                    break;
+                }
+            }
+            match verdict {
+                Some(true) => {
+                    return Assignment {
+                        assigned: Some(true),
+                        sample: proof.into_iter().min().unwrap_or(published_at),
+                    };
+                }
+                Some(false) => {}
+                None => known = false,
+            }
+        }
+        Assignment {
+            assigned: known.then_some(false),
+            sample: samples.into_iter().min().unwrap_or(published_at),
+        }
+    };
+    let exhausted = next >= MAX_DOMAINS;
+    // Rollover asks whether the publication that exists once `next` opens can
+    // be served: every domain of it, judged against all of it, since a router
+    // that gains an unservable domain stops serving the ones it had.
+    let next_domain = if exhausted {
+        Assignment {
+            assigned: Some(false),
+            sample: published_at,
+        }
+    } else {
+        let mut projected = published.domains.clone();
+        projected.insert(next);
+        let answers: Vec<_> = projected
+            .iter()
+            .map(|d| assignment(*d, &projected))
+            .collect();
+        let pick = |want: Option<bool>| {
+            answers
+                .iter()
+                .filter(|a| a.assigned == want)
+                .map(|a| a.sample)
+                .min()
+        };
+        if let Some(sample) = pick(Some(false)) {
+            Assignment {
+                assigned: Some(false),
+                sample,
+            }
+        } else if answers.iter().any(|a| a.assigned.is_none()) {
+            Assignment {
+                assigned: None,
+                sample: now,
+            }
+        } else {
+            Assignment {
+                assigned: Some(true),
+                sample: pick(Some(true)).unwrap_or(published_at),
+            }
+        }
+    };
+    // A proven gap is reported even while another domain is unknown; only a
+    // healthy answer needs every domain known.
+    let (mut missing, mut missing_sample) = (BTreeSet::new(), u64::MAX);
+    let (mut unknown, mut healthy_sample) = (false, u64::MAX);
+    for domain in &published.domains {
+        let a = assignment(*domain, &published.domains);
+        match a.assigned {
+            Some(true) => healthy_sample = healthy_sample.min(a.sample),
+            Some(false) => {
+                missing.insert(*domain);
+                missing_sample = missing_sample.min(a.sample);
+            }
+            None => unknown = true,
+        }
+    }
+    let (unassigned, unassigned_sample) = if !missing.is_empty() {
+        (Some(missing), missing_sample)
+    } else if unknown {
+        (None, now)
+    } else {
+        (Some(missing), healthy_sample)
+    };
+    Some(Rollover {
+        next,
+        exhausted,
+        rows_left,
+        rows_sample: coordinator.unwrap_or(now).min(published_at),
+        next_domain,
+        unassigned,
+        unassigned_sample,
+    })
+}
+
+/// The scheme, host and explicit non-default port of `url`, so equivalent
+/// spellings of one worker origin (a trailing slash, `:80` on http) match.
+fn origin(url: &str) -> Option<String> {
+    let url = reqwest::Url::parse(url).ok()?;
+    url.host_str()?;
+    Some(url.origin().ascii_serialization())
+}
+
+/// A router's configured responsibilities from `/internal/health`
+/// `configured_domains` (under `packing` for a combined role), including
+/// unpublished domains, as worker origins per domain. Read apart from active
+/// placement, so a router provisioned only for future domains still reports
+/// them. A combined role names its in-process worker `local`, which resolves
+/// to `own_origin`, the origin the role was scraped at. `None` when absent or
+/// malformed.
+pub fn configured(
+    health: &serde_json::Value,
+    own_origin: &str,
+) -> Option<BTreeMap<u64, BTreeSet<String>>> {
+    let map = health
+        .get("configured_domains")
+        .or_else(|| health.get("packing")?.get("configured_domains"))?
+        .as_object()?;
+    if map.is_empty() || map.len() > MAX_DOMAINS as usize {
+        return None;
+    }
+    map.iter()
+        .map(|(id, urls)| {
+            let domain = id
+                .parse::<u64>()
+                .ok()
+                .filter(|d| d.to_string() == *id && *d < MAX_DOMAINS)?;
+            let urls = urls
+                .as_array()?
+                .iter()
+                .map(|u| {
+                    let u = u.as_str()?;
+                    Some(if u == "local" { own_origin } else { u }.to_string())
+                })
+                .collect::<Option<BTreeSet<_>>>()?;
+            (!urls.is_empty()).then_some((domain, urls))
+        })
+        .collect()
+}
+
 fn valid_digest(value: &str) -> bool {
     value.len() == 64
         && value
@@ -142,6 +436,18 @@ fn collect(
         if router.sample.error.is_some() {
             return None;
         }
+        // A freshly scraped router provisioned only for unpublished domains has
+        // no active assignments yet; it neither serves nor blocks this
+        // publication. An unreachable one stays unknown, since its cached
+        // configuration may no longer be what it serves.
+        if router.placement.is_none()
+            && router
+                .configured
+                .as_ref()
+                .is_some_and(|c| c.keys().all(|d| !published.domains.contains(d)))
+        {
+            continue;
+        }
         at = at.min(sampled);
         let report = router.placement.as_ref()?;
         if report.generation > published.generation
@@ -239,6 +545,8 @@ mod tests {
         d.enhance_publication = Published::parse(
             r#"{"generation":28049,"manifest_sha256":"ef33dcbb13d3c0b1f2a782dda4e5111666ba2f84e94a55d9ae1bcd5159e7f799","domains":[0]}"#,
         );
+        d.enhance_publication_sample = Some(at(t));
+        d.packing_inventory_loaded = Some(at(t));
         d.monitoring.chain = Chain {
             sampled_at: t,
             height: 3527386,
@@ -257,6 +565,603 @@ mod tests {
         update(&mut d, at(t));
         d
     }
+    fn condition(d: &DashboardData, now: u64, key: &str) -> pir_apm::incidents::Condition {
+        monitoring::conditions(d, now, &Policy::default())
+            .into_iter()
+            .chain(crate::assignment_alerts::conditions(d, now))
+            .find(|c| c.key == key)
+            .unwrap_or_else(|| panic!("{key}"))
+    }
+    fn firing(d: &DashboardData, now: u64, key: &str) -> Option<bool> {
+        condition(d, now, key).firing
+    }
+    const WORKERS: [&str; 2] = ["http://10.142.0.15:8091", "http://10.142.0.16:8091"];
+    /// Router "router" names both CPU workers for `router`; each worker is
+    /// fresh at `now` and configured for `workers`.
+    fn provision(d: &mut DashboardData, now: u64, router: &[u64], workers: &[u64]) {
+        let r = d.packing_routers.get_mut("router").unwrap();
+        r.configured = Some(
+            router
+                .iter()
+                .map(|id| (*id, WORKERS.iter().map(|u| u.to_string()).collect()))
+                .collect(),
+        );
+        for name in ["worker-a", "worker-b"] {
+            let w = d.fleet.get_mut(name).unwrap();
+            w.success = Some(at(now));
+            w.values = BTreeMap::from([
+                ("configured_domains".into(), workers.len() as f64),
+                ("remote_readiness".into(), 1.),
+            ]);
+            for id in workers {
+                w.values.insert(format!("configured_domain_{id}"), 1.);
+            }
+        }
+    }
+    fn publish(d: &mut DashboardData, domains: &str) {
+        d.enhance_publication = Published::parse(&format!(
+            r#"{{"generation":28049,"manifest_sha256":"ef33dcbb13d3c0b1f2a782dda4e5111666ba2f84e94a55d9ae1bcd5159e7f799","domains":{domains}}}"#
+        ));
+    }
+
+    /// The next domain must be configured on a router and its workers before
+    /// the newest one fills, and a published domain no one serves pages by
+    /// name instead of surfacing only as unavailable coverage, as it did on
+    /// 2026-11-09.
+    #[test]
+    fn rollover_warns_before_an_unassigned_domain_opens() {
+        let now = pir_apm::incidents::unix_time();
+        let mut d = view(now);
+        d.snapshot_gauges
+            .insert("enhance_rows_before_next_carveout".into(), 3_000.);
+        // Routers that predate `configured_domains` leave the answer unknown,
+        // unless enough rows remain that assignment does not matter yet.
+        for key in ["assignment_rollover_warning", "assignment_unassigned"] {
+            assert_eq!(firing(&d, now, key), None, "{key}");
+        }
+        assert_eq!(firing(&d, now, "assignment_rollover_critical"), Some(false));
+        provision(&mut d, now, &[0], &[0]);
+        assert_eq!(firing(&d, now, "assignment_rollover_warning"), Some(true));
+        assert_eq!(firing(&d, now, "assignment_rollover_critical"), Some(false));
+        assert_eq!(firing(&d, now, "assignment_unassigned"), Some(false));
+        d.snapshot_gauges
+            .insert("enhance_rows_before_next_carveout".into(), 500.);
+        assert_eq!(firing(&d, now, "assignment_rollover_critical"), Some(true));
+        // A router naming workers that are not configured for the domain
+        // cannot serve it either.
+        provision(&mut d, now, &[0, 1], &[0]);
+        assert_eq!(firing(&d, now, "assignment_rollover_critical"), Some(true));
+        // Assigning the next domain everywhere clears both, even with the row
+        // count unknown.
+        provision(&mut d, now, &[0, 1, 2], &[0, 1, 2]);
+        d.snapshot_gauges
+            .remove("enhance_rows_before_next_carveout");
+        assert_eq!(firing(&d, now, "assignment_rollover_warning"), Some(false));
+        assert_eq!(firing(&d, now, "assignment_rollover_critical"), Some(false));
+        // The incident: domain 1 is published, router and workers have only 0.
+        provision(&mut d, now, &[0], &[0]);
+        publish(&mut d, "[0,1]");
+        assert_eq!(firing(&d, now, "assignment_unassigned"), Some(true));
+        // A stale router cannot prove a domain is missing.
+        d.packing_routers.get_mut("router").unwrap().sample.success = Some(at(now - 120));
+        assert_eq!(firing(&d, now, "assignment_unassigned"), None);
+    }
+
+    /// Scrapes carry subsecond times and conditions use whole seconds, so a
+    /// scrape inside the current second is fresh, not future-dated.
+    #[test]
+    fn subsecond_samples_are_fresh_at_whole_second_evaluation() {
+        let now = pir_apm::incidents::unix_time();
+        let mut d = view(now);
+        provision(&mut d, now, &[0], &[0]);
+        let later = at(now) + Duration::from_millis(800);
+        d.last_scrape = Some(later);
+        d.packing_routers.get_mut("router").unwrap().sample.success = Some(later);
+        for name in ["worker-a", "worker-b"] {
+            d.fleet.get_mut(name).unwrap().success = Some(later);
+        }
+        d.snapshot_gauges
+            .insert("enhance_rows_before_next_carveout".into(), 500.);
+        assert_eq!(firing(&d, now, "assignment_unassigned"), Some(false));
+        assert_eq!(firing(&d, now, "assignment_rollover_critical"), Some(true));
+    }
+
+    /// A router provisioned only for future domains has no active placement,
+    /// but its configuration still counts.
+    #[test]
+    fn a_router_for_future_domains_counts_before_they_open() {
+        let now = pir_apm::incidents::unix_time();
+        let mut d = view(now);
+        d.snapshot_gauges
+            .insert("enhance_rows_before_next_carveout".into(), 500.);
+        provision(&mut d, now, &[0], &[0, 1]);
+        let mut future = d.packing_routers["router"].clone();
+        future.placement = None;
+        future.configured = Some(BTreeMap::from([(1, [WORKERS[1].to_string()].into())]));
+        d.packing_routers.insert("future".into(), future);
+        assert_eq!(firing(&d, now, "assignment_rollover_critical"), Some(false));
+        // Placement and domain eligibility still observe the routers that
+        // serve the publication, using what a real future-only scrape has:
+        // no active placement and no domain eligibility values.
+        let mut only_future = d.packing_routers["future"].clone();
+        only_future.configured = Some(BTreeMap::from([(5, [WORKERS[1].to_string()].into())]));
+        only_future
+            .sample
+            .values
+            .retain(|k, _| !k.starts_with("domain_eligible_"));
+        d.packing_routers.insert("future".into(), only_future);
+        update(&mut d, at(now));
+        assert!(!d.placement_error);
+        let quiet = |d: &DashboardData| {
+            for key in [
+                "coverage_placement_warning",
+                "coverage_domain_0_eligibility_warning",
+                "domain_0_unavailable",
+            ] {
+                assert_eq!(firing(d, now, key), Some(false), "{key}");
+            }
+        };
+        quiet(&d);
+        // Unreachable, its cached configuration is not trusted, so placement
+        // is unknown until it answers again; its reachability alert fires too.
+        d.packing_routers.get_mut("future").unwrap().sample.error = Some("down".into());
+        update(&mut d, at(now));
+        assert!(d.placement_error);
+        assert_eq!(
+            configured(
+                &serde_json::json!({"ready": false, "generation": null,
+                "domain_workers": {}, "configured_domains": {"5": [WORKERS[0]]}}),
+                "http://10.142.0.14:8093"
+            ),
+            Some(BTreeMap::from([(5, [WORKERS[0].to_string()].into())]))
+        );
+    }
+
+    /// Publisher health and metrics can straddle a publication: rows left in
+    /// a full domain 0 must not be read as rows before domain 2 opens.
+    #[test]
+    fn headroom_needs_rows_and_domains_from_one_generation() {
+        let now = pir_apm::incidents::unix_time();
+        let mut d = view(now);
+        provision(&mut d, now, &[0, 1], &[0, 1]);
+        publish(&mut d, "[0,1]");
+        d.snapshot_gauges
+            .insert("enhance_rows_before_next_carveout".into(), 0.);
+        d.snapshot_gauges
+            .insert("enhance_published_generation".into(), 28048.);
+        assert_eq!(firing(&d, now, "assignment_rollover_critical"), None);
+        d.snapshot_gauges
+            .insert("enhance_published_generation".into(), 28049.);
+        assert_eq!(firing(&d, now, "assignment_rollover_critical"), Some(true));
+    }
+
+    /// A stale router that does not decide the answer cannot freeze its sample,
+    /// so recovery still sees distinct fresh observations.
+    #[test]
+    fn unrelated_stale_routers_do_not_hold_back_recovery() {
+        let now = pir_apm::incidents::unix_time();
+        let mut d = view(now);
+        provision(&mut d, now, &[0, 1], &[0, 1]);
+        let mut stale = d.packing_routers["router"].clone();
+        stale.sample.success = Some(at(now - 600));
+        d.packing_routers.insert("stale".into(), stale);
+        d.snapshot_gauges
+            .insert("enhance_rows_before_next_carveout".into(), 500.);
+        let c = condition(&d, now, "assignment_rollover_critical");
+        assert_eq!(c.firing, Some(false));
+        assert_eq!(c.sample, now);
+        assert_eq!(condition(&d, now, "assignment_unassigned").sample, now);
+    }
+
+    /// Past domain 23 no assignment can help; the alert says so.
+    #[test]
+    fn protocol_exhaustion_is_reported_as_such() {
+        let now = pir_apm::incidents::unix_time();
+        let mut d = view(now);
+        let all: Vec<u64> = (0..24).collect();
+        provision(&mut d, now, &all, &all);
+        publish(&mut d, &serde_json::to_string(&all).unwrap());
+        d.snapshot_gauges
+            .insert("enhance_rows_before_next_carveout".into(), 500.);
+        let c = condition(&d, now, "assignment_rollover_critical");
+        assert_eq!(c.firing, Some(true));
+        assert!(c.observed.contains("24-domain limit"), "{}", c.observed);
+    }
+
+    /// One domain whose worker cannot be observed must not hide a different
+    /// domain that no router names at all.
+    #[test]
+    fn an_unknown_domain_does_not_hide_a_proven_missing_one() {
+        let now = pir_apm::incidents::unix_time();
+        let mut d = view(now);
+        provision(&mut d, now, &[0], &[0]);
+        publish(&mut d, "[0,1]");
+        d.fleet.get_mut("worker-a").unwrap().error = Some("unreachable".into());
+        d.fleet.get_mut("worker-b").unwrap().error = Some("unreachable".into());
+        let c = condition(&d, now, "assignment_unassigned");
+        assert_eq!(c.firing, Some(true));
+        assert!(c.observed.contains("{1}"), "{}", c.observed);
+    }
+
+    /// The published domain list decides what must be served, so a stale
+    /// publisher read leaves every assignment answer unknown, and fresh
+    /// answers carry the publisher's sample time.
+    #[test]
+    fn assignment_needs_a_fresh_publisher_read() {
+        let now = pir_apm::incidents::unix_time();
+        let mut d = view(now);
+        provision(&mut d, now, &[0], &[0]);
+        d.enhance_publication_sample = Some(at(now - 30));
+        assert_eq!(condition(&d, now, "assignment_unassigned").sample, now - 30);
+        d.enhance_publication_sample = Some(at(now - 120));
+        for key in [
+            "assignment_unassigned",
+            "assignment_rollover_warning",
+            "assignment_rollover_critical",
+        ] {
+            assert_eq!(firing(&d, now, key), None, "{key}");
+        }
+    }
+
+    /// A combined role reports its router fields under `packing` and names its
+    /// in-process worker `local`, which is the origin it was scraped at.
+    #[test]
+    fn combined_roles_and_equivalent_origins_resolve() {
+        let health = serde_json::json!({"role": "combined",
+            "packing": {"configured_domains": {"0": ["local"], "1": ["local"]}}});
+        assert_eq!(
+            configured(&health, "http://10.142.0.20:8093"),
+            Some(BTreeMap::from([
+                (0, ["http://10.142.0.20:8093".to_string()].into()),
+                (1, ["http://10.142.0.20:8093".to_string()].into()),
+            ]))
+        );
+        assert_eq!(origin("http://10.0.0.1:80/"), origin("http://10.0.0.1"));
+        let now = pir_apm::incidents::unix_time();
+        let mut d = view(now);
+        provision(&mut d, now, &[0, 1], &[0, 1]);
+        d.packing_routers.get_mut("router").unwrap().configured = Some(BTreeMap::from([
+            (0, ["http://10.142.0.15:8091/".to_string()].into()),
+            (1, ["http://10.142.0.15:8091/".to_string()].into()),
+        ]));
+        d.snapshot_gauges
+            .insert("enhance_rows_before_next_carveout".into(), 500.);
+        assert_eq!(firing(&d, now, "assignment_rollover_critical"), Some(false));
+    }
+
+    /// A router serves a publication only when it can serve every published
+    /// domain it owns, so two half-working routers do not add up to coverage.
+    #[test]
+    fn a_router_counts_only_when_it_serves_all_its_published_domains() {
+        let now = pir_apm::incidents::unix_time();
+        let mut d = view(now);
+        provision(&mut d, now, &[0, 1], &[0]);
+        d.fleet.get_mut("worker-b").unwrap().values = BTreeMap::from([
+            ("configured_domains".into(), 1.),
+            ("configured_domain_1".into(), 1.),
+            ("remote_readiness".into(), 1.),
+        ]);
+        let routes = |url: &str| -> BTreeMap<u64, BTreeSet<String>> {
+            [(0, [url.to_string()].into()), (1, [url.to_string()].into())].into()
+        };
+        d.packing_routers.get_mut("router").unwrap().configured = Some(routes(WORKERS[0]));
+        let mut second = d.packing_routers["router"].clone();
+        second.configured = Some(routes(WORKERS[1]));
+        d.packing_routers.insert("second".into(), second);
+        d.snapshot_gauges
+            .insert("enhance_rows_before_next_carveout".into(), 500.);
+        // Domain 0 published: the second router's worker lacks domain 0, so it
+        // cannot carry domain 1 when it opens.
+        assert_eq!(firing(&d, now, "assignment_rollover_critical"), Some(true));
+        publish(&mut d, "[0,1]");
+        assert_eq!(firing(&d, now, "assignment_unassigned"), Some(true));
+    }
+
+    /// A broken worker inventory cannot hide a domain that no router names.
+    #[test]
+    fn a_worker_inventory_error_does_not_hide_a_router_gap() {
+        let now = pir_apm::incidents::unix_time();
+        let mut d = view(now);
+        provision(&mut d, now, &[0], &[0]);
+        publish(&mut d, "[0,1]");
+        d.inventory_error = Some("invalid worker inventory".into());
+        let c = condition(&d, now, "assignment_unassigned");
+        assert_eq!(c.firing, Some(true));
+        assert!(c.observed.contains("{1}"), "{}", c.observed);
+    }
+
+    /// An unknown evaluation must not advance the store's sample watermark, or
+    /// a later proven failure resting on slightly older scrapes never pages.
+    #[test]
+    fn unknown_answers_do_not_block_a_later_proven_page() {
+        let key = "assignment_rollover_critical";
+        let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
+        let selected = |d: &DashboardData, t| {
+            crate::assignment_alerts::conditions(d, t)
+                .into_iter()
+                .filter(|c| c.key == key)
+                .collect::<Vec<_>>()
+        };
+        let mut d = view(1000);
+        provision(&mut d, 990, &[0], &[0]);
+        d.packing_routers.get_mut("router").unwrap().sample.success = Some(at(990));
+        d.snapshot_gauges
+            .insert("enhance_rows_before_next_carveout".into(), 500.);
+        d.enhance_publication_sample = Some(at(900));
+        store
+            .evaluate(&selected(&d, 1000), 1000, true, "test", "")
+            .unwrap();
+        assert!(store.incidents().unwrap().iter().all(|i| !i.active));
+        d.enhance_publication_sample = Some(at(1005));
+        d.last_scrape = Some(at(1005));
+        store
+            .evaluate(&selected(&d, 1005), 1005, true, "test", "")
+            .unwrap();
+        assert!(store
+            .incidents()
+            .unwrap()
+            .iter()
+            .any(|i| i.active && i.condition.as_ref().is_some_and(|c| c.key == key)));
+    }
+
+    /// After a deployment, an unknown answer still breaks a pending hold.
+    #[test]
+    fn an_unknown_answer_breaks_a_hold_after_a_deployment() {
+        let key = "assignment_unassigned";
+        let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
+        store
+            .begin_deployment("d", vec!["enhance".into()], 60, 800)
+            .unwrap();
+        store.finish_deployment("d", false, 900).unwrap();
+        let mut step = |t: u64, known: bool| {
+            let mut d = view(t);
+            provision(&mut d, t, &[0], &[0]);
+            publish(&mut d, "[0,1]");
+            d.enhance_publication_sample = Some(at(t));
+            if !known {
+                d.packing_routers.get_mut("router").unwrap().sample.error = Some("down".into());
+            }
+            let conditions: Vec<_> = crate::assignment_alerts::conditions(&d, t)
+                .into_iter()
+                .filter(|c| c.key == key)
+                .collect();
+            store.evaluate(&conditions, t, false, "test", "").unwrap();
+            store
+                .incidents()
+                .unwrap()
+                .iter()
+                .any(|i| i.active && i.condition.as_ref().is_some_and(|c| c.key == key))
+        };
+        assert!(!step(1000, true));
+        assert!(!step(1015, true));
+        assert!(!step(1030, false));
+        assert!(!step(1045, true));
+        // Without the reset the hold would date from 1000 and page here.
+        assert!(!step(1060, true));
+        assert!(step(1105, true));
+    }
+
+    /// Split combined roles each serve only a publication they cover in full,
+    /// so two of them owning one domain each cannot serve two domains.
+    #[test]
+    fn split_combined_roles_do_not_cover_a_publication() {
+        let now = pir_apm::incidents::unix_time();
+        let mut d = view(now);
+        provision(&mut d, now, &[0, 1], &[0, 1]);
+        d.snapshot_gauges
+            .insert("enhance_rows_before_next_carveout".into(), 500.);
+        let r = d.packing_routers.get_mut("router").unwrap();
+        r.combined = true;
+        r.configured = Some(BTreeMap::from([(0, [WORKERS[0].to_string()].into())]));
+        let mut b = d.packing_routers["router"].clone();
+        b.configured = Some(BTreeMap::from([(1, [WORKERS[1].to_string()].into())]));
+        d.packing_routers.insert("b".into(), b);
+        assert_eq!(firing(&d, now, "assignment_rollover_critical"), Some(true));
+        publish(&mut d, "[0,1]");
+        assert_eq!(firing(&d, now, "assignment_unassigned"), Some(true));
+        // One combined role owning both serves both.
+        d.packing_routers.remove("b");
+        d.packing_routers.get_mut("router").unwrap().configured = Some(BTreeMap::from([
+            (0, [WORKERS[0].to_string()].into()),
+            (1, [WORKERS[0].to_string()].into()),
+        ]));
+        assert_eq!(firing(&d, now, "assignment_unassigned"), Some(false));
+    }
+
+    /// A router that gains an unservable domain stops serving the ones it had,
+    /// so rollover checks the whole publication that will exist afterwards.
+    #[test]
+    fn rollover_checks_the_projected_publication() {
+        let now = pir_apm::incidents::unix_time();
+        let mut d = view(now);
+        provision(&mut d, now, &[0, 1], &[0]);
+        d.fleet.get_mut("worker-b").unwrap().values = BTreeMap::from([
+            ("configured_domains".into(), 1.),
+            ("configured_domain_1".into(), 1.),
+            ("remote_readiness".into(), 1.),
+        ]);
+        // Router A owns 0 and 1 with worker A (domain 0 only); router B owns
+        // only 1 with worker B.
+        d.packing_routers.get_mut("router").unwrap().configured = Some(BTreeMap::from([
+            (0, [WORKERS[0].to_string()].into()),
+            (1, [WORKERS[0].to_string()].into()),
+        ]));
+        let mut b = d.packing_routers["router"].clone();
+        b.configured = Some(BTreeMap::from([(1, [WORKERS[1].to_string()].into())]));
+        d.packing_routers.insert("b".into(), b);
+        d.snapshot_gauges
+            .insert("enhance_rows_before_next_carveout".into(), 500.);
+        assert_eq!(firing(&d, now, "assignment_rollover_critical"), Some(true));
+    }
+
+    /// Promotion from shadow during an unknown answer still announces an
+    /// active incident once fresh input confirms it.
+    #[test]
+    fn promotion_survives_an_unknown_answer() {
+        let key = "assignment_rollover_warning";
+        let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
+        store
+            .begin_deployment("d", vec!["enhance".into()], 60, 800)
+            .unwrap();
+        store.finish_deployment("d", false, 900).unwrap();
+        let step = |store: &mut Store, t: u64, known: bool, shadow: bool| {
+            let mut d = view(t);
+            provision(&mut d, t, &[0], &[0]);
+            d.snapshot_gauges
+                .insert("enhance_rows_before_next_carveout".into(), 3_000.);
+            if !known {
+                d.enhance_publication_sample = None;
+            }
+            let conditions: Vec<_> = crate::assignment_alerts::conditions(&d, t)
+                .into_iter()
+                .filter(|c| c.key == key)
+                .collect();
+            store.evaluate(&conditions, t, shadow, "test", "").unwrap();
+        };
+        step(&mut store, 1000, true, true);
+        step(&mut store, 1005, false, false);
+        // The finished deployment queued its own notice; count only the page.
+        let before = store.health(true, 1005).unwrap().pending;
+        step(&mut store, 1015, true, false);
+        assert_eq!(store.health(true, 1015).unwrap().pending, before + 1);
+    }
+
+    /// A loaded but empty router inventory proves nothing is assigned, while
+    /// disabled router monitoring stays unknown.
+    #[test]
+    fn an_empty_router_inventory_proves_no_assignment() {
+        let now = pir_apm::incidents::unix_time();
+        let mut d = view(now);
+        d.packing_routers.clear();
+        assert_eq!(firing(&d, now, "assignment_unassigned"), Some(true));
+        d.packing_inventory_loaded = None;
+        assert_eq!(firing(&d, now, "assignment_unassigned"), None);
+    }
+
+    /// Another router cannot use a combined role's embedded worker.
+    #[test]
+    fn a_combined_worker_is_not_a_remote_replica() {
+        let now = pir_apm::incidents::unix_time();
+        let mut d = view(now);
+        provision(&mut d, now, &[0], &[0]);
+        // worker-a's origin is a combined role's control origin, whose
+        // embedded worker reports no remote readiness.
+        d.fleet
+            .get_mut("worker-a")
+            .unwrap()
+            .values
+            .insert("remote_readiness".into(), 0.);
+        let mut combined = d.packing_routers["router"].clone();
+        combined.combined = true;
+        combined.sample.url = WORKERS[0].into();
+        combined.configured = Some(BTreeMap::from([(0, [WORKERS[0].to_string()].into())]));
+        d.packing_routers.insert("combined".into(), combined);
+        d.packing_routers.get_mut("router").unwrap().configured =
+            Some(BTreeMap::from([(0, [WORKERS[0].to_string()].into())]));
+        // The combined role owns domain 0 in full, so domain 0 is served.
+        assert_eq!(firing(&d, now, "assignment_unassigned"), Some(false));
+        // With domain 1 published, the combined role no longer covers it all,
+        // and the standalone router cannot use its embedded worker.
+        d.fleet
+            .get_mut("worker-a")
+            .unwrap()
+            .values
+            .insert("configured_domain_1".into(), 1.);
+        d.packing_routers.get_mut("router").unwrap().configured = Some(BTreeMap::from([
+            (0, [WORKERS[0].to_string()].into()),
+            (1, [WORKERS[0].to_string()].into()),
+        ]));
+        publish(&mut d, "[0,1]");
+        assert_eq!(firing(&d, now, "assignment_unassigned"), Some(true));
+    }
+
+    /// A combined role's embedded worker reports no remote readiness, so it
+    /// never counts for another router, even when APM cannot tell the role
+    /// is combined (absent from the router inventory, or health unreadable).
+    #[test]
+    fn an_unidentified_combined_worker_is_not_a_remote_replica() {
+        let now = pir_apm::incidents::unix_time();
+        let mut d = view(now);
+        provision(&mut d, now, &[0], &[0]);
+        d.fleet
+            .get_mut("worker-a")
+            .unwrap()
+            .values
+            .insert("remote_readiness".into(), 0.);
+        d.packing_routers.get_mut("router").unwrap().configured =
+            Some(BTreeMap::from([(0, [WORKERS[0].to_string()].into())]));
+        assert_eq!(firing(&d, now, "assignment_unassigned"), Some(true));
+        d.packing_routers.get_mut("router").unwrap().configured = Some(BTreeMap::from([(
+            0,
+            [WORKERS[0].to_string(), WORKERS[1].to_string()].into(),
+        )]));
+        assert_eq!(firing(&d, now, "assignment_unassigned"), Some(false));
+    }
+
+    /// A worker that predates the remote-readiness marker is unknown, not
+    /// proven unable to serve.
+    #[test]
+    fn a_worker_without_the_marker_is_unknown() {
+        let now = pir_apm::incidents::unix_time();
+        let mut d = view(now);
+        provision(&mut d, now, &[0], &[0]);
+        for name in ["worker-a", "worker-b"] {
+            d.fleet
+                .get_mut(name)
+                .unwrap()
+                .values
+                .remove("remote_readiness");
+        }
+        assert_eq!(firing(&d, now, "assignment_unassigned"), None);
+    }
+
+    /// The warning gives a full domain of lead time, independent of rows; the
+    /// critical waits for the row threshold; missing evidence pages on its own
+    /// coverage condition; and none of this lives in the main family.
+    #[test]
+    fn assignment_family_warns_early_and_reports_missing_evidence() {
+        let now = pir_apm::incidents::unix_time();
+        let mut d = view(now);
+        provision(&mut d, now, &[0], &[0]);
+        d.snapshot_gauges
+            .insert("enhance_rows_before_next_carveout".into(), 30_000.);
+        assert_eq!(firing(&d, now, "assignment_rollover_warning"), Some(true));
+        assert_eq!(firing(&d, now, "assignment_rollover_critical"), Some(false));
+        d.snapshot_gauges
+            .remove("enhance_rows_before_next_carveout");
+        assert_eq!(firing(&d, now, "assignment_rollover_warning"), Some(true));
+        assert_eq!(firing(&d, now, "assignment_rollover_critical"), None);
+        assert_eq!(firing(&d, now, "assignment_coverage_warning"), Some(false));
+        // Routers without the new fields: unknown, and coverage says so.
+        d.packing_routers.get_mut("router").unwrap().configured = None;
+        assert_eq!(firing(&d, now, "assignment_rollover_warning"), None);
+        assert_eq!(firing(&d, now, "assignment_coverage_warning"), Some(true));
+        assert!(monitoring::conditions(&d, now, &Policy::default())
+            .iter()
+            .all(|c| !c.key.starts_with("assignment_")));
+    }
+
+    #[test]
+    fn configured_domains_reject_malformed_reports() {
+        for bad in [
+            serde_json::json!({}),
+            serde_json::json!({"0": []}),
+            serde_json::json!({"24": [WORKERS[0]]}),
+            serde_json::json!({"01": [WORKERS[0]]}),
+            serde_json::json!([0]),
+        ] {
+            assert_eq!(
+                configured(&serde_json::json!({"configured_domains": bad}), "http://r"),
+                None,
+                "{bad}"
+            );
+        }
+        assert_eq!(
+            configured(&serde_json::json!({"ready": true}), "http://r"),
+            None
+        );
+    }
+
     #[test]
     fn current_router_assignments_exclude_unused_workers_and_deduplicate_replicas() {
         let mut d = view(1000);

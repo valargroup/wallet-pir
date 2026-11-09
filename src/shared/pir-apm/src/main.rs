@@ -1,4 +1,5 @@
 mod alerts;
+mod assignment_alerts;
 mod capacity_alerts;
 mod charts;
 mod config;
@@ -290,6 +291,9 @@ async fn scrape_loop(
                 .ok()
                 .filter(|r| (200..300).contains(&r.status))
                 .and_then(|r| placement::Published::parse(&r.body));
+            if view.enhance_publication.is_some() {
+                view.enhance_publication_sample = Some(SystemTime::now());
+            }
             view.ready_status = ready_status;
             view.publisher_configured = config.publisher_url.is_some();
             if let Some(products) = publisher_products {

@@ -273,6 +273,7 @@ Investigate by check family:
 | `publication_*` | Compare direct node tip and manifest; inspect publication attempts and the last durable advancement. |
 | `domain_*` | Check published placement and eligible replicas, then router authority and generation-specific worker health. |
 | `coverage_*` | Restore the named scraper/source/inventory before trusting retained values. |
+| `assignment_*` | Add the domain to ingress `routers`, router `workers` and worker `shards` ([domain responsibilities](deployment.md#domain-responsibilities)), then restart workers, routers and ingress in that order. For `assignment_coverage_*`, restore the named router, worker or publisher scrape. |
 | `canary_*` | Inspect transport/category and pinned oracle validity; distinguish wrong bytes from unavailable service. |
 | `service_canary_*` | Run the probe's configured command by hand on the monitor host to read its error. `block_undecodable` usually means the probe predates a network upgrade ([refresh it](#seven-day-quality-history-and-transparent-page)). |
 | `external_monitor`, `apm_progress` | Inspect systemd, loop progress, and state-database permissions on the named monitoring host. |
@@ -702,6 +703,64 @@ routers removed from a valid inventory retire their incidents.
 Deploy the worker and router binaries first, so coverage is already healthy
 when the APM starts evaluating. Then follow the quality-family gates: 24 hours
 in shadow, review every candidate, then activate.
+
+## Domain assignment alerts
+
+A domain holds 1,081,344 records (32,768 rows). The next record opens a new
+domain, and no ingress, router or worker serves a domain it was not configured
+for. Ingress refuses a publication it cannot route in full, so one unassigned
+domain stops every wallet `init`. On 2026-11-09 a mainnet burst filled domain 0,
+domain 1 opened at 17:22 UTC with nothing configured for it, and the only alerts
+were `init_5xx` and unavailable placement coverage.
+
+The `assignment` family has its own rollout mode, `PIR_APM_ASSIGNMENT_ALERT_MODE`
+(`shadow` by default, or `active`). Run it in shadow for at least a day after the
+publisher, router and worker binaries that report the fields below are deployed,
+review every candidate, then activate.
+
+Routers report every configured domain and its worker origins in
+`/internal/health` as `configured_domains`. Workers report one
+`enhance_worker_configured_domain_<id>` gauge per configured domain and
+`enhance_worker_remote_readiness` (1 standalone, 0 for a combined role's
+embedded worker). A domain counts as assigned when a fresh router names it with
+a fresh worker configured for it, matching worker origins by scheme, host and
+port, and only through a worker reporting remote readiness 1 unless the worker
+is the router's own. That router must also have such a worker for every other
+published domain it owns, because a router refuses a publication it cannot
+serve in full. A combined role counts only when it owns every domain the answer
+needs. Every answer also needs a publisher health read from the last 45
+seconds, since its domain list says what must be served.
+
+| Key | Severity | Fires when | Hold |
+| --- | --- | --- | --- |
+| `assignment_rollover_warning` | warning | the publication the next domain will create cannot be served, at any number of rows left | – |
+| `assignment_rollover_critical` | critical | the same, with fewer than 1,024 rows (about 34,000 records) left | – |
+| `assignment_unassigned` | critical | a published domain has no configured router and worker | 60 s |
+| `assignment_coverage_warning` / `_critical` | warning / critical | router, worker or publisher evidence is missing, so the answers above are unknown | 45 s / 120 s |
+
+The warning fires as soon as the current domain is the last one the fleet can
+take, which leaves a full domain of time to add workers or a router. Rows left
+come from the publisher's metrics and count only when their
+`enhance_published_generation` matches the publisher health that names the
+domains. Past domain 23 the observed text names the protocol limit, because no
+assignment can serve domain 24.
+
+One fresh router and its workers are enough to show a domain is assigned. A
+domain proven unassigned pages even while another domain's answer is unknown.
+An unreachable router, a worker URL missing from the worker inventory, or a role
+that predates these fields leaves an answer unknown, which raises
+`assignment_coverage_*` rather than looking healthy. A router provisioned only
+for unpublished domains is ignored by placement monitoring while it answers.
+Bring it up before adding it to APM's router inventory, since an unreachable
+router makes placement unknown. APM reads router health and worker metrics
+without the internal control token, as placement monitoring already does, so
+these checks stay unknown on a deployment that sets `ENHANCE_INTERNAL_TOKEN`.
+Ingress `routers` is not checked, which is why
+[deployment](deployment.md#domain-responsibilities) lists every domain there.
+
+To clear an alert, add the domain to every role as that section describes. A
+rollover past five domains on a worker, or six on a router, needs more workers
+or another router.
 
 ## Transparent service alerts
 

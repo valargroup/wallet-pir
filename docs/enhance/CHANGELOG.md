@@ -2,6 +2,13 @@
 
 ## 0.0.1 — Unreleased
 
+- APM has an `assignment` alert family, in shadow until
+  `PIR_APM_ASSIGNMENT_ALERT_MODE=active`. It warns as soon as the publication the
+  next Enhance domain will create cannot be served by a fresh router and its
+  workers, goes critical when fewer than 1,024 rows remain, pages when a
+  published domain has no router and worker, and raises a coverage alert when
+  the evidence is missing instead of looking healthy.
+
 - The publisher reports the rows left before the next Enhance domain opens
   (`enhance_rows_before_next_carveout`) again, which the October 2026 HTTPS
   cutover had dropped, so APM's `capacity_shard_rollover` has data. Packing
