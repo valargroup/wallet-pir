@@ -161,9 +161,11 @@ dry_finish() {
 
 finish() {
   local code=$1
-  local outcome=() result='done'
-  [ "$code" = 0 ] || outcome=(--failed) result=FAILED
-  remote "$CONTROL" alerts finish "$DEPLOY_ID" "${outcome[@]}" >/dev/null 2>&1 || true
+  # Not an array: macOS bash 3.2 treats an empty one as unset under `set -u`.
+  local failed='' result='done'
+  [ "$code" = 0 ] || failed=--failed result=FAILED
+  # shellcheck disable=SC2086
+  remote "$CONTROL" alerts finish "$DEPLOY_ID" $failed >/dev/null 2>&1 || true
   remote "$CONTROL" lease drop "$OWNER" >/dev/null 2>&1 || true
   echo "== $result in $(($(date +%s) - START))s"
 }

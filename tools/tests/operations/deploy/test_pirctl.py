@@ -213,6 +213,77 @@ class PirctlTest(unittest.TestCase):
         self.assertIn('probe passed', result.stdout)
         self.assertIn('--products enhance,status', (self.host / 'probes.log').read_text())
 
+    def test_prepare_leaves_another_calls_download_alone(self):
+        opt = self.host / 'opt/wallet-pir'
+        fresh, stale = opt / '.download.fresh', opt / '.download.stale'
+        for directory in (fresh, stale):
+            directory.mkdir(parents=True)
+        old = time.time() - 2 * 3600
+        os.utime(stale, (old, old))
+        self.fleet.release(SHA_A)
+        result = self.fleet.pirctl(self.host, 'prepare', 'query', SHA_A)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(fresh.is_dir(), 'a download in progress survives')
+        self.assertFalse(stale.exists(), 'an abandoned download is removed')
+
+    def test_a_probe_archive_without_its_executable_is_refused(self):
+        for member in ('README', 'pir-probe/'):
+            with self.subTest(member=member):
+                self.temp.cleanup()
+                self.setUp()
+                self.refuse_probe_archive(member)
+
+    def test_a_cached_probe_directory_without_its_executable_is_replaced(self):
+        self.fleet.release(SHA_A)
+        self.assertEqual(self.fleet.pirctl(self.host, 'prepare', 'query', SHA_A).returncode, 0)
+        broken = self.host / 'opt/wallet-pir/pir-query-server/releases' / SHA_A[:12] / 'probe'
+        for damage in ('missing', 'directory'):
+            with self.subTest(damage=damage):
+                (broken / 'pir-probe').unlink()
+                if damage == 'directory':
+                    (broken / 'pir-probe').mkdir()
+                result = self.fleet.pirctl(self.host, 'prepare', 'query', SHA_A)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertTrue((broken / 'pir-probe').is_file())
+                self.assertFalse((broken / 'probe').exists())
+
+    def refuse_probe_archive(self, member):
+        """Replaces the release's probe archive with one holding only `member`; prepare must refuse it."""
+        self.fleet.release(SHA_A)
+        directory = self.fleet.releases / ('build-' + SHA_A[:12])
+        data = io.BytesIO()
+        with tarfile.open(fileobj=data, mode='w:gz') as archive:
+            info = tarfile.TarInfo(member.rstrip('/'))
+            if member.endswith('/'):
+                info.type, info.mode = tarfile.DIRTYPE, 0o755
+            archive.addfile(info, None if member.endswith('/') else io.BytesIO(b''))
+        (directory / 'pir-probe.tar.gz').write_bytes(data.getvalue())
+        sums = [line for line in (directory / 'SHA256SUMS').read_text().splitlines()
+                if not line.endswith(' pir-probe.tar.gz')]
+        sums.append('%s  pir-probe.tar.gz' % hashlib.sha256(data.getvalue()).hexdigest())
+        (directory / 'SHA256SUMS').write_text('\n'.join(sums) + '\n')
+        result = self.fleet.pirctl(self.host, 'prepare', 'query', SHA_A)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('no pir-probe executable', result.stderr)
+
+    def test_pruning_public_probes_keeps_the_one_just_used(self):
+        shas = ['a' * 40, 'b' * 40, 'c' * 40, 'd' * 40]
+        for sha in shas:
+            self.fleet.release(sha)
+        releases = self.host / 'opt/wallet-pir/pir-probe/releases'
+        public = lambda sha: self.fleet.pirctl(self.host, 'public', 'http://o.example', 'enhance', sha)
+        for sha in shas[:3]:
+            self.assertEqual(public(sha).returncode, 0)
+        for age, sha in ((300, shas[0]), (200, shas[1]), (100, shas[2])):
+            old = time.time() - age
+            os.utime(releases / sha[:12], (old, old))
+        # A deploy of the oldest build probes it again while another call fetches a newer one.
+        self.assertEqual(public(shas[0]).returncode, 0)
+        result = public(shas[3])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(sorted(p.name for p in releases.iterdir()),
+                         sorted(sha[:12] for sha in (shas[0], shas[2], shas[3])))
+
     def test_redeploying_the_running_release_does_not_restart(self):
         self.fleet.release(SHA_A)
         self.assertEqual(self.deploy(SHA_A).returncode, 0)

@@ -89,7 +89,9 @@ prepare() {
   sha=$(short "$1") dir=$(release_dir "$sha")
   if [ ! -x "$dir/$C_ASSET" ]; then
     mkdir -p "$OPT" "$(dirname "$dir")"
-    rm -rf "$OPT"/.download.*
+    # Other calls (a public probe, a dry run) may be downloading right now, so
+    # only clean up downloads abandoned long ago.
+    find "$OPT" -maxdepth 1 -name '.download.*' -mmin +60 -exec rm -rf {} + 2>/dev/null || true
     tmp=$(mktemp -d "$OPT/.download.XXXXXX")
     fetch "$sha" "$C_ASSET.tar.gz" "$tmp"
     mkdir "$tmp/unpacked"
@@ -109,7 +111,7 @@ prepare() {
 # Unpacks a release's probe into <dir>/probe unless it is there or the release has none.
 fetch_probe() {
   local sha=$1 dir=$2 tmp
-  [ ! -x "$dir/probe/pir-probe" ] || return 0
+  [ ! -f "$dir/probe/pir-probe" ] || [ ! -x "$dir/probe/pir-probe" ] || return 0
   mkdir -p "$dir"
   tmp=$(mktemp -d "$OPT/.download.XXXXXX")
   curl -fsSL --retry 3 --max-time 30 -o "$tmp/SHA256SUMS" "$RELEASES/build-$sha/SHA256SUMS"
@@ -117,7 +119,17 @@ fetch_probe() {
     fetch "$sha" pir-probe.tar.gz "$tmp"
     mkdir "$tmp/probe"
     tar -C "$tmp/probe" -xzf "$tmp/pir-probe.tar.gz"
-    mv "$tmp/probe" "$dir/probe"
+    [ -f "$tmp/probe/pir-probe" ] && [ -x "$tmp/probe/pir-probe" ] ||
+      die "build-$sha's pir-probe.tar.gz has no pir-probe executable"
+    # Where `flock` is missing, another call may have installed the same probe
+    # meanwhile; its copy is as good as this one. A cached copy without it is
+    # replaced, since `mv` onto a directory would nest the new one inside.
+    if ! { [ -f "$dir/probe/pir-probe" ] && [ -x "$dir/probe/pir-probe" ]; }; then
+      rm -rf "$dir/probe"
+      mv "$tmp/probe" "$dir/probe" 2>/dev/null || true
+    fi
+    [ -f "$dir/probe/pir-probe" ] && [ -x "$dir/probe/pir-probe" ] ||
+      die "could not install the build-$sha probe"
   fi
   rm -rf "$tmp"
 }
@@ -235,13 +247,27 @@ public() {
     (
       flock 8
       fetch_probe "$sha" "$OPT/pir-probe/releases/$sha"
+      # Pruning keeps the three most recently used, so a probe in use stays
+      # even when another call, such as a dry run, fetches a newer build.
+      touch "$OPT/pir-probe/releases/$sha"
       ls -1dt "$OPT/pir-probe/releases"/*/ | tail -n +4 | xargs rm -rf
     ) 8>"$OPT/pir-probe/.lock"
     probe=$OPT/pir-probe/releases/$sha/probe/pir-probe
   else
     # A rollback names no build; a publisher-only host has only the probes deploys
-    # fetched. `ls` fails when either pattern matches nothing.
-    probe=$(ls -t "$OPT"/*/current/probe/pir-probe "$OPT"/pir-probe/releases/*/probe/pir-probe 2>/dev/null | head -1 || true)
+    # fetched. `ls` fails when either pattern matches nothing. A cached probe it
+    # picks is touched under the same lock, so a concurrent fetch keeps it.
+    mkdir -p "$OPT/pir-probe"
+    # The lock's fd is opened inside the substitution, which runs before any
+    # redirection on the assignment would apply.
+    probe=$(
+      {
+        flock 8 || exit 1
+        probe=$(ls -t "$OPT"/*/current/probe/pir-probe "$OPT"/pir-probe/releases/*/probe/pir-probe 2>/dev/null | head -1 || true)
+        if [[ $probe == "$OPT"/pir-probe/releases/* ]]; then touch "${probe%/probe/pir-probe}"; fi
+        echo "$probe"
+      } 8>"$OPT/pir-probe/.lock"
+    )
   fi
   [ -x "$probe" ] || die "no probe on this host${sha:+ for build-$sha}"
   # A query role catches up within a second or two of a publisher restart, so a
