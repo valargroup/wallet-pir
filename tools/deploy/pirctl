@@ -124,7 +124,7 @@ fetch_probe() {
     # Where `flock` is missing, another call may have installed the same probe
     # meanwhile; its copy is as good as this one. A cached copy without it is
     # replaced, since `mv` onto a directory would nest the new one inside.
-    if [ ! -x "$dir/probe/pir-probe" ]; then
+    if ! { [ -f "$dir/probe/pir-probe" ] && [ -x "$dir/probe/pir-probe" ]; }; then
       rm -rf "$dir/probe"
       mv "$tmp/probe" "$dir/probe" 2>/dev/null || true
     fi
@@ -258,12 +258,16 @@ public() {
     # fetched. `ls` fails when either pattern matches nothing. A cached probe it
     # picks is touched under the same lock, so a concurrent fetch keeps it.
     mkdir -p "$OPT/pir-probe"
+    # The lock's fd is opened inside the substitution, which runs before any
+    # redirection on the assignment would apply.
     probe=$(
-      flock 8
-      probe=$(ls -t "$OPT"/*/current/probe/pir-probe "$OPT"/pir-probe/releases/*/probe/pir-probe 2>/dev/null | head -1 || true)
-      if [[ $probe == "$OPT"/pir-probe/releases/* ]]; then touch "${probe%/probe/pir-probe}"; fi
-      echo "$probe"
-    ) 8>"$OPT/pir-probe/.lock"
+      {
+        flock 8 || exit 1
+        probe=$(ls -t "$OPT"/*/current/probe/pir-probe "$OPT"/pir-probe/releases/*/probe/pir-probe 2>/dev/null | head -1 || true)
+        if [[ $probe == "$OPT"/pir-probe/releases/* ]]; then touch "${probe%/probe/pir-probe}"; fi
+        echo "$probe"
+      } 8>"$OPT/pir-probe/.lock"
+    )
   fi
   [ -x "$probe" ] || die "no probe on this host${sha:+ for build-$sha}"
   # A query role catches up within a second or two of a publisher restart, so a

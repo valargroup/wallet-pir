@@ -237,11 +237,15 @@ class PirctlTest(unittest.TestCase):
         self.fleet.release(SHA_A)
         self.assertEqual(self.fleet.pirctl(self.host, 'prepare', 'query', SHA_A).returncode, 0)
         broken = self.host / 'opt/wallet-pir/pir-query-server/releases' / SHA_A[:12] / 'probe'
-        (broken / 'pir-probe').unlink()
-        result = self.fleet.pirctl(self.host, 'prepare', 'query', SHA_A)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertTrue((broken / 'pir-probe').is_file())
-        self.assertFalse((broken / 'probe').exists())
+        for damage in ('missing', 'directory'):
+            with self.subTest(damage=damage):
+                (broken / 'pir-probe').unlink()
+                if damage == 'directory':
+                    (broken / 'pir-probe').mkdir()
+                result = self.fleet.pirctl(self.host, 'prepare', 'query', SHA_A)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertTrue((broken / 'pir-probe').is_file())
+                self.assertFalse((broken / 'probe').exists())
 
     def refuse_probe_archive(self, member):
         """Replaces the release's probe archive with one holding only `member`; prepare must refuse it."""
