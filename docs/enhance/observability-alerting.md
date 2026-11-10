@@ -237,6 +237,17 @@ The independent checker requires:
 - `PIR_MONITOR_STATE_PATH=/var/lib/pir-monitor/incidents.sqlite`
 - `PIR_MONITOR_ALERT_MODE=shadow` initially; `active` after qualification.
 
+`PIR_MONITOR_CANARY_ORIGINS` optionally names extra origins that serve the same
+publication, as space-separated `<name>=<origin>` pairs, for example
+`query-02=https://wallet-pir-query-02.valargroup.dev` for the unified node wallets
+reach directly. Each runs the same one-minute canary as `PIR_MONITOR_ORIGIN` and
+pages under its own keys (`canary_failures.<name>`, `canary_correctness.<name>`,
+`canary_latency.<name>`) with the same thresholds. Each must be a bare `http` or
+`https` origin with no credentials, path or query, since it appears in public
+status and alerts. Removing an origin retires its incidents. APM does not scrape a unified
+node, so this canary is what notices when one stops serving, for example after a
+new Enhance domain opens that its combined role was not configured for.
+
 Its incidents link to the APM dashboard that serves `PIR_MONITOR_APM_STATUS_URL`, except the service
 probes' (Status, Transparent and receiver), which link to
 `PIR_MONITOR_PUBLIC_STATUS_URL`, by default

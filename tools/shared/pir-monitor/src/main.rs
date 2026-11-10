@@ -26,6 +26,14 @@ struct Record {
     position: u64,
     record_hex: String,
 }
+/// One canary sample of an origin.
+#[derive(Clone, Default, Serialize)]
+struct Canary {
+    at: u64,
+    ok: bool,
+    duration_seconds: f64,
+    failure_category: String,
+}
 #[derive(Clone, Default, Serialize)]
 struct View {
     services: std::collections::BTreeMap<String, service_probes::Probe>,
@@ -34,6 +42,8 @@ struct View {
     canary_ok: bool,
     canary_duration_seconds: f64,
     failure_category: String,
+    /// The latest sample of each `PIR_MONITOR_CANARY_ORIGINS` origin, by name.
+    origins: std::collections::BTreeMap<String, Canary>,
     shadow: bool,
     storage_error: bool,
     delivery: DeliveryHealth,
@@ -65,7 +75,8 @@ fn condition(
         severity: severity.into(),
         firing,
         observed,
-        threshold: match key {
+        // An extra origin's keys are the primary's with `.<name>` appended.
+        threshold: match key.split_once('.').map_or(key, |(base, _)| base) {
             "apm_progress" => "APM progress unavailable for 60 seconds",
             "oracle_validity" => "pinned oracle block must remain canonical",
             "oracle_monitoring" => "oracle reference unavailable for 60 seconds",
@@ -100,6 +111,197 @@ fn evaluate_services(
         status_url,
     )
 }
+/// Parses `PIR_MONITOR_CANARY_ORIGINS`: space-separated `<name>=<origin>` pairs,
+/// each an extra origin that serves the same publication as `PIR_MONITOR_ORIGIN`,
+/// such as a unified query node wallets reach directly.
+fn canary_origins(text: &str) -> Result<Vec<(String, String)>> {
+    let mut names = std::collections::BTreeSet::new();
+    text.split_whitespace()
+        .map(|pair| {
+            let (name, origin) = pair
+                .split_once('=')
+                .context("canary origins are <name>=<origin> pairs")?;
+            anyhow::ensure!(
+                !name.is_empty()
+                    && name.len() <= 64
+                    && name
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b"-_".contains(&b))
+                    && names.insert(name.to_string()),
+                "invalid or duplicate canary origin name {name:?}"
+            );
+            // The origin appears in public status and alerts, so it must be a bare
+            // origin, and errors name only the origin's name.
+            let url = reqwest::Url::parse(origin)
+                .ok()
+                .filter(|url| {
+                    matches!(url.scheme(), "http" | "https")
+                        && url.host_str().is_some()
+                        && url.username().is_empty()
+                        && url.password().is_none()
+                        && url.path() == "/"
+                        && url.query().is_none()
+                        && url.fragment().is_none()
+                })
+                .with_context(|| format!("canary origin {name:?} is not a bare http(s) origin"))?;
+            let origin = url.as_str().trim_end_matches('/');
+            Ok((name.into(), origin.into()))
+        })
+        .collect()
+}
+
+/// The canary condition kinds. An extra origin's keys append `.<name>`.
+const CANARY_KINDS: [&str; 3] = ["canary_failures", "canary_correctness", "canary_latency"];
+
+/// Retires stored extra-origin incidents whose origin is no longer in
+/// `PIR_MONITOR_CANARY_ORIGINS`, so an open one closes rather than staying open
+/// with nothing left to evaluate it.
+fn removed_origins(
+    incidents: &[Incident],
+    configured: &[(String, String)],
+    now: u64,
+) -> Vec<Condition> {
+    incidents
+        .iter()
+        .filter_map(|incident| incident.condition.as_ref())
+        .filter(|c| {
+            c.key.split_once('.').is_some_and(|(kind, name)| {
+                CANARY_KINDS.contains(&kind) && !configured.iter().any(|(n, _)| n == name)
+            })
+        })
+        .map(|c| Condition {
+            retired: true,
+            firing: None,
+            observed: "origin removed from PIR_MONITOR_CANARY_ORIGINS".into(),
+            sample: now,
+            ..c.clone()
+        })
+        .collect()
+}
+
+/// Runs one wallet-shaped sample against `origin`: a fresh connection and
+/// init, then one query whose decrypted record must match the oracle.
+async fn sample(origin: &str, oracle: &Oracle, record: &Record) -> Canary {
+    let began = Instant::now();
+    let probe = async {
+        let mut client = EnhancePirClient::connect(origin)
+            .await
+            .map_err(|_| "init_failed")?;
+        if client.manifest().anchor_height < oracle.anchor_height {
+            return Err("coverage_behind_oracle");
+        }
+        let (answer, _) = client
+            .query_position_with_timing(record.position)
+            .await
+            .map_err(|_| "query_failed")?;
+        if hex::encode(answer.as_bytes()) != record.record_hex.to_ascii_lowercase() {
+            return Err("answer_mismatch");
+        }
+        Ok(())
+    };
+    let category = match tokio::time::timeout(Duration::from_secs(20), probe).await {
+        Ok(Ok(())) => "",
+        Ok(Err(category)) => category,
+        Err(_) => "deadline",
+    };
+    Canary {
+        at: incidents::unix_time(),
+        ok: category.is_empty(),
+        duration_seconds: began.elapsed().as_secs_f64(),
+        failure_category: category.into(),
+    }
+}
+
+/// Consecutive failed and slow samples of one origin, counted once per sample.
+#[derive(Default)]
+struct Streak {
+    last: u64,
+    failures: u32,
+    slow: u32,
+}
+impl Streak {
+    /// Counts `canary` if it is newer than the last sample counted.
+    fn update(&mut self, canary: &Canary) {
+        if canary.at <= self.last {
+            return;
+        }
+        self.last = canary.at;
+        self.failures = if canary.ok {
+            0
+        } else {
+            self.failures.saturating_add(1)
+        };
+        self.slow = if canary.ok && canary.duration_seconds > 10. {
+            self.slow.saturating_add(1)
+        } else {
+            0
+        };
+    }
+}
+
+/// The failure, correctness and latency conditions of one origin's canary.
+/// `suffix` is empty for `PIR_MONITOR_ORIGIN`, whose keys predate extra origins,
+/// and `.<name>` for an extra one.
+fn canary_conditions(
+    suffix: &str,
+    canary: &Canary,
+    streak: &Streak,
+    oracle_valid: Option<bool>,
+    origin: &str,
+) -> Vec<Condition> {
+    let sample = canary.at;
+    let (failures, slow) = (streak.failures, streak.slow);
+    let at = if suffix.is_empty() {
+        String::new()
+    } else {
+        format!(" at {origin}")
+    };
+    vec![
+        condition(
+            &format!("canary_failures{suffix}"),
+            "critical",
+            if sample == 0 || (failures > 0 && failures < 3) {
+                None
+            } else {
+                Some(failures >= 3)
+            },
+            sample,
+            0,
+            format!(
+                "{failures} consecutive failures; {}{at}",
+                canary.failure_category
+            ),
+        ),
+        condition(
+            &format!("canary_correctness{suffix}"),
+            "critical",
+            if oracle_valid == Some(true)
+                && sample > 0
+                && (canary.ok || canary.failure_category == "answer_mismatch")
+            {
+                Some(canary.failure_category == "answer_mismatch")
+            } else {
+                None
+            },
+            sample,
+            0,
+            format!("decrypted bytes compared with pinned oracle{at}"),
+        ),
+        condition(
+            &format!("canary_latency{suffix}"),
+            "warning",
+            if sample == 0 || (slow > 0 && slow < 5) {
+                None
+            } else {
+                Some(slow >= 5)
+            },
+            sample,
+            0,
+            format!("{slow} consecutive samples above 10s{at}"),
+        ),
+    ]
+}
+
 fn load_oracle(bytes: &[u8], checksum: &str) -> Result<Oracle> {
     anyhow::ensure!(
         hex::encode(Sha256::digest(bytes)) == checksum,
@@ -126,6 +328,8 @@ fn load_oracle(bytes: &[u8], checksum: &str) -> Result<Oracle> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let origin = env("PIR_MONITOR_ORIGIN")?;
+    let extra_origins =
+        canary_origins(&std::env::var("PIR_MONITOR_CANARY_ORIGINS").unwrap_or_default())?;
     let status_url = env("PIR_MONITOR_APM_STATUS_URL")?;
     // Incidents link to the dashboard that serves the APM status this monitor reads.
     let dashboard_url = match status_url.rsplit_once('/') {
@@ -167,48 +371,39 @@ async fn main() -> Result<()> {
         shadow,
         ..Default::default()
     }));
-    let canary = shared.clone();
     let oracle_check = oracle.clone();
-    let probe_origin = origin.clone();
-    tokio::spawn(async move {
-        let mut cursor = 0;
-        let mut tick = tokio::time::interval(Duration::from_secs(60));
-        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        loop {
-            tick.tick().await;
-            let r = &oracle.records[cursor % oracle.records.len()];
-            cursor += 1;
-            let began = Instant::now();
-            // Full fresh connection/init on every sample; no cached success path.
-            let probe = async {
-                let mut client = EnhancePirClient::connect(&probe_origin)
-                    .await
-                    .map_err(|_| "init_failed")?;
-                if client.manifest().anchor_height < oracle.anchor_height {
-                    return Err("coverage_behind_oracle");
+    // The primary origin and each extra one sample once a minute on their own
+    // task, so a slow origin never delays another.
+    let mut origins = vec![(None, origin.clone())];
+    origins.extend(extra_origins.iter().cloned().map(|(n, o)| (Some(n), o)));
+    for (name, probe_origin) in origins {
+        let canary = shared.clone();
+        let oracle = oracle.clone();
+        tokio::spawn(async move {
+            let mut cursor = 0;
+            let mut tick = tokio::time::interval(Duration::from_secs(60));
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                tick.tick().await;
+                let r = &oracle.records[cursor % oracle.records.len()];
+                cursor += 1;
+                // Full fresh connection/init on every sample; no cached success path.
+                let result = sample(&probe_origin, &oracle, r).await;
+                let mut v = canary.write().await;
+                match &name {
+                    None => {
+                        v.canary_at = result.at;
+                        v.canary_ok = result.ok;
+                        v.failure_category = result.failure_category;
+                        v.canary_duration_seconds = result.duration_seconds;
+                    }
+                    Some(name) => {
+                        v.origins.insert(name.clone(), result);
+                    }
                 }
-                let (answer, _) = client
-                    .query_position_with_timing(r.position)
-                    .await
-                    .map_err(|_| "query_failed")?;
-                if hex::encode(answer.as_bytes()) != r.record_hex.to_ascii_lowercase() {
-                    return Err("answer_mismatch");
-                }
-                Ok(())
-            };
-            let result = tokio::time::timeout(Duration::from_secs(20), probe).await;
-            let category = match result {
-                Ok(Ok(())) => "",
-                Ok(Err(category)) => category,
-                Err(_) => "deadline",
-            };
-            let mut v = canary.write().await;
-            v.canary_at = incidents::unix_time();
-            v.canary_ok = category.is_empty();
-            v.failure_category = category.into();
-            v.canary_duration_seconds = began.elapsed().as_secs_f64();
-        }
-    });
+            }
+        });
+    }
     let eval = shared.clone();
     tokio::spawn(async move {
         let client = reqwest::Client::builder()
@@ -217,7 +412,8 @@ async fn main() -> Result<()> {
             .expect("status client");
         let mut tick = tokio::time::interval(Duration::from_secs(15));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        let (mut last_canary, mut failures, mut slow) = (0, 0u32, 0u32);
+        let mut primary = Streak::default();
+        let mut streaks: std::collections::BTreeMap<String, Streak> = Default::default();
         loop {
             tick.tick().await;
             let status = async {
@@ -253,19 +449,13 @@ async fn main() -> Result<()> {
                 }
                 chain["oracle_valid"].as_bool()
             });
-            if snapshot.canary_at > last_canary {
-                last_canary = snapshot.canary_at;
-                failures = if snapshot.canary_ok {
-                    0
-                } else {
-                    failures.saturating_add(1)
-                };
-                slow = if snapshot.canary_ok && snapshot.canary_duration_seconds > 10. {
-                    slow.saturating_add(1)
-                } else {
-                    0
-                };
-            }
+            let primary_canary = Canary {
+                at: snapshot.canary_at,
+                ok: snapshot.canary_ok,
+                duration_seconds: snapshot.canary_duration_seconds,
+                failure_category: snapshot.failure_category.clone(),
+            };
+            primary.update(&primary_canary);
             let sample = snapshot.canary_at;
             let mut checks = vec![
                 condition(
@@ -300,49 +490,27 @@ async fn main() -> Result<()> {
                     60,
                     "canary task progress".into(),
                 ),
-                condition(
-                    "canary_failures",
-                    "critical",
-                    if sample == 0 || (failures > 0 && failures < 3) {
-                        None
-                    } else {
-                        Some(failures >= 3)
-                    },
-                    sample,
-                    0,
-                    format!(
-                        "{failures} consecutive failures; {}",
-                        snapshot.failure_category
-                    ),
-                ),
-                condition(
-                    "canary_correctness",
-                    "critical",
-                    if oracle_valid == Some(true)
-                        && sample > 0
-                        && (snapshot.canary_ok || snapshot.failure_category == "answer_mismatch")
-                    {
-                        Some(snapshot.failure_category == "answer_mismatch")
-                    } else {
-                        None
-                    },
-                    sample,
-                    0,
-                    "decrypted bytes compared with pinned oracle".into(),
-                ),
-                condition(
-                    "canary_latency",
-                    "warning",
-                    if sample == 0 || (slow > 0 && slow < 5) {
-                        None
-                    } else {
-                        Some(slow >= 5)
-                    },
-                    sample,
-                    0,
-                    format!("{slow} consecutive samples above 10s"),
-                ),
             ];
+            checks.extend(canary_conditions(
+                "",
+                &primary_canary,
+                &primary,
+                oracle_valid,
+                &origin,
+            ));
+            for (name, extra) in &extra_origins {
+                let canary = snapshot.origins.get(name).cloned().unwrap_or_default();
+                let streak = streaks.entry(name.clone()).or_default();
+                streak.update(&canary);
+                checks.extend(canary_conditions(
+                    &format!(".{name}"),
+                    &canary,
+                    streak,
+                    oracle_valid,
+                    extra,
+                ));
+            }
+            checks.extend(removed_origins(&snapshot.incidents, &extra_origins, now));
             for (severity, age) in [("warning", 60), ("critical", 300)] {
                 checks.push(condition(
                     &format!("apm_delivery_{severity}"),
@@ -425,6 +593,131 @@ mod tests {
         value["records"].as_array_mut().unwrap().push(r);
         let bytes = serde_json::to_vec(&value).unwrap();
         assert!(load_oracle(&bytes, &hex::encode(Sha256::digest(&bytes))).is_err());
+    }
+
+    #[test]
+    fn canary_origins_are_named_unique_http_origins() {
+        assert!(canary_origins("").unwrap().is_empty());
+        let parsed = canary_origins(
+            "query-02=https://wallet-pir-query-02.valargroup.dev  b_2=http://10.0.0.1:8090",
+        )
+        .unwrap();
+        assert_eq!(parsed[0].0, "query-02");
+        assert_eq!(parsed[1].1, "http://10.0.0.1:8090");
+        let error = canary_origins("a=https://user:secret@a.example")
+            .unwrap_err()
+            .to_string();
+        assert!(!error.contains("secret"), "{error}");
+        for bad in [
+            "https://no-name.example",
+            "=https://a.example",
+            "a.b=https://a.example",
+            "a=ftp://a.example",
+            "a=https://user:secret@a.example",
+            "a=https://a.example/path",
+            "a=https://a.example/?q=1",
+            "a=https://a.example/#f",
+            "a=https://a.example a=https://b.example",
+        ] {
+            assert!(canary_origins(bad).is_err(), "{bad}");
+        }
+    }
+
+    /// An extra origin pages under its own keys with the primary's thresholds,
+    /// and the primary's keys are unchanged.
+    #[test]
+    fn each_origin_pages_under_its_own_keys() {
+        let failed = Canary {
+            at: 100,
+            failure_category: "init_failed".into(),
+            ..Default::default()
+        };
+        let mut streak = Streak::default();
+        for at in [100, 100, 160, 220] {
+            streak.update(&Canary {
+                at,
+                ..failed.clone()
+            });
+        }
+        assert_eq!(streak.failures, 3, "a sample counts once");
+        let failed = Canary { at: 220, ..failed };
+        let extra = canary_conditions(
+            ".query-02",
+            &failed,
+            &streak,
+            Some(true),
+            "https://q.example",
+        );
+        let keys: Vec<_> = extra.iter().map(|c| c.key.as_str()).collect();
+        assert_eq!(
+            keys,
+            [
+                "canary_failures.query-02",
+                "canary_correctness.query-02",
+                "canary_latency.query-02"
+            ]
+        );
+        assert_eq!(extra[0].firing, Some(true));
+        assert_eq!(
+            extra[0].threshold,
+            "three consecutive failed one-minute probes"
+        );
+        assert!(extra[0]
+            .observed
+            .ends_with("init_failed at https://q.example"));
+        assert_eq!(extra[0].resource, "public_pir");
+        let primary = canary_conditions("", &failed, &streak, Some(true), "https://p.example");
+        assert_eq!(primary[0].key, "canary_failures");
+        assert!(primary[0].observed.ends_with("init_failed"));
+    }
+
+    /// An extra origin's open incident closes once the origin is removed, and
+    /// the primary's and other origins' incidents are left alone.
+    #[test]
+    fn a_removed_origin_retires_its_incidents() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(&dir.path().join("incidents.sqlite")).unwrap();
+        let failed = Canary {
+            at: 100,
+            failure_category: "init_failed".into(),
+            ..Default::default()
+        };
+        let streak = Streak {
+            last: 100,
+            failures: 3,
+            slow: 0,
+        };
+        let mut checks = canary_conditions("", &failed, &streak, Some(true), "https://p.example");
+        for name in ["q", "r"] {
+            checks.extend(canary_conditions(
+                &format!(".{name}"),
+                &failed,
+                &streak,
+                Some(true),
+                "https://x.example",
+            ));
+        }
+        store.evaluate(&checks, 100, false, "test", "").unwrap();
+        let configured = vec![("r".to_string(), "https://x.example".to_string())];
+        let retired = removed_origins(&store.incidents().unwrap(), &configured, 160);
+        let keys: Vec<_> = retired.iter().map(|c| c.key.as_str()).collect();
+        assert_eq!(
+            keys,
+            [
+                "canary_correctness.q",
+                "canary_failures.q",
+                "canary_latency.q"
+            ]
+        );
+        store.evaluate(&retired, 160, false, "test", "").unwrap();
+        let left: Vec<_> = store
+            .incidents()
+            .unwrap()
+            .into_iter()
+            .filter(|i| i.active)
+            .map(|i| i.condition.unwrap().key)
+            .collect();
+        assert_eq!(left, ["canary_failures", "canary_failures.r"]);
     }
 
     #[test]
