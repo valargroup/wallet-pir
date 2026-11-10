@@ -43,8 +43,8 @@ zakura-server-chain = { path = "../../shared/pir-chain", default-features = fals
 
 
 [dev-dependencies]
-# Receiver host regressions live in pir-query-server. Linking that host here
-# relinked this indexer on every host rebuild.
+# The shared router fixture calls the host's health router.
+pir-query-server = { path = "../../pir-query-server", features = ["receiver"] }
 rusqlite = { version = "0.37", features = ["bundled"] }
 tokio = { version = "1", features = ["full", "test-util"] }
 zakura-server-chain = { path = "../../shared/pir-chain", default-features = false, features = ["receiver", "testing-node"] }
