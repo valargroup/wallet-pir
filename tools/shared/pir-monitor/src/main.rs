@@ -130,12 +130,51 @@ fn canary_origins(text: &str) -> Result<Vec<(String, String)>> {
                     && names.insert(name.to_string()),
                 "invalid or duplicate canary origin name {name:?}"
             );
-            let url = reqwest::Url::parse(origin).context("invalid canary origin")?;
-            anyhow::ensure!(
-                matches!(url.scheme(), "http" | "https") && url.host_str().is_some(),
-                "invalid canary origin {origin:?}"
-            );
+            // The origin appears in public status and alerts, so it must be a bare
+            // origin, and errors name only the origin's name.
+            let url = reqwest::Url::parse(origin)
+                .ok()
+                .filter(|url| {
+                    matches!(url.scheme(), "http" | "https")
+                        && url.host_str().is_some()
+                        && url.username().is_empty()
+                        && url.password().is_none()
+                        && url.path() == "/"
+                        && url.query().is_none()
+                        && url.fragment().is_none()
+                })
+                .with_context(|| format!("canary origin {name:?} is not a bare http(s) origin"))?;
+            let origin = url.as_str().trim_end_matches('/');
             Ok((name.into(), origin.into()))
+        })
+        .collect()
+}
+
+/// The canary condition kinds. An extra origin's keys append `.<name>`.
+const CANARY_KINDS: [&str; 3] = ["canary_failures", "canary_correctness", "canary_latency"];
+
+/// Retires stored extra-origin incidents whose origin is no longer in
+/// `PIR_MONITOR_CANARY_ORIGINS`, so an open one closes rather than staying open
+/// with nothing left to evaluate it.
+fn removed_origins(
+    incidents: &[Incident],
+    configured: &[(String, String)],
+    now: u64,
+) -> Vec<Condition> {
+    incidents
+        .iter()
+        .filter_map(|incident| incident.condition.as_ref())
+        .filter(|c| {
+            c.key.split_once('.').is_some_and(|(kind, name)| {
+                CANARY_KINDS.contains(&kind) && !configured.iter().any(|(n, _)| n == name)
+            })
+        })
+        .map(|c| Condition {
+            retired: true,
+            firing: None,
+            observed: "origin removed from PIR_MONITOR_CANARY_ORIGINS".into(),
+            sample: now,
+            ..c.clone()
         })
         .collect()
 }
@@ -471,6 +510,7 @@ async fn main() -> Result<()> {
                     extra,
                 ));
             }
+            checks.extend(removed_origins(&snapshot.incidents, &extra_origins, now));
             for (severity, age) in [("warning", 60), ("critical", 300)] {
                 checks.push(condition(
                     &format!("apm_delivery_{severity}"),
@@ -564,11 +604,19 @@ mod tests {
         .unwrap();
         assert_eq!(parsed[0].0, "query-02");
         assert_eq!(parsed[1].1, "http://10.0.0.1:8090");
+        let error = canary_origins("a=https://user:secret@a.example")
+            .unwrap_err()
+            .to_string();
+        assert!(!error.contains("secret"), "{error}");
         for bad in [
             "https://no-name.example",
             "=https://a.example",
             "a.b=https://a.example",
             "a=ftp://a.example",
+            "a=https://user:secret@a.example",
+            "a=https://a.example/path",
+            "a=https://a.example/?q=1",
+            "a=https://a.example/#f",
             "a=https://a.example a=https://b.example",
         ] {
             assert!(canary_origins(bad).is_err(), "{bad}");
@@ -621,6 +669,55 @@ mod tests {
         let primary = canary_conditions("", &failed, &streak, Some(true), "https://p.example");
         assert_eq!(primary[0].key, "canary_failures");
         assert!(primary[0].observed.ends_with("init_failed"));
+    }
+
+    /// An extra origin's open incident closes once the origin is removed, and
+    /// the primary's and other origins' incidents are left alone.
+    #[test]
+    fn a_removed_origin_retires_its_incidents() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(&dir.path().join("incidents.sqlite")).unwrap();
+        let failed = Canary {
+            at: 100,
+            failure_category: "init_failed".into(),
+            ..Default::default()
+        };
+        let streak = Streak {
+            last: 100,
+            failures: 3,
+            slow: 0,
+        };
+        let mut checks = canary_conditions("", &failed, &streak, Some(true), "https://p.example");
+        for name in ["q", "r"] {
+            checks.extend(canary_conditions(
+                &format!(".{name}"),
+                &failed,
+                &streak,
+                Some(true),
+                "https://x.example",
+            ));
+        }
+        store.evaluate(&checks, 100, false, "test", "").unwrap();
+        let configured = vec![("r".to_string(), "https://x.example".to_string())];
+        let retired = removed_origins(&store.incidents().unwrap(), &configured, 160);
+        let keys: Vec<_> = retired.iter().map(|c| c.key.as_str()).collect();
+        assert_eq!(
+            keys,
+            [
+                "canary_correctness.q",
+                "canary_failures.q",
+                "canary_latency.q"
+            ]
+        );
+        store.evaluate(&retired, 160, false, "test", "").unwrap();
+        let left: Vec<_> = store
+            .incidents()
+            .unwrap()
+            .into_iter()
+            .filter(|i| i.active)
+            .map(|i| i.condition.unwrap().key)
+            .collect();
+        assert_eq!(left, ["canary_failures", "canary_failures.r"]);
     }
 
     #[test]
