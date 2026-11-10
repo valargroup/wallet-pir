@@ -227,12 +227,32 @@ class PirctlTest(unittest.TestCase):
         self.assertFalse(stale.exists(), 'an abandoned download is removed')
 
     def test_a_probe_archive_without_its_executable_is_refused(self):
+        for member in ('README', 'pir-probe/'):
+            with self.subTest(member=member):
+                self.temp.cleanup()
+                self.setUp()
+                self.refuse_probe_archive(member)
+
+    def test_a_cached_probe_directory_without_its_executable_is_replaced(self):
+        self.fleet.release(SHA_A)
+        self.assertEqual(self.fleet.pirctl(self.host, 'prepare', 'query', SHA_A).returncode, 0)
+        broken = self.host / 'opt/wallet-pir/pir-query-server/releases' / SHA_A[:12] / 'probe'
+        (broken / 'pir-probe').unlink()
+        result = self.fleet.pirctl(self.host, 'prepare', 'query', SHA_A)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((broken / 'pir-probe').is_file())
+        self.assertFalse((broken / 'probe').exists())
+
+    def refuse_probe_archive(self, member):
+        """Replaces the release's probe archive with one holding only `member`; prepare must refuse it."""
         self.fleet.release(SHA_A)
         directory = self.fleet.releases / ('build-' + SHA_A[:12])
         data = io.BytesIO()
         with tarfile.open(fileobj=data, mode='w:gz') as archive:
-            info = tarfile.TarInfo('README')
-            archive.addfile(info, io.BytesIO(b''))
+            info = tarfile.TarInfo(member.rstrip('/'))
+            if member.endswith('/'):
+                info.type, info.mode = tarfile.DIRTYPE, 0o755
+            archive.addfile(info, None if member.endswith('/') else io.BytesIO(b''))
         (directory / 'pir-probe.tar.gz').write_bytes(data.getvalue())
         sums = [line for line in (directory / 'SHA256SUMS').read_text().splitlines()
                 if not line.endswith(' pir-probe.tar.gz')]
