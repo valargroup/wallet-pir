@@ -119,8 +119,9 @@ fetch_probe() {
     fetch "$sha" pir-probe.tar.gz "$tmp"
     mkdir "$tmp/probe"
     tar -C "$tmp/probe" -xzf "$tmp/pir-probe.tar.gz"
-    # A deploy probes every public origin at once, so another call may have
-    # installed the same probe meanwhile; its copy is as good as this one.
+    [ -x "$tmp/probe/pir-probe" ] || die "build-$sha's pir-probe.tar.gz has no pir-probe executable"
+    # Where `flock` is missing, another call may have installed the same probe
+    # meanwhile; its copy is as good as this one.
     [ -x "$dir/probe/pir-probe" ] || mv "$tmp/probe" "$dir/probe" 2>/dev/null ||
       [ -x "$dir/probe/pir-probe" ] || die "could not install the build-$sha probe"
   fi
@@ -240,6 +241,9 @@ public() {
     (
       flock 8
       fetch_probe "$sha" "$OPT/pir-probe/releases/$sha"
+      # Pruning keeps the three most recently used, so a probe in use stays
+      # even when another call, such as a dry run, fetches a newer build.
+      touch "$OPT/pir-probe/releases/$sha"
       ls -1dt "$OPT/pir-probe/releases"/*/ | tail -n +4 | xargs rm -rf
     ) 8>"$OPT/pir-probe/.lock"
     probe=$OPT/pir-probe/releases/$sha/probe/pir-probe
