@@ -459,8 +459,9 @@ class FastBuildTests(unittest.TestCase):
     def test_enhance_subset_compiles_the_warm_dev_dependency_closure(self):
         builds = self._cargo_tests(['enhance-shared'])
         # Two harnesses. One rustc of Transparent plus Enhance and Status does
-        # not fit in the fast runner. The hint command names the same roots so
-        # shared crates resolve with the stable features and are not compiled again.
+        # not fit in the fast runner. The hint command links only the query host
+        # and the hint target; pinning the other roots' shared features keeps
+        # those crates warm without relinking their test binaries.
         self.assertEqual(len(builds), 2)
         stable, hint = builds
         stable_packages, bins, stable_tests, stable_features = self._command_parts(stable)
@@ -468,7 +469,7 @@ class FastBuildTests(unittest.TestCase):
         # Hosts stay named on the stable command. Taking them off for an Enhance
         # diff and putting them back afterwards rebuilds the closure.
         self.assertEqual(stable_packages, sorted(fast_build.FAST_FEATURE_ROOTS))
-        self.assertEqual(hint_packages, stable_packages)
+        self.assertEqual(hint_packages, ['pir-e2e-tests', 'pir-query-server'])
         self.assertIn('--lib', stable)
         self.assertIn('--lib', hint)
         self.assertNotIn('--bins', stable)
@@ -494,6 +495,7 @@ class FastBuildTests(unittest.TestCase):
             'zakura-server-chain/enhance',
             'zakura-server-chain/testing-node',
             'zakura-server-chain/transparent',
+            *fast_build.HINT_GRAPH_PINS,
         }))
         self.assertTrue(set(fast_build.TRANSPARENT_QUERY_ROLES).isdisjoint(hint_features))
         # status-publisher stays in the stable closure, so its fast object-access
@@ -566,10 +568,11 @@ class FastBuildTests(unittest.TestCase):
         self.assertEqual(tests, ['ci_hint', 'operator'])
         self.assertEqual(features, sorted({
             'pir-e2e-tests/enhance-fast', *fast_build.HINT_HOST_ROLES,
+            *fast_build.HINT_GRAPH_PINS,
             *(set(self._command_parts(builds[0])[3]) - set(fast_build.TRANSPARENT_QUERY_ROLES)),
         }))
         self.assertTrue(set(fast_build.TRANSPARENT_QUERY_ROLES).isdisjoint(features))
-        self.assertEqual(self._command_parts(builds[1])[0], self._command_parts(builds[0])[0])
+        self.assertEqual(self._command_parts(builds[1])[0], ['pir-e2e-tests', 'pir-query-server'])
         self.assertIn('--lib', builds[1])
 
     def test_a_shared_diff_leaves_host_product_features_off(self):

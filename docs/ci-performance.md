@@ -211,8 +211,9 @@ Transparent publication tests are part of this command, and
 the publisher host is not relinked with history and detail. History and detail
 are explicit features of the query host on this command. The in-process
 Enhance hint target and the query host's Enhance and Status roles stay on a
-second command that names the same roots without history and detail, so the
-two harnesses are not one rustc and shared crates are not compiled again.
+second command that links those two harnesses without history and detail.
+Shared features the other roots contribute are pinned there, so those roots
+are not linked again and shared crates are not compiled again.
 Publisher chain-node fixtures stay
 in qualification. The reader's receiver, status, and RocksDB targets stay in
 full qualification; the reader's Enhance and Transparent targets stay on the

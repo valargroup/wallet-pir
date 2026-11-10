@@ -10,9 +10,11 @@ pinned beside it on the same command. The host's dev-dependency does not force
 those roles on, so the second command can leave them off. Moving the hosts onto
 another command changes that unification and rebuilds the closure. The
 in-process Enhance hint target stays on that second command with the query
-host's Enhance and Status roles only. Transparent history and detail stay on
-the first command, so one rustc does not build both stacks. Receiver, status,
-and RocksDB chain-node targets stay in qualification.
+host's Enhance and Status roles only. That command links those two harnesses
+and pins the shared features the other roots contribute, instead of relinking
+every root under the swapped host features. Transparent history and detail
+stay on the first command, so one rustc does not build both stacks. Receiver,
+status, and RocksDB chain-node targets stay in qualification.
 The Enhance and Transparent reader targets stay on this command: dropping
 `testing-node` rebuilds every consumer. Campaign targets are never
 selected. Test programs retain their package directory and Cargo environment.
@@ -248,6 +250,17 @@ HOST_PACKAGES = frozenset({'pir-publisher', 'pir-query-server', 'pir-e2e-tests'}
 TRANSPARENT_QUERY_ROLES = ('pir-query-server/transparent-detail',
                            'pir-query-server/transparent-history')
 HINT_HOST_ROLES = ('pir-query-server/enhance', 'pir-query-server/status')
+# The hint command does not relink the other stable roots. These are the
+# dev-dependency and normal-dependency features those roots contribute to the
+# shared graph on the stable command. Pinning them keeps that graph warm:
+# `receiver` comes from the publisher and receiver-indexer dev edges,
+# `status` from the Status publisher's chain dependency, and publication
+# test helpers from the publisher dev edges.
+HINT_GRAPH_PINS = (
+    'pir-publication/test-support',
+    'zakura-server-chain/receiver',
+    'zakura-server-chain/status',
+)
 
 PRODUCT_HOST_FEATURES = {
     'enhance': 'pir-e2e-tests/enhance-fast',
@@ -585,11 +598,13 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
                         and feature not in TRANSPARENT_QUERY_ROLES)
         features.update(HINT_HOST_ROLES)
         features.update(stable['features'] - set(TRANSPARENT_QUERY_ROLES))
-        # Naming only the two hosts drops leaf features the stable roots
-        # unify in and rebuilds shared crates. Naming the same roots with the
-        # stable features, minus the Transparent roles, resolves those crates
-        # as the stable command did. Only the query-host harness compiles again.
-        hint_packages = sorted(stable['names'] | {'pir-e2e-tests', 'pir-query-server'})
+        features.update(HINT_GRAPH_PINS)
+        # Link only the two harnesses this feature set exists for. Naming every
+        # stable root here rebuilt transparent-publisher, status-publisher,
+        # receiver-indexer, transparent-tools and enhance-publisher, because
+        # the swapped host features changed their unit fingerprints. The pins
+        # above keep the shared crates on the stable feature set.
+        hint_packages = ['pir-e2e-tests', 'pir-query-server']
         commands.append(['cargo', 'test', '--locked', '--profile', 'release-fast', '--no-run', *options,
                          *[arg for name in hint_packages for arg in ('-p', name)], '--lib',
                          '--test', 'ci_hint', '--test', 'operator',
