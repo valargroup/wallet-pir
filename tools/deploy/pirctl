@@ -89,7 +89,9 @@ prepare() {
   sha=$(short "$1") dir=$(release_dir "$sha")
   if [ ! -x "$dir/$C_ASSET" ]; then
     mkdir -p "$OPT" "$(dirname "$dir")"
-    rm -rf "$OPT"/.download.*
+    # Other calls (a public probe, a dry run) may be downloading right now, so
+    # only clean up downloads abandoned long ago.
+    find "$OPT" -maxdepth 1 -name '.download.*' -mmin +60 -exec rm -rf {} + 2>/dev/null || true
     tmp=$(mktemp -d "$OPT/.download.XXXXXX")
     fetch "$sha" "$C_ASSET.tar.gz" "$tmp"
     mkdir "$tmp/unpacked"

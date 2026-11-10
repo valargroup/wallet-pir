@@ -213,6 +213,19 @@ class PirctlTest(unittest.TestCase):
         self.assertIn('probe passed', result.stdout)
         self.assertIn('--products enhance,status', (self.host / 'probes.log').read_text())
 
+    def test_prepare_leaves_another_calls_download_alone(self):
+        opt = self.host / 'opt/wallet-pir'
+        fresh, stale = opt / '.download.fresh', opt / '.download.stale'
+        for directory in (fresh, stale):
+            directory.mkdir(parents=True)
+        old = time.time() - 2 * 3600
+        os.utime(stale, (old, old))
+        self.fleet.release(SHA_A)
+        result = self.fleet.pirctl(self.host, 'prepare', 'query', SHA_A)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(fresh.is_dir(), 'a download in progress survives')
+        self.assertFalse(stale.exists(), 'an abandoned download is removed')
+
     def test_redeploying_the_running_release_does_not_restart(self):
         self.fleet.release(SHA_A)
         self.assertEqual(self.deploy(SHA_A).returncode, 0)
