@@ -13,8 +13,10 @@ in-process Enhance hint target stays on that second command with the query
 host's Enhance and Status roles only. That command links those two harnesses
 and pins the shared features the other roots contribute, instead of relinking
 every root under the swapped host features. Transparent history and detail
-stay on the first command, so one rustc does not build both stacks. Receiver,
-status, and RocksDB chain-node targets stay in qualification.
+stay on the first command, so one rustc does not build both stacks. That second
+command replaces the shared query-server executable, so operator tests built by
+the first command keep the binary it produced. Receiver, status, and
+RocksDB chain-node targets stay in qualification.
 The Enhance and Transparent reader targets stay on this command: dropping
 `testing-node` rebuilds every consumer. Campaign targets are never
 selected. Test programs retain their package directory and Cargo environment.
@@ -29,6 +31,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import tempfile
 import tomllib
@@ -452,6 +455,34 @@ def bounded_programs(program, names):
                  case_count=len(cases)) for cases in partitions]
 
 
+def preserve_query_server():
+    """Copy the stable query host before a later command replaces it.
+
+    Cargo writes one `pir-query-server` path per profile. The hint command
+    builds that host again without history and detail, and operator tests from
+    the stable command spawn whatever file is there.
+    """
+    target = Path(os.environ.get('CARGO_TARGET_DIR', ROOT / 'target'))
+    binary = target / 'release-fast' / 'pir-query-server'
+    if not binary.is_file():
+        raise FileNotFoundError(f'stable query server binary is missing: {binary}')
+    # Keep the copy on the target filesystem. A TMPDIR noexec mount would make
+    # the preserved host unusable, and this directory is not a Cargo output.
+    directory = Path(tempfile.mkdtemp(prefix='.query-server-stable-', dir=binary.parent))
+    copy = directory / binary.name
+    shutil.copy2(binary, copy)
+    return copy
+
+
+def query_server_bin_env(package, target_name, command_index, preserved):
+    """Environment that keeps stable operator tests on the preserved host."""
+    if preserved is None or command_index != 0:
+        return None
+    if package != 'pir-query-server' or target_name != 'operator':
+        return None
+    return {'WALLET_PIR_QUERY_SERVER_BIN': str(preserved)}
+
+
 def _compile_command(group, options):
     """One cargo test --no-run for a feature-stable package group."""
     if not group['names'] or (not group['kinds'] and not group['integrations']):
@@ -615,11 +646,29 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
     env = {key: value for key, value in (os.environ if environment is None else environment).items() if not key.startswith('QUALIFY_')}
     run(['cargo', 'fmt', '--all', '--check'], env=env, stage='format')
     artifacts = []
-    for command in commands:
-        artifacts.extend(run(command, env=env, stage='compile:fast', collect_tests=not compile_only,
-                             test_details=True) or [])
-    if compile_only:
-        return
+    preserved = None
+    try:
+        for index, command in enumerate(commands):
+            # Snapshot before the hint command replaces the shared executable.
+            if index and preserved is None and not compile_only:
+                preserved = preserve_query_server()
+            batch = run(command, env=env, stage='compile:fast', collect_tests=not compile_only,
+                        test_details=True) or []
+            for artifact in batch:
+                artifact['command_index'] = index
+            artifacts.extend(batch)
+        if compile_only:
+            return
+        _execute_programs(
+            artifacts, packages, run_packages, slow, expected_integrations, expected_units,
+            preserved, env, jobs, case_log, enforce_budget, before_tests)
+    finally:
+        if preserved is not None:
+            shutil.rmtree(preserved.parent, ignore_errors=True)
+
+
+def _execute_programs(artifacts, packages, run_packages, slow, expected_integrations, expected_units,
+                      preserved, env, jobs, case_log, enforce_budget, before_tests):
     programs = []
     actual_integrations, actual_units = set(), set()
     discovered_units = {name: set() for name in run_packages}
@@ -682,6 +731,10 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
                              heavy=not integration and not repeated and memory_heavy(name, target['kind']),
                              case_count=len(names),
                              args=[arg for case in exclusions for arg in ('--skip', case)])
+        bin_env = query_server_bin_env(
+            name, target['name'], artifact.get('command_index', 0), preserved)
+        if bin_env:
+            program['env'] = bin_env
         if repeated:
             parts = [dict(part, args=[*part['args'], '--exact', *sorted(names)])
                      if '--exact' not in part['args'] else part

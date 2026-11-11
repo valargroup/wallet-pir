@@ -7,11 +7,26 @@ use std::process::Command;
 mod contract_tls;
 
 fn binary() -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_pir-query-server"));
+    // Fast feedback compiles this harness twice. The later command replaces
+    // the shared executable, so the stable run names the binary it was built
+    // against.
+    let path = std::env::var_os("WALLET_PIR_QUERY_SERVER_BIN");
+    binary_at(path.as_deref())
+}
+
+fn binary_at(path: Option<&std::ffi::OsStr>) -> Command {
+    let mut command = Command::new(path.unwrap_or(env!("CARGO_BIN_EXE_pir-query-server").as_ref()));
     command
         .env_remove("ENHANCE_MATVEC_BACKEND")
         .env_remove("ENHANCE_CUDA_DEVICE");
     command
+}
+
+#[test]
+fn query_server_binary_honors_an_override() {
+    let path = std::env::temp_dir().join("pir-query-server-override");
+    let command = binary_at(Some(path.as_os_str()));
+    assert_eq!(command.get_program(), path.as_os_str());
 }
 
 /// Exercise the real binary through a real TLS discovery endpoint while the

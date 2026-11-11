@@ -597,6 +597,40 @@ class FastBuildTests(unittest.TestCase):
             self.execute()
         self.assertEqual(self.calls, [])
 
+    def test_stable_operator_tests_keep_the_query_server_from_before_the_hint_relink(self):
+        root = Path(self.directory.name)
+        target = root / 'target' / 'release-fast'
+        target.mkdir(parents=True)
+        binary = target / 'pir-query-server'
+        binary.write_bytes(b'stable-host')
+        binary.chmod(0o755)
+        with patch.dict(os.environ, CARGO_TARGET_DIR=str(root / 'target')):
+            preserved = fast_build.preserve_query_server()
+        self.addCleanup(lambda: __import__('shutil').rmtree(preserved.parent, ignore_errors=True))
+        binary.write_bytes(b'hint-host')
+        self.assertEqual(preserved.read_bytes(), b'stable-host')
+        self.assertNotEqual(preserved, binary)
+        stable = fast_build.query_server_bin_env('pir-query-server', 'operator', 0, preserved)
+        hint = fast_build.query_server_bin_env('pir-query-server', 'operator', 1, preserved)
+        other = fast_build.query_server_bin_env('pir-query-server', 'ci_smoke', 0, preserved)
+        self.assertEqual(stable, {'WALLET_PIR_QUERY_SERVER_BIN': str(preserved)})
+        self.assertIsNone(hint)
+        self.assertIsNone(other)
+        self.assertIsNone(fast_build.query_server_bin_env('pir-query-server', 'operator', 0, None))
+
+    def test_program_env_reaches_the_spawned_test(self):
+        import unit_tests
+        marker = str(Path(self.directory.name) / 'preserved-host')
+        program = dict(
+            executable=sys.executable, directory=str(ROOT), package='pir-query-server',
+            version='0', integration=False,
+            args=['-c',
+                  'import os,sys; sys.exit(0 if os.environ.get("WALLET_PIR_QUERY_SERVER_BIN")==sys.argv[1] else 1)',
+                  marker],
+            env={'WALLET_PIR_QUERY_SERVER_BIN': marker})
+        with redirect_stdout(io.StringIO()):
+            unit_tests.execute([program], 1)
+
 
 class DiffProductTests(unittest.TestCase):
     def test_a_diff_enables_only_the_products_it_touches(self):

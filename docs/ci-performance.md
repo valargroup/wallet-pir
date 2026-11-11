@@ -85,7 +85,8 @@ because that links the same library again. The query host's dev-dependency does
 not force those roles. Fast diagnostic binaries leave `transparent-tools/query-host`
 off for the same reason. The in-process Enhance hint target stays on a second
 command with the query host's Enhance and Status roles only, so one rustc does
-not build the Transparent stack beside them.
+not build the Transparent stack beside them. Operator tests from the first
+command keep that command's query-server binary.
 The chain reader stays on that command with its Enhance and Transparent targets. Receiver, status, and RocksDB chain-node targets stay in qualification so they do not rebuild the shared graph.
 Executables
 then run with at most three programs active and one case per program. The fast
@@ -213,7 +214,9 @@ are explicit features of the query host on this command. The in-process
 Enhance hint target and the query host's Enhance and Status roles stay on a
 second command that links those two harnesses without history and detail.
 Shared features the other roots contribute are pinned there, so those roots
-are not linked again and shared crates are not compiled again.
+are not linked again and shared crates are not compiled again. The hint
+command replaces the shared query-server executable; operator tests from the
+stable command run the binary that command produced.
 Publisher chain-node fixtures stay
 in qualification. The reader's receiver, status, and RocksDB targets stay in
 full qualification; the reader's Enhance and Transparent targets stay on the

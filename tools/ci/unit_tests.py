@@ -83,6 +83,8 @@ def execute(programs, jobs, *, budget=False, test_threads=1, heavy_slots=None):
             env.setdefault('TRANSPARENT_BUILD_THREADS', str(min(cpus, 4)))
         key = 'DYLD_FALLBACK_LIBRARY_PATH' if sys.platform == 'darwin' else 'LD_LIBRARY_PATH'
         env[key] = os.pathsep.join([str(Path(binary).parent), library_directory, env.get(key, '')])
+        # A preserved host binary has to outrank the path baked into the harness.
+        env.update(program.get('env') or {})
         if budget:
             from test_budget import execute as timed_execute
             # Keep Unix socket paths below macOS's 104-byte address limit even

@@ -71,6 +71,8 @@ stay on that command for every diff. The in-process Enhance hint target stays
 on a second command with the query host's Enhance and Status roles only. That
 command links those two harnesses and pins the shared features the other roots
 contribute, instead of relinking every root under the swapped host features.
+That command replaces the shared query-server executable, so operator tests
+from the stable command run the binary that command produced.
 Shared crates stay warm and one rustc does not build both stacks.
 The stable feature set does not change with the diff. Moving the hosts onto
 another command rebuilds the closure. Publisher chain-node fixtures stay in
