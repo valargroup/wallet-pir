@@ -592,9 +592,99 @@ async fn a_slow_upload_times_out_without_holding_a_place() {
         "the timed-out request no longer counts as waiting"
     );
     assert_eq!(
+        metrics.server_seconds[0].count(),
+        0,
+        "a body that never arrived has no server time"
+    );
+    assert_eq!(
         transparent_shared::runtime::metrics::Metrics::get(&metrics.body_bytes_in_flight),
         0
     );
+}
+
+/// A body that arrives whole, but only after `delay`: a slow client link.
+struct Delayed {
+    sleep: std::pin::Pin<Box<tokio::time::Sleep>>,
+    body: Option<axum::body::Bytes>,
+}
+
+impl http_body::Body for Delayed {
+    type Data = axum::body::Bytes;
+    type Error = std::convert::Infallible;
+    fn poll_frame(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
+        use std::future::Future as _;
+        std::task::ready!(self.sleep.as_mut().poll(cx));
+        std::task::Poll::Ready(
+            self.body
+                .take()
+                .map(|body| Ok(http_body::Frame::data(body))),
+        )
+    }
+}
+
+/// The `le="1"` bucket and the count of a query endpoint's server time, read
+/// from the worker's own scrape.
+async fn fast_server_samples(state: &ServiceState) -> (u64, u64) {
+    let response = router(state.clone())
+        .oneshot(Request::get("/metrics").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let text = String::from_utf8(
+        axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    let value = |prefix: &str, suffix: &str| {
+        text.lines()
+            .find(|line| {
+                line.starts_with(prefix)
+                    && line.contains("endpoint=\"query_directory\"")
+                    && line.contains(suffix)
+            })
+            .and_then(|line| line.rsplit(' ').next()?.parse().ok())
+            .expect("server time is rendered")
+    };
+    (
+        value("transparent_shard_server_seconds_bucket", "le=\"1\""),
+        value("transparent_shard_server_seconds_count", ""),
+    )
+}
+
+/// A slow upload that completes is still a fast answer from the server, so the
+/// server time APM alerts on leaves the upload out.
+#[tokio::test]
+async fn server_time_starts_once_the_body_is_in() {
+    let f = fixture();
+    let revision = revision_of(&f, 0);
+    let path = format!("/v2/shards/0/revisions/{revision}/query/directory");
+    let body = padded_body(&revision, TableRef::Directory);
+    // Warm the runtime, so the slow query below does no build of its own.
+    let (status, _) = post(&f.state, &path, body.clone()).await;
+    assert_eq!(status, StatusCode::OK);
+    let (fast, count) = fast_server_samples(&f.state).await;
+    let started = std::time::Instant::now();
+    let response = router(f.state.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(&path)
+                .header("content-length", body.len().to_string())
+                .body(Body::new(Delayed {
+                    sleep: Box::pin(tokio::time::sleep(std::time::Duration::from_millis(1500))),
+                    body: Some(body.into()),
+                }))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(started.elapsed() >= std::time::Duration::from_millis(1500));
+    assert_eq!(fast_server_samples(&f.state).await, (fast + 1, count + 1));
 }
 
 /// The digest the map names for `shard_id`, read from the published map on
