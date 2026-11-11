@@ -2,6 +2,18 @@
 
 ## 0.0.1 — Unreleased
 
+- A reorganization that replaces only blocks above the current Enhance
+  publication's anchor no longer leaves Enhance withdrawn until a replacement is
+  built. The publisher still withdraws first, so earlier leases stay void, then
+  serves the same publication again once it passes the restart checks, including
+  a fresh canonical-anchor check. A build that the withdrawal made unpublishable
+  stops at its next step instead of running to the end. Since mainnet blocks sped
+  up on 2026-11-06, about ten reorganizations a day each refused wallet `init` for
+  a median 35–50 s, while the current publication sat 1–7 blocks below the new
+  tip, so a shallow one usually leaves its anchor canonical. A reorganization that
+  replaces the anchor block, or rewinds sealed history, still waits for the
+  replacement.
+
 - APM has an `assignment` alert family, in shadow until
   `PIR_APM_ASSIGNMENT_ALERT_MODE=active`. It warns as soon as the publication the
   next Enhance domain will create cannot be served by a fresh router and its

@@ -28,7 +28,8 @@ struct PublisherRuntimeState {
     error: Option<String>,
     last_advancement: Option<std::time::SystemTime>,
     consecutive_failures: u64,
-    /// Whether [`EnhancePublisher::restore`] may still serve the previous publication.
+    /// Whether [`EnhancePublisher::restore`] may serve the withdrawn publication
+    /// again: set on open and by a rewind that keeps all of its records.
     restorable: bool,
 }
 
@@ -75,6 +76,9 @@ impl EnhancePublisher {
 
     /// Durable revocation precedes journal rewind. Repeated delivery of the
     /// same unfinished rewind preserves its epoch and revoked-session set.
+    /// A rewind that raises no fence and keeps every record of the current
+    /// publication lets [`Self::restore`] serve it again once its anchor is
+    /// checked canonical; the rewind may have replaced only blocks above it.
     pub fn revoke_after(&self, records: u64) -> Result<(), String> {
         let mut state = self.state.lock().unwrap();
         let mut next = state.durable.clone();
@@ -109,10 +113,17 @@ impl EnhancePublisher {
             .sealed
             .retain(|id, _| *id < first_affected_shard);
         self.save_state(&mut state, next)?;
+        let kept = self
+            .distribution
+            .durable_current()
+            .manifest
+            .is_some_and(|manifest| manifest.coverage.records <= records);
         self.distribution.withdraw(&Revocation {
             recovery_epoch: state.durable.recovery.epoch,
             sessions: state.durable.recovery.revoked.clone(),
-        })
+        })?;
+        state.restorable = kept && !rewinds_sealed_history;
+        Ok(())
     }
     /// Reserve preparation ownership for the host engine; no preparation runs here.
     pub(crate) fn publication(

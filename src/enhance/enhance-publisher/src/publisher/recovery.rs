@@ -135,14 +135,14 @@ impl EnhancePublisher {
         .and_then(|_| File::open(&self.root)?.sync_all())
         .map_err(|e| e.to_string())
     }
-    /// Serve again the publication that was current when this publisher last stopped,
-    /// once it is checked as a fresh publication would be. Opening withdrew it, so
-    /// leases from the previous process are already void. It returns to service only
+    /// Serve again the publication that opening or a shallow rewind
+    /// ([`Self::revoke_after`]) withdrew, once it is checked as a fresh publication
+    /// would be. That withdrawal already voided its leases. It returns to service only
     /// when no recovery fence was raised and none of its sessions was revoked since it
     /// was published, its inventory still matches it, every object it names hashes to
     /// its recorded digest and its anchor block is still canonical; the commit then
-    /// fails if anything changed authority meanwhile. Only the first call may restore,
-    /// and none after [`Self::forgo_restore`]. Returns whether it was restored.
+    /// fails if anything changed authority meanwhile. One call may restore per such
+    /// withdrawal, and none after [`Self::forgo_restore`]. Returns whether it was restored.
     pub async fn restore<E: pir_pipeline::publisher::PublisherExecutor>(
         &self,
         executor: E,
