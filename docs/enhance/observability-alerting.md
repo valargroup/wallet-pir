@@ -825,11 +825,12 @@ invalidated by reorg` until the next publication, and wallets retry them. Each
 worker counts those in `transparent_shard_reorg_unavailable_total`, and the
 edge's error ratio subtracts the service's total in the window. A query whose
 body misses the upload deadline gets 408 after waiting out the deadline, which
-measures the client's link. Up to `transparent_shard_upload_timeouts_total`
-such samples, bounded by each query endpoint's 4xx count, leave that
-endpoint's p99, taken from the lowest buckets above its budget. Long
-withdrawals still page through
-`withdrawn`, and timeouts stay visible in the worker's counters.
+measures the client's link. Workers count those per query endpoint in
+`transparent_shard_upload_timeouts_total{endpoint}`, and that many samples
+leave the endpoint's p99, taken from the lowest buckets above its budget.
+Workers keep serving `/metrics` while invalidated, so the refusals are
+observed. Long withdrawals still page through `withdrawn`, and timeouts stay
+visible in the worker's counters.
 
 Workers poll for publications and skip any replaced meanwhile, so in a burst of
 blocks they trail the newest map. The readiness and recent replica rules count a

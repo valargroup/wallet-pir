@@ -221,8 +221,9 @@ pub struct Metrics {
     pub queue_rejections: AtomicU64,
     /// Queries refused because the body budget could not hold them.
     pub body_budget_rejections: AtomicU64,
-    /// Queries whose body did not arrive within the upload deadline.
-    pub upload_timeouts: AtomicU64,
+    /// Queries whose body did not arrive within the upload deadline, by
+    /// [`QUERY_ENDPOINTS`] label, so APM can excuse each endpoint's own.
+    pub upload_timeouts: [AtomicU64; 3],
     /// Refusals sent before the body was read whose body could not be
     /// discarded in time; the connection closed under the upload.
     pub refusals_unread: AtomicU64,
@@ -286,7 +287,7 @@ impl Default for Metrics {
             query_length_rejections: AtomicU64::new(0),
             queue_rejections: AtomicU64::new(0),
             body_budget_rejections: AtomicU64::new(0),
-            upload_timeouts: AtomicU64::new(0),
+            upload_timeouts: Default::default(),
             refusals_unread: AtomicU64::new(0),
             reorg_unavailable: AtomicU64::new(0),
             deadline_exceeded: AtomicU64::new(0),
@@ -329,6 +330,9 @@ impl Snapshot {
             .join(",")
     }
 }
+
+/// The HTTP endpoint labels of query routes, in `Metrics::upload_timeouts` order.
+pub const QUERY_ENDPOINTS: [&str; 3] = ["query_directory", "query_pages", "query_other"];
 
 impl Metrics {
     pub fn incr(counter: &AtomicU64) {
@@ -564,12 +568,6 @@ impl Metrics {
             Self::get(&self.body_budget_rejections),
         );
         line(
-            "transparent_shard_upload_timeouts_total",
-            "counter",
-            "Queries whose body did not arrive within the upload deadline.",
-            Self::get(&self.upload_timeouts),
-        );
-        line(
             "transparent_shard_refusals_unread_total",
             "counter",
             "Early refusals whose request body could not be discarded before closing.",
@@ -676,6 +674,18 @@ impl Metrics {
                     max,
                 );
             }
+        }
+        out.push_str("# HELP transparent_shard_upload_timeouts_total Queries whose body did not arrive within the upload deadline.\n# TYPE transparent_shard_upload_timeouts_total counter\n");
+        for (counter, endpoint) in self.upload_timeouts.iter().zip(QUERY_ENDPOINTS) {
+            let scoped = if labels.is_empty() {
+                format!("endpoint=\"{endpoint}\"")
+            } else {
+                format!("{labels},endpoint=\"{endpoint}\"")
+            };
+            out.push_str(&format!(
+                "transparent_shard_upload_timeouts_total{{{scoped}}} {}\n",
+                Self::get(counter)
+            ));
         }
         if let Some((millis, start)) = snapshot.process_cpu {
             out.push_str(&format!("# TYPE transparent_shard_process_cpu_seconds_total counter\ntransparent_shard_process_cpu_seconds_total{braces} {}\n# TYPE transparent_shard_process_start_time_seconds gauge\ntransparent_shard_process_start_time_seconds{braces} {start}\n", millis as f64 / 1000.0));

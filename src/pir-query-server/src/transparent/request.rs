@@ -273,22 +273,27 @@ pub async fn answer_query(worker: Worker<'_>, request: Request, query: PreparedQ
         }
     };
     let upload_deadline = worker.admission.config().upload_deadline;
-    let body =
-        match pir_control::admission::read_body(request.into_body(), expected, upload_deadline)
-            .await
-        {
-            Ok(body) => body,
-            Err(pir_control::admission::BodyError::Read(error)) => {
-                Metrics::incr(&metrics.query_errors);
-                return RequestError::Bad(format!("reading the query body: {error}"))
-                    .into_response(map_digest);
-            }
-            Err(pir_control::admission::BodyError::Timeout) => {
-                Metrics::incr(&metrics.upload_timeouts);
-                Metrics::incr(&metrics.query_errors);
-                return RequestError::UploadTimeout.into_response(map_digest);
-            }
-        };
+    let (parts, body) = request.into_parts();
+    let body = match pir_control::admission::read_body(body, expected, upload_deadline).await {
+        Ok(body) => body,
+        Err(pir_control::admission::BodyError::Read(error)) => {
+            Metrics::incr(&metrics.query_errors);
+            return RequestError::Bad(format!("reading the query body: {error}"))
+                .into_response(map_digest);
+        }
+        Err(pir_control::admission::BodyError::Timeout) => {
+            // The HTTP observer's label for this path, so the latency it
+            // records for the same request can be excused per endpoint.
+            let endpoint = transparent_shared::http::endpoint(parts.uri.path());
+            let index = transparent_shared::runtime::metrics::QUERY_ENDPOINTS
+                .iter()
+                .position(|e| Some(*e) == endpoint)
+                .unwrap_or(transparent_shared::runtime::metrics::QUERY_ENDPOINTS.len() - 1);
+            Metrics::incr(&metrics.upload_timeouts[index]);
+            Metrics::incr(&metrics.query_errors);
+            return RequestError::UploadTimeout.into_response(map_digest);
+        }
+    };
     // A declared length is a claim; the bytes that arrived are the fact.
     if body.len() != expected {
         Metrics::incr(&metrics.query_length_rejections);

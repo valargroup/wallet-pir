@@ -618,8 +618,7 @@ fn service_rules(a: &mut Adder, svc: &ServiceView, view: &View, now: u64, p: &Po
 /// Wallets retry the edge's reorg refusals (`reorg_refusals`, the service's
 /// workers' count in this window), so those 503s are not server errors. A
 /// query whose body missed the upload deadline measures the client's link,
-/// so up to the source's upload timeouts, bounded by each query endpoint's
-/// 4xx answers, leave that endpoint's latency.
+/// so each endpoint's own upload timeouts leave its latency.
 fn http_rules(a: &mut Adder, name: &str, s: &Source, now: u64, reorg_refusals: f64) {
     let fresh = s.fresh(now);
     let window = s.window(now);
@@ -677,12 +676,6 @@ fn http_rules(a: &mut Adder, name: &str, s: &Source, now: u64, reorg_refusals: f
         observed,
         "5xx >5% with at least 10 responses in 5m",
     );
-    let mut timeouts = window
-        .values
-        .counters
-        .get("transparent_shard_upload_timeouts_total")
-        .copied()
-        .unwrap_or(0.);
     for (key, h) in &window.values.histograms {
         if !key.starts_with("pir_http_duration_seconds|") {
             continue;
@@ -693,19 +686,23 @@ fn http_rules(a: &mut Adder, name: &str, s: &Source, now: u64, reorg_refusals: f
         } else {
             2.
         };
-        let adjusted;
-        let h = if endpoint.starts_with("query") && timeouts > 0. && h.valid() {
-            let refused = window
+        let timeouts = if endpoint.starts_with("query") {
+            window
                 .values
                 .counters
                 .get(&format!(
-                    "pir_http_responses_total|code=4xx,endpoint={endpoint}"
+                    "transparent_shard_upload_timeouts_total|endpoint={endpoint}"
                 ))
                 .copied()
-                .unwrap_or(0.);
+                .unwrap_or(0.)
+        } else {
+            0.
+        };
+        let adjusted;
+        let h = if timeouts > 0. && h.valid() {
             // A timed-out upload waited out the deadline, past the budget, so
             // it leaves the lowest buckets above the budget first.
-            let mut left = timeouts.min(refused);
+            let mut left = timeouts;
             let mut counts = h.counts.clone();
             let mut removed = 0.;
             if let Some(first) = h.bounds.iter().position(|b| b.is_none_or(|b| b > budget)) {
@@ -718,7 +715,6 @@ fn http_rules(a: &mut Adder, name: &str, s: &Source, now: u64, reorg_refusals: f
                     *count -= removed;
                 }
             }
-            timeouts -= removed;
             adjusted = super::data::Histogram {
                 bounds: h.bounds.clone(),
                 counts,
@@ -1095,8 +1091,9 @@ mod tests {
             })
             .collect();
         let h = Histogram { bounds, counts };
-        let archive = |timeouts: f64, refused: f64| {
+        let archive = |timed_out: &str| {
             let mut s = source("transparent", "archive-owner", 100, &[]);
+            let timeouts = format!("transparent_shard_upload_timeouts_total|endpoint={timed_out}");
             s.recent.push_back(point(
                 &[
                     (
@@ -1105,9 +1102,9 @@ mod tests {
                     ),
                     (
                         "pir_http_responses_total|code=4xx,endpoint=query_directory",
-                        refused,
+                        1.,
                     ),
-                    ("transparent_shard_upload_timeouts_total", timeouts),
+                    (&timeouts, 1.),
                 ],
                 &[(key, h.clone())],
             ));
@@ -1117,12 +1114,10 @@ mod tests {
             )
         };
         let latency = "latency_archive_query_directory";
-        let f = conditions(&archive(0., 1.), 110, &Policy::default());
-        assert_eq!(firing(&f, "transparent", latency), Some(true));
-        let f = conditions(&archive(1., 1.), 110, &Policy::default());
+        let f = conditions(&archive("query_directory"), 110, &Policy::default());
         assert_eq!(firing(&f, "transparent", latency), Some(false));
-        // A timeout this endpoint did not answer cannot excuse its slow query.
-        let f = conditions(&archive(1., 0.), 110, &Policy::default());
+        // Another endpoint's timeout cannot excuse this endpoint's slow query.
+        let f = conditions(&archive("query_pages"), 110, &Policy::default());
         assert_eq!(firing(&f, "transparent", latency), Some(true));
     }
 

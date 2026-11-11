@@ -31,7 +31,7 @@ pub fn shard_operation(path: &str) -> Option<&str> {
 // mappings are product policy; the shared observer receives only fixed labels.
 // Canonical and legacy paths of one operation share its label.
 /// Only a fixed endpoint category survives classification. No dynamic path segment is retained.
-fn endpoint(path: &str) -> Option<&'static str> {
+pub fn endpoint(path: &str) -> Option<&'static str> {
     let operation = shard_operation(path).unwrap_or_default();
     if operation == "/shards/init" {
         Some("init")
