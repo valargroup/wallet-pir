@@ -360,6 +360,7 @@ async fn archive_readiness_and_setup_are_checked_over_real_http() {
         );
     }
     mode.store(0, Ordering::SeqCst);
+    let timed = state.metrics().server_seconds[0].count();
     assert_eq!(
         client
             .post(&query)
@@ -369,6 +370,11 @@ async fn archive_readiness_and_setup_are_checked_over_real_http() {
             .unwrap()
             .status(),
         200
+    );
+    assert_eq!(
+        state.metrics().server_seconds[0].count(),
+        timed + 1,
+        "a forwarded query is this worker's server time too"
     );
     // Both polling to EOF and dropping the front response retain ownership.
     use http_body::Body as _;

@@ -492,6 +492,7 @@ impl Archive {
             .config()
             .upload_deadline
             .min(pending.remaining());
+        let endpoint = transparent_shared::runtime::metrics::query_endpoint(request.uri().path());
         let body =
             match pir_control::admission::read_body(request.into_body(), expected, upload).await {
                 Ok(body) if body.len() == expected => body,
@@ -503,6 +504,9 @@ impl Archive {
                         .into_response(worker.map_digest)
                 }
             };
+        // Forwarding is this worker's answer too, so it counts as server time
+        // (see `Metrics::server_seconds`).
+        let _server = endpoint.map(|index| worker.metrics.server_seconds[index].timer());
         let binding = query_binding(digest, &table.name());
         if body.get(..8) != Some(binding.as_slice()) {
             return RequestError::Bad("query binding mismatch".into())

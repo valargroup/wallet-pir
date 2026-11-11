@@ -815,7 +815,7 @@ txid display controller.
 | `coverage_<source>` | both | warning | source unavailable | 45 s |
 | `http_coverage_<source>` | history | warning | publisher or worker lacks HTTP observation version 1 | 45 s |
 | `http_errors_<source>` | both | warning | 5xx > 5% with ≥ 10 responses in 5 min; the edge excludes reorg refusals | – |
-| `latency_<source>_<endpoint>` | both | warning | p99 > 2 s (metadata) or > 5 s (setup, query), ≥ 20 samples; query p99 excludes upload timeouts | 120 s |
+| `latency_<source>_<endpoint>` | both | warning | p99 > 2 s (metadata) or > 5 s (setup, query), ≥ 20 samples; Transparent query p99 is server time, after the upload | 120 s |
 | `memory_<source>`, `disk_<source>` | both | warning | host memory < 15% or disk < 10% available | 120 s |
 | `oom_<source>` | both | critical | new OOM kills of the source's main unit | – |
 | `oom_<source>_<unit>` | both | critical | new OOM kills of another unit the host sampler reports | – |
@@ -823,14 +823,16 @@ txid display controller.
 A short reorg makes workers answer metadata reads 503 with `publication
 invalidated by reorg` until the next publication, and wallets retry them. Each
 worker counts those in `transparent_shard_reorg_unavailable_total`, and the
-edge's error ratio subtracts the service's total in the window. A query whose
-body misses the upload deadline gets 408 after waiting out the deadline, which
-measures the client's link. Workers count those per query endpoint in
-`transparent_shard_upload_timeouts_total{endpoint}`, and that many samples
-leave the endpoint's p99, taken from the lowest buckets above its budget.
-Workers keep serving `/metrics` while invalidated, so the refusals are
-observed. Long withdrawals still page through `withdrawn`, and timeouts stay
-visible in the worker's counters.
+edge's error ratio subtracts the service's total in the window. Workers keep
+serving `/metrics` while invalidated, so the refusals are observed. Long
+withdrawals still page through `withdrawn`.
+
+A query's HTTP duration includes its upload, so a wallet on a slow link can
+push p99 past the budget alone when traffic is light. Workers time each query
+endpoint from the fully received body in
+`transparent_shard_server_seconds{endpoint}`, and a source that reports it is
+judged on that instead. Uploads that miss the deadline get 408 and no server
+time, and stay visible in `transparent_shard_upload_timeouts_total{endpoint}`.
 
 Workers poll for publications and skip any replaced meanwhile, so in a burst of
 blocks they trail the newest map. The readiness and recent replica rules count a

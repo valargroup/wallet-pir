@@ -162,6 +162,10 @@ impl Histogram {
 pub struct Metrics {
     pub http: pir_observability::HttpMetrics,
     pub query_seconds: [Histogram; 3],
+    /// Query time from a fully received body through response construction,
+    /// by [`QUERY_ENDPOINTS`] label. Unlike `query_seconds` it leaves out the
+    /// client's upload, which APM's latency alerts must not blame on the server.
+    pub server_seconds: [Histogram; 3],
     pub queue_wait_seconds: Histogram,
     pub evaluation_seconds: Histogram,
     pub queries: AtomicU64,
@@ -222,7 +226,7 @@ pub struct Metrics {
     /// Queries refused because the body budget could not hold them.
     pub body_budget_rejections: AtomicU64,
     /// Queries whose body did not arrive within the upload deadline, by
-    /// [`QUERY_ENDPOINTS`] label, so APM can excuse each endpoint's own.
+    /// [`QUERY_ENDPOINTS`] label.
     pub upload_timeouts: [AtomicU64; 3],
     /// Refusals sent before the body was read whose body could not be
     /// discarded in time; the connection closed under the upload.
@@ -251,6 +255,7 @@ impl Default for Metrics {
         Self {
             http: pir_observability::HttpMetrics::default(),
             query_seconds: std::array::from_fn(|_| Histogram::new(&REQUEST_BUCKETS)),
+            server_seconds: std::array::from_fn(|_| Histogram::new(&REQUEST_BUCKETS)),
             queue_wait_seconds: Histogram::new(&REQUEST_BUCKETS),
             evaluation_seconds: Histogram::new(&REQUEST_BUCKETS),
             queries: AtomicU64::new(0),
@@ -331,8 +336,17 @@ impl Snapshot {
     }
 }
 
-/// The HTTP endpoint labels of query routes, in `Metrics::upload_timeouts` order.
+/// The HTTP endpoint labels of query routes, in `Metrics::upload_timeouts` and
+/// `Metrics::server_seconds` order.
 pub const QUERY_ENDPOINTS: [&str; 3] = ["query_directory", "query_pages", "query_other"];
+
+/// The [`QUERY_ENDPOINTS`] index of the HTTP observer's label for `path`, so a
+/// query's upload timeout and server time land under the endpoint whose
+/// latency APM checks. `None` for a path the observer does not label a query.
+pub fn query_endpoint(path: &str) -> Option<usize> {
+    let endpoint = crate::http::endpoint(path)?;
+    QUERY_ENDPOINTS.iter().position(|e| *e == endpoint)
+}
 
 impl Metrics {
     pub fn incr(counter: &AtomicU64) {
@@ -714,6 +728,27 @@ impl Metrics {
                     out.push_str(line);
                     out.push('\n');
                 }
+            }
+        }
+        for (histogram, endpoint) in self.server_seconds.iter().zip(QUERY_ENDPOINTS) {
+            let scoped = if labels.is_empty() {
+                format!("endpoint=\"{endpoint}\"")
+            } else {
+                format!("{labels},endpoint=\"{endpoint}\"")
+            };
+            let mut rendered = String::new();
+            histogram.render(
+                "transparent_shard_server_seconds",
+                "Fully received body through response construction; excludes the upload and response transmission.",
+                &scoped,
+                &mut rendered,
+            );
+            for line in rendered
+                .lines()
+                .filter(|line| endpoint == QUERY_ENDPOINTS[0] || !line.starts_with('#'))
+            {
+                out.push_str(line);
+                out.push('\n');
             }
         }
         self.queue_wait_seconds.render(
