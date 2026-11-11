@@ -76,7 +76,12 @@ impl Ingestion for EnhanceIngestion {
                     .find(|block| block.height == keep.height)
             })
             .map_or(0, |block| block.first_position + block.action_count);
-        Ok(self.publisher.revoke_after(retained)?)
+        self.publisher.revoke_after(retained)?;
+        // Work reserved before the withdrawal can no longer publish. Waking the
+        // publication task lets it serve the withdrawn publication again, if it
+        // still checks out, while the replacement is ingested and built.
+        self.latest.send_replace(None);
+        Ok(())
     }
     async fn rewind(&mut self, keep: Option<&BlockId>) -> Result<()> {
         Ok(self
@@ -107,8 +112,9 @@ impl Ingestion for EnhanceIngestion {
 /// Supervise root-scheduled ingestion, HTTP, and one coalescing publication
 /// task until shutdown. Journal commits continue during preparation; in-flight
 /// publication finishes its owner operation before the publication task exits.
-/// The publication task first serves the previous publication again if it still
-/// checks out ([`EnhancePublisher::restore`]).
+/// Before each acquisition the publication task serves a publication that a
+/// restart or shallow rewind withdrew again, if it still checks out
+/// ([`EnhancePublisher::restore`]).
 pub async fn run_until<E>(
     executor: E,
     feed: ChainFeed,
@@ -126,18 +132,6 @@ where
     let stop = shutdown.clone();
     let publishing = executor.clone();
     let publication = tokio::spawn(async move {
-        // The publication a restart withdrew serves again while the next one prepares.
-        let restoring = std::time::Instant::now();
-        match preparing.restore(publishing.clone(), stop.clone()).await {
-            Ok(true) => tracing::info!(
-                seconds = restoring.elapsed().as_secs_f64(),
-                "Enhance serves its previous publication again"
-            ),
-            Ok(false) => {}
-            Err(error) => {
-                tracing::warn!(%error, "Enhance previous publication stays withdrawn")
-            }
-        }
         publishing
             .run(
                 PublicationWorkflow {
@@ -193,6 +187,29 @@ impl pir_pipeline::publisher::Publisher for PublicationWorkflow {
         = crate::publisher::preparation::EnhancePublication<'a>
     where
         Self: 'a;
+    /// Serves the withdrawn publication again while the next one prepares. A
+    /// publication that fails its checks stays withdrawn, as before.
+    async fn background<E: pir_pipeline::publisher::PublisherExecutor>(
+        &mut self,
+        executor: E,
+    ) -> std::result::Result<(), String> {
+        let restoring = std::time::Instant::now();
+        match self
+            .publisher
+            .restore(executor, self.shutdown.clone())
+            .await
+        {
+            Ok(true) => tracing::info!(
+                seconds = restoring.elapsed().as_secs_f64(),
+                "Enhance serves its previous publication again"
+            ),
+            Ok(false) => {}
+            Err(error) => {
+                tracing::warn!(%error, "Enhance previous publication stays withdrawn")
+            }
+        }
+        Ok(())
+    }
     async fn acquire(
         &mut self,
     ) -> std::result::Result<PublicationInput<Self::Publication<'_>>, String> {

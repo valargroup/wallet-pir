@@ -21,7 +21,11 @@ Generation reservation is durable before preparation starts. Publication verifie
 all rows, hints, public setup and packing, syncs their immutable files, checks the
 canonical anchor, then atomically advances current. A failed write poisons the
 owner until reopen. A reorganization durably withdraws authority before journal
-rewind; old work cannot publish after withdrawal, even if its rows are replayed.
+rewind; old work cannot publish after withdrawal, even if its rows are replayed,
+and a preparation under way stops at its next step. When the rewind raises no
+fence and keeps every record of the withdrawn publication, that same publication
+may serve again, under the new withdrawal fence, once it passes the checks a
+restart applies.
 
 ## Data and query path
 

@@ -107,6 +107,10 @@ impl PublicationDistribution {
         &self.root
     }
 
+    /// Current's revision, which every withdrawal and commit advances.
+    pub(crate) fn revision(&self) -> u64 {
+        self.disk.lock().unwrap().current.revision
+    }
     pub(crate) fn durable_current(&self) -> Current {
         self.disk.lock().unwrap().current.clone()
     }

@@ -122,6 +122,28 @@ async fn withdrawal_rejects_bound_publication_before_a_runtime_exists() {
     );
     assert!(!publisher_root.join("objects").exists());
 }
+/// A withdrawal stops a preparation already under way, which could no longer
+/// publish, instead of letting it hold preparation until it finishes.
+#[tokio::test]
+async fn withdrawal_stops_preparation_under_way() {
+    let root = tempfile::tempdir().unwrap();
+    let publisher = EnhancePublisher::open(
+        &root.path().join("publication"),
+        rpc(root.path(), "http://127.0.0.1:1"),
+    )
+    .unwrap();
+    let journal = journal(root.path());
+    let work = publisher.work(&journal).unwrap().unwrap();
+    let publication = publisher.publication(work).unwrap();
+    let stop = publication.stop_signal();
+    assert!(!stop());
+    publisher.revoke_after(0).unwrap();
+    assert!(stop());
+    assert!(
+        !publisher.state.lock().unwrap().restorable,
+        "with nothing published there is nothing to serve again"
+    );
+}
 /// Full publication, including the reference packing artifact, then restart.
 #[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -206,6 +228,27 @@ async fn local_publication_needs_no_consumers_and_never_reuses_prewithdrawal_wor
         .restore(engine(), Default::default())
         .await
         .unwrap());
+    // A rewind above the anchor keeps every record, so the publication serves
+    // again under the new withdrawal fence once its anchor is checked.
+    let records = manifest.coverage.records;
+    let serving = publisher.distribution.durable_current();
+    publisher.revoke_after(records).unwrap();
+    assert!(!publisher.distribution.durable_current().eligible);
+    assert!(publisher
+        .restore(engine(), Default::default())
+        .await
+        .unwrap());
+    let reserved = publisher.distribution.durable_current();
+    assert!(reserved.eligible);
+    assert_eq!(reserved.manifest, serving.manifest);
+    assert!(reserved.withdrawal_revision > serving.withdrawal_revision);
+    // A rewind into its records leaves it withdrawn without checking it again.
+    publisher.revoke_after(records - 1).unwrap();
+    assert!(!publisher
+        .restore(engine(), Default::default())
+        .await
+        .unwrap());
+    assert!(!publisher.distribution.durable_current().eligible);
     drop(publisher);
     // A start that adopts a rebuilt journal never serves the previous publication,
     // nor does a later start that stops before its replacement is published.

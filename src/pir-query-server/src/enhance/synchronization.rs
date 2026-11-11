@@ -79,8 +79,8 @@ pub const RECOVERY_POLL: Duration = Duration::from_secs(1);
 /// The manager's ordinary cadence, kept for steady state and long deferrals.
 pub const STEADY_POLL: Duration = Duration::from_secs(5);
 /// A deferral longer than this returns to [`STEADY_POLL`], bounding publisher
-/// load without adding failure backoff. A reorganization defers consumers from
-/// withdrawal until the replacement is prepared: 24-49 s for a one-shard
+/// load without adding failure backoff. A reorganization that replaces the
+/// anchor defers consumers from withdrawal until the replacement is prepared: 24-49 s for a one-shard
 /// fixture on 6 CPUs and up to 89 s on 3 (`reorg_recovery`), so a one-minute
 /// window could expire just before the replacement appeared. Five minutes matches APM's critical
 /// publication-blocked duration, past which the withdrawal is an incident.

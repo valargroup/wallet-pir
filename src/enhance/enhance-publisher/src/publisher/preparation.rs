@@ -66,6 +66,15 @@ impl<'a> EnhancePublication<'a> {
         self.shutdown = shutdown;
         self
     }
+    /// True on shutdown or once current changes, which [`Self::check`] would refuse
+    /// after the phase anyway. A withdrawal so ends a doomed build early instead of
+    /// holding preparation until the build finishes.
+    pub(crate) fn stop_signal(&self) -> impl Fn() -> bool + Send + Sync + 'static {
+        let shutdown = self.shutdown.clone();
+        let distribution = self.distribution.clone();
+        let revision = self.predecessor.revision;
+        move || shutdown.requested() || distribution.revision() != revision
+    }
     pub(crate) fn inventory(
         distribution: &'a PublicationDistribution,
         manifest: Manifest,
@@ -140,7 +149,7 @@ impl pir_pipeline::publisher::Publication for EnhancePublication<'_> {
                 let root = self.distribution.root().to_path_buf();
                 let coverage = self.manifest.coverage.clone();
                 let epochs = self.manifest.domain_recovery_epochs.clone();
-                let shutdown = self.shutdown.clone();
+                let stop = self.stop_signal();
                 tokio::task::spawn_blocking(move || {
                     publication::construct_publication(
                         &root,
@@ -151,7 +160,7 @@ impl pir_pipeline::publisher::Publication for EnhancePublication<'_> {
                                 .read_records(start, count)
                                 .map_err(|e| e.to_string())
                         },
-                        &|| shutdown.requested(),
+                        &stop,
                     )
                     .map(Material::Inventory)
                 })
@@ -170,17 +179,14 @@ impl pir_pipeline::publisher::Publication for EnhancePublication<'_> {
     }
     async fn verify(&mut self, material: Material) -> Result<PreparedPublication, String> {
         let root = self.distribution.root().to_path_buf();
-        let shutdown = self.shutdown.clone();
+        let stop = self.stop_signal();
         let verifying = std::time::Instant::now();
         self.timings.build = self.timings.started.map(|started| verifying - started);
-        let prepared = tokio::task::spawn_blocking(move || {
-            let stop = || shutdown.requested();
-            match material {
-                Material::Inventory(inventory) => {
-                    publication::verify_publication_until(&root, inventory, &stop)
-                }
-                Material::Prepared(prepared) => prepared.recheck_until(&root, &stop),
+        let prepared = tokio::task::spawn_blocking(move || match material {
+            Material::Inventory(inventory) => {
+                publication::verify_publication_until(&root, inventory, &stop)
             }
+            Material::Prepared(prepared) => prepared.recheck_until(&root, &stop),
         })
         .await
         .map_err(|e| e.to_string())??;
