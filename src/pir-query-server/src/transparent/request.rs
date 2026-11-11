@@ -274,13 +274,7 @@ pub async fn answer_query(worker: Worker<'_>, request: Request, query: PreparedQ
     };
     let upload_deadline = worker.admission.config().upload_deadline;
     let (parts, body) = request.into_parts();
-    // The HTTP observer's label for this path, so the upload timeout and
-    // server time below land under the endpoint whose latency APM checks.
-    let endpoint = transparent_shared::http::endpoint(parts.uri.path()).and_then(|endpoint| {
-        transparent_shared::runtime::metrics::QUERY_ENDPOINTS
-            .iter()
-            .position(|e| *e == endpoint)
-    });
+    let endpoint = transparent_shared::runtime::metrics::query_endpoint(parts.uri.path());
     let body = match pir_control::admission::read_body(body, expected, upload_deadline).await {
         Ok(body) => body,
         Err(pir_control::admission::BodyError::Read(error)) => {

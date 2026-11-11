@@ -340,6 +340,14 @@ impl Snapshot {
 /// `Metrics::server_seconds` order.
 pub const QUERY_ENDPOINTS: [&str; 3] = ["query_directory", "query_pages", "query_other"];
 
+/// The [`QUERY_ENDPOINTS`] index of the HTTP observer's label for `path`, so a
+/// query's upload timeout and server time land under the endpoint whose
+/// latency APM checks. `None` for a path the observer does not label a query.
+pub fn query_endpoint(path: &str) -> Option<usize> {
+    let endpoint = crate::http::endpoint(path)?;
+    QUERY_ENDPOINTS.iter().position(|e| *e == endpoint)
+}
+
 impl Metrics {
     pub fn incr(counter: &AtomicU64) {
         counter.fetch_add(1, Ordering::Relaxed);
