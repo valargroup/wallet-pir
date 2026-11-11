@@ -1460,6 +1460,23 @@ async fn live_prepare_activate_and_invalidate() {
         StatusCode::SERVICE_UNAVAILABLE
     );
     assert_eq!(metrics.reorg_unavailable.load(Ordering::Relaxed), 1);
+    // An invalidated worker still serves metrics, and a scrape is not a refusal.
+    let scrape = live
+        .router()
+        .oneshot(Request::get("/metrics").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(scrape.status(), StatusCode::OK);
+    let text = String::from_utf8(
+        axum::body::to_bytes(scrape.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(text
+        .lines()
+        .any(|l| l.starts_with("transparent_shard_reorg_unavailable_total") && l.ends_with(" 1")));
     let saved: Publication =
         serde_json::from_slice(&std::fs::read(root.path().join("active.json")).unwrap()).unwrap();
     assert_eq!(saved.map_sha256, new_map);

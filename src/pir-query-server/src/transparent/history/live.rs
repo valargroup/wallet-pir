@@ -895,21 +895,22 @@ async fn dispatch(State(live): State<LiveService>, request: Request) -> Response
         }
     }
     let invalid = || {
+        // Metrics stay scrapeable, so the refusals below are observed.
+        if path == "/metrics" {
+            return false;
+        }
         if state.is_invalidated() {
             return true;
         }
         let invalid = live.0.invalid.read().unwrap();
         match &digest {
             Some(digest) => invalid.contains(digest),
-            None => {
-                state
-                    .set()
-                    .map
-                    .shards
-                    .iter()
-                    .any(|s| invalid.contains(&s.manifest_digest))
-                    && path != "/metrics"
-            }
+            None => state
+                .set()
+                .map
+                .shards
+                .iter()
+                .any(|s| invalid.contains(&s.manifest_digest)),
         }
     };
     let refused = || {
