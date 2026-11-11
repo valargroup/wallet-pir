@@ -1477,6 +1477,16 @@ async fn live_prepare_activate_and_invalidate() {
     assert!(text
         .lines()
         .any(|l| l.starts_with("transparent_shard_reorg_unavailable_total") && l.ends_with(" 1")));
+    // A router's private readiness probe is refused but never reaches the edge.
+    assert_eq!(
+        live.router()
+            .oneshot(Request::get("/v1/ready").body(Body::empty()).unwrap())
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    assert_eq!(metrics.reorg_unavailable.load(Ordering::Relaxed), 1);
     let saved: Publication =
         serde_json::from_slice(&std::fs::read(root.path().join("active.json")).unwrap()).unwrap();
     assert_eq!(saved.map_sha256, new_map);

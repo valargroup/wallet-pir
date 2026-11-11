@@ -917,7 +917,13 @@ async fn dispatch(State(live): State<LiveService>, request: Request) -> Response
         let status = if digest.is_some() {
             StatusCode::CONFLICT
         } else {
-            transparent_shared::runtime::metrics::Metrics::incr(&state.metrics().reorg_unavailable);
+            // Only wallet operations can reach the edge; private readiness
+            // probes would otherwise excuse unrelated edge errors.
+            if transparent_shared::http::shard_operation(&path).is_some() {
+                transparent_shared::runtime::metrics::Metrics::incr(
+                    &state.metrics().reorg_unavailable,
+                );
+            }
             StatusCode::SERVICE_UNAVAILABLE
         };
         (status, axum::Json(serde_json::json!({"error":"publication invalidated by reorg", "retry":"refresh the shard map", "map_sha256":live.0.active.read().unwrap().publication.map_sha256}))).into_response()
