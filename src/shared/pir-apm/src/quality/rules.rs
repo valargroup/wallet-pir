@@ -504,6 +504,22 @@ fn service_rules(a: &mut Adder, svc: &ServiceView, view: &View, now: u64, p: &Po
     }
     let coordinator = coordinator(svc.kind);
     let (worker_roles, prepare) = workers(svc.kind);
+    // Each reorg refusal is counted by the one worker that answered it, so the
+    // service-wide sum bounds the edge 503s it explains.
+    let reorg_refusals = if sources.iter().any(|(_, s)| s.role == "edge") {
+        sources
+            .iter()
+            .filter_map(|(_, s)| {
+                s.window(now)
+                    .values
+                    .counters
+                    .get("transparent_shard_reorg_unavailable_total")
+                    .copied()
+            })
+            .sum()
+    } else {
+        0.
+    };
     for (source_name, s) in &sources {
         let source_name = source_name.as_str();
         source_rules(a, source_name, s, now);
@@ -524,7 +540,7 @@ fn service_rules(a: &mut Adder, svc: &ServiceView, view: &View, now: u64, p: &Po
                 "HTTP observation version 1 unavailable for 45s",
             );
         }
-        http_rules(a, source_name, s, now);
+        http_rules(a, source_name, s, now, reorg_refusals);
         if matches!(s.role.as_str(), "archive-owner" | "display-worker") {
             a.add(
                 format!("ready_{source_name}"),
@@ -598,7 +614,13 @@ fn service_rules(a: &mut Adder, svc: &ServiceView, view: &View, now: u64, p: &Po
 }
 
 /// Server errors and latency of the outer HTTP layer (or the edge's Caddy).
-fn http_rules(a: &mut Adder, name: &str, s: &Source, now: u64) {
+///
+/// Wallets retry the edge's reorg refusals (`reorg_refusals`, the service's
+/// workers' count in this window), so those 503s are not server errors. A
+/// query whose body missed the upload deadline measures the client's link,
+/// so up to the source's upload timeouts, bounded by each query endpoint's
+/// 4xx answers, leave that endpoint's latency.
+fn http_rules(a: &mut Adder, name: &str, s: &Source, now: u64, reorg_refusals: f64) {
     let fresh = s.fresh(now);
     let window = s.window(now);
     let outcomes: Vec<_> = window
@@ -635,6 +657,16 @@ fn http_rules(a: &mut Adder, name: &str, s: &Source, now: u64) {
             .sum();
         known = fresh && window.observed_seconds > 0 && !requests.is_empty() && errors <= completed;
     }
+    let excused = if s.role == "edge" {
+        reorg_refusals.min(errors)
+    } else {
+        0.
+    };
+    errors -= excused;
+    let mut observed = format!("{errors:.0} server errors / {completed:.0} responses");
+    if excused > 0. {
+        observed += &format!(" ({excused:.0} reorg refusals excluded)");
+    }
     a.add(
         format!("http_errors_{name}"),
         name,
@@ -642,9 +674,15 @@ fn http_rules(a: &mut Adder, name: &str, s: &Source, now: u64) {
         "warning",
         0,
         s.sampled_at,
-        format!("{errors:.0} server errors / {completed:.0} responses"),
+        observed,
         "5xx >5% with at least 10 responses in 5m",
     );
+    let mut timeouts = window
+        .values
+        .counters
+        .get("transparent_shard_upload_timeouts_total")
+        .copied()
+        .unwrap_or(0.);
     for (key, h) in &window.values.histograms {
         if !key.starts_with("pir_http_duration_seconds|") {
             continue;
@@ -654,6 +692,40 @@ fn http_rules(a: &mut Adder, name: &str, s: &Source, now: u64) {
             5.
         } else {
             2.
+        };
+        let adjusted;
+        let h = if endpoint.starts_with("query") && timeouts > 0. && h.valid() {
+            let refused = window
+                .values
+                .counters
+                .get(&format!(
+                    "pir_http_responses_total|code=4xx,endpoint={endpoint}"
+                ))
+                .copied()
+                .unwrap_or(0.);
+            // A timed-out upload waited out the deadline, past the budget, so
+            // it leaves the lowest buckets above the budget first.
+            let mut left = timeouts.min(refused);
+            let mut counts = h.counts.clone();
+            let mut removed = 0.;
+            if let Some(first) = h.bounds.iter().position(|b| b.is_none_or(|b| b > budget)) {
+                let mut below = first.checked_sub(1).map_or(0., |i| h.counts[i]);
+                for (count, &original) in counts[first..].iter_mut().zip(&h.counts[first..]) {
+                    let take = (original - below).min(left);
+                    below = original;
+                    left -= take;
+                    removed += take;
+                    *count -= removed;
+                }
+            }
+            timeouts -= removed;
+            adjusted = super::data::Histogram {
+                bounds: h.bounds.clone(),
+                counts,
+            };
+            &adjusted
+        } else {
+            h
         };
         let count = h.counts.last().copied().unwrap_or(0.);
         let exceeds = if count < 20. {
@@ -958,6 +1030,100 @@ mod tests {
         assert_eq!(firing(&f, "transparent", "http_errors_worker"), Some(true));
         let f = conditions(&v, 160, &Policy::default());
         assert_eq!(firing(&f, "transparent", "http_errors_worker"), None);
+    }
+
+    /// One five-second sample holding `counters` and `histograms`.
+    fn point(counters: &[(&str, f64)], histograms: &[(&str, Histogram)]) -> Point {
+        let mut p = Point {
+            at: 100,
+            observed_seconds: 5,
+            ..Default::default()
+        };
+        for (k, v) in counters {
+            p.values.counters.insert(k.to_string(), *v);
+        }
+        for (k, h) in histograms {
+            p.values.histograms.insert(k.to_string(), h.clone());
+        }
+        p
+    }
+
+    #[test]
+    fn edge_reorg_refusals_are_not_server_errors() {
+        let edge = |refused: f64| {
+            let mut e = source("transparent", "edge", 100, &[]);
+            e.recent.push_back(point(
+                &[
+                    ("caddy_http_requests_total|server=srv1", 23.),
+                    (
+                        "caddy_http_request_duration_seconds_count|code=503,method=GET,server=srv1",
+                        5.,
+                    ),
+                ],
+                &[],
+            ));
+            let mut w = source("transparent", "archive-owner", 100, &[]);
+            w.recent.push_back(point(
+                &[("transparent_shard_reorg_unavailable_total", refused)],
+                &[],
+            ));
+            view(
+                vec![service("transparent", Kind::History)],
+                vec![("edge", e), ("archive", w)],
+            )
+        };
+        let f = conditions(&edge(0.), 110, &Policy::default());
+        assert_eq!(firing(&f, "transparent", "http_errors_edge"), Some(true));
+        let f = conditions(&edge(5.), 110, &Policy::default());
+        assert_eq!(firing(&f, "transparent", "http_errors_edge"), Some(false));
+        // Refusals explain only that many 503s; the rest still count.
+        let f = conditions(&edge(3.), 110, &Policy::default());
+        assert_eq!(firing(&f, "transparent", "http_errors_edge"), Some(true));
+    }
+
+    #[test]
+    fn upload_timeouts_leave_query_latency() {
+        let key = "pir_http_duration_seconds|endpoint=query_directory";
+        // 24 fast queries and one that waited 20 s for its body.
+        let bounds = bounds(key);
+        let counts = bounds
+            .iter()
+            .map(|b| match b {
+                Some(b) if *b < 0.25 => 0.,
+                Some(b) if *b < 30. => 24.,
+                _ => 25.,
+            })
+            .collect();
+        let h = Histogram { bounds, counts };
+        let archive = |timeouts: f64, refused: f64| {
+            let mut s = source("transparent", "archive-owner", 100, &[]);
+            s.recent.push_back(point(
+                &[
+                    (
+                        "pir_http_responses_total|code=2xx,endpoint=query_directory",
+                        24.,
+                    ),
+                    (
+                        "pir_http_responses_total|code=4xx,endpoint=query_directory",
+                        refused,
+                    ),
+                    ("transparent_shard_upload_timeouts_total", timeouts),
+                ],
+                &[(key, h.clone())],
+            ));
+            view(
+                vec![service("transparent", Kind::History)],
+                vec![("archive", s)],
+            )
+        };
+        let latency = "latency_archive_query_directory";
+        let f = conditions(&archive(0., 1.), 110, &Policy::default());
+        assert_eq!(firing(&f, "transparent", latency), Some(true));
+        let f = conditions(&archive(1., 1.), 110, &Policy::default());
+        assert_eq!(firing(&f, "transparent", latency), Some(false));
+        // A timeout this endpoint did not answer cannot excuse its slow query.
+        let f = conditions(&archive(1., 0.), 110, &Policy::default());
+        assert_eq!(firing(&f, "transparent", latency), Some(true));
     }
 
     #[test]

@@ -226,6 +226,10 @@ pub struct Metrics {
     /// Refusals sent before the body was read whose body could not be
     /// discarded in time; the connection closed under the upload.
     pub refusals_unread: AtomicU64,
+    /// Requests answered 503 because a reorg invalidated the publication
+    /// they would read. Wallets retry them, so APM excludes them from the
+    /// edge's server errors.
+    pub reorg_unavailable: AtomicU64,
     /// Requests that waited their whole deadline without a slot.
     pub deadline_exceeded: AtomicU64,
     /// Requests dropped by their client before they were answered.
@@ -284,6 +288,7 @@ impl Default for Metrics {
             body_budget_rejections: AtomicU64::new(0),
             upload_timeouts: AtomicU64::new(0),
             refusals_unread: AtomicU64::new(0),
+            reorg_unavailable: AtomicU64::new(0),
             deadline_exceeded: AtomicU64::new(0),
             queries_cancelled: AtomicU64::new(0),
             query_queue_depth: AtomicU64::new(0),
@@ -569,6 +574,12 @@ impl Metrics {
             "counter",
             "Early refusals whose request body could not be discarded before closing.",
             Self::get(&self.refusals_unread),
+        );
+        line(
+            "transparent_shard_reorg_unavailable_total",
+            "counter",
+            "Requests answered 503 because a reorg invalidated their publication.",
+            Self::get(&self.reorg_unavailable),
         );
         line(
             "transparent_shard_deadline_exceeded_total",

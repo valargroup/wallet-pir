@@ -1449,6 +1449,8 @@ async fn live_prepare_activate_and_invalidate() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::CONFLICT);
+    // Only the retryable 503 is a reorg refusal the edge would see as 5xx.
+    assert_eq!(metrics.reorg_unavailable.load(Ordering::Relaxed), 0);
     assert_eq!(
         live.router()
             .oneshot(Request::get("/v2/shards").body(Body::empty()).unwrap())
@@ -1457,6 +1459,7 @@ async fn live_prepare_activate_and_invalidate() {
             .status(),
         StatusCode::SERVICE_UNAVAILABLE
     );
+    assert_eq!(metrics.reorg_unavailable.load(Ordering::Relaxed), 1);
     let saved: Publication =
         serde_json::from_slice(&std::fs::read(root.path().join("active.json")).unwrap()).unwrap();
     assert_eq!(saved.map_sha256, new_map);

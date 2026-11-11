@@ -913,7 +913,13 @@ async fn dispatch(State(live): State<LiveService>, request: Request) -> Response
         }
     };
     let refused = || {
-        (if digest.is_some() {StatusCode::CONFLICT} else {StatusCode::SERVICE_UNAVAILABLE}, axum::Json(serde_json::json!({"error":"publication invalidated by reorg", "retry":"refresh the shard map", "map_sha256":live.0.active.read().unwrap().publication.map_sha256}))).into_response()
+        let status = if digest.is_some() {
+            StatusCode::CONFLICT
+        } else {
+            transparent_shared::runtime::metrics::Metrics::incr(&state.metrics().reorg_unavailable);
+            StatusCode::SERVICE_UNAVAILABLE
+        };
+        (status, axum::Json(serde_json::json!({"error":"publication invalidated by reorg", "retry":"refresh the shard map", "map_sha256":live.0.active.read().unwrap().publication.map_sha256}))).into_response()
     };
     if invalid() {
         return refused();
