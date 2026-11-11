@@ -90,7 +90,9 @@ transparent_shard_queue_rejections_total{map_sha256="8c59ed80dfd50a7687b4efea769
 transparent_shard_body_budget_rejections_total{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 0
 # HELP transparent_shard_upload_timeouts_total Queries whose body did not arrive within the upload deadline.
 # TYPE transparent_shard_upload_timeouts_total counter
-transparent_shard_upload_timeouts_total{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 0
+transparent_shard_upload_timeouts_total{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",endpoint="query_directory"} 0
+transparent_shard_upload_timeouts_total{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",endpoint="query_pages"} 0
+transparent_shard_upload_timeouts_total{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89",endpoint="query_other"} 0
 # HELP transparent_shard_refusals_unread_total Early refusals whose request body could not be discarded before closing.
 # TYPE transparent_shard_refusals_unread_total counter
 transparent_shard_refusals_unread_total{map_sha256="8c59ed80dfd50a7687b4efea76970920365c97c41f291774069ee4faaefd3458",worker_id="transparent-pir-recent-01",role="recent-replica",assignment_sha256="bce0d436a5c90d1ad32614d6988ab07376b6d910b1b37d1e014f360479c3bb89"} 0

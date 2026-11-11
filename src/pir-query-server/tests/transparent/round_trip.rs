@@ -579,7 +579,11 @@ async fn a_slow_upload_times_out_without_holding_a_place() {
     assert_eq!(response.status(), StatusCode::REQUEST_TIMEOUT);
     let metrics = state.metrics();
     assert_eq!(
-        transparent_shared::runtime::metrics::Metrics::get(&metrics.upload_timeouts),
+        metrics
+            .upload_timeouts
+            .iter()
+            .map(transparent_shared::runtime::metrics::Metrics::get)
+            .sum::<u64>(),
         1
     );
     assert_eq!(
