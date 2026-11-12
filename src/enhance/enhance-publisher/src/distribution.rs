@@ -30,6 +30,11 @@ use std::{
     },
 };
 
+/// Most retained publications a distribution state may hold. Commits keep
+/// [`RETAINED_GENERATIONS`]; opening a longer list lets a later release that
+/// retains more roll back to this one.
+const RETAINED_PUBLICATIONS: usize = 10;
+
 /// Durable publication selection and read-only artifact distribution.
 /// Stored eligibility is checked against the chain before granting authority.
 #[derive(Clone)]
@@ -74,7 +79,7 @@ impl PublicationDistribution {
             }
         };
         disk.current.validate()?;
-        if disk.retained.len() > RETAINED_GENERATIONS {
+        if disk.retained.len() > RETAINED_PUBLICATIONS {
             return Err("too many retained Enhance publications".into());
         }
         for retained in &disk.retained {
