@@ -401,6 +401,212 @@ async fn ordinary_publication_advancement_allows_retained_candidates_but_withdra
         "a newer withdrawal boundary cannot authorize the candidate"
     );
 }
+/// Publishes the fixture's material again as `generation`.
+async fn republish(source: &publication_source::Published, generation: u64) {
+    let mut next = source.manifest.clone();
+    next.generation = generation;
+    source
+        .distribution
+        .publish(
+            next,
+            source.inventory.clone(),
+            pir_publisher::publisher::PublisherEngine,
+        )
+        .await
+        .unwrap();
+}
+
+/// Ingress saw generation 2 before its router was ready for it, and the
+/// publisher moved on to 3 before the router became ready for 2. Ingress then
+/// adopts 2 rather than waiting for 3, because waiting keeps every view it
+/// serves pinned on the router, and a router with full retention slots cannot
+/// take 3 at all.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ingress_adopts_a_missed_publication_its_router_is_ready_for() {
+    use pir_e2e_tests::enhance_fixture::serve;
+    use pir_query_server::enhance::{ingress_sync, router_sync, worker_sync};
+    let fixture = publication_source::Published::new().await;
+    let worker = worker_sync::Worker::open(
+        &fixture.scratch.path().join("worker"),
+        worker_sync::Config {
+            source: fixture.source(),
+            shards: [0].into(),
+        },
+        Default::default(),
+        Default::default(),
+    )
+    .unwrap();
+    let mut worker_sync = worker.synchronizer().unwrap();
+    let worker_http = serve(worker.router()).await;
+    let router = router_sync::PackingRouter::open(
+        &fixture.scratch.path().join("router"),
+        router_sync::Config {
+            source: fixture.source(),
+            workers: [(0, vec![worker_http.url.clone()])].into(),
+            preferred: Default::default(),
+        },
+        6,
+        4,
+    )
+    .unwrap();
+    let mut router_sync = router.synchronizer().unwrap();
+    let router_http = serve(router.public_router()).await;
+    let router_control = serve(router.control_router()).await;
+    let ingress = ingress_sync::QueryIngress::open(
+        &fixture.scratch.path().join("ingress"),
+        ingress_sync::Config {
+            source: fixture.source(),
+            routers: [(
+                0,
+                vec![ingress_sync::RouterPeer {
+                    control_origin: router_control.url.clone(),
+                    query_origin: router_http.url.clone(),
+                }],
+            )]
+            .into(),
+        },
+        16,
+        256,
+    )
+    .unwrap();
+    let mut ingress_sync = ingress.synchronizer().unwrap();
+    let public = serve(ingress.public_router()).await;
+    let served = || async {
+        let init: serde_json::Value = reqwest::get(format!("{}/v1/enhance/init", public.url))
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        init["generation"].as_u64().unwrap()
+    };
+    worker_sync.poll_once().await.unwrap();
+    router_sync.poll_once().await.unwrap();
+    ingress_sync.poll_once().await.unwrap();
+    assert_eq!(served().await, 1);
+
+    republish(&fixture, 2).await;
+    ingress_sync.poll_once().await.unwrap();
+    assert_eq!(served().await, 1, "the router is not ready for 2 yet");
+    worker_sync.poll_once().await.unwrap();
+    router_sync.poll_once().await.unwrap();
+    republish(&fixture, 3).await;
+    ingress_sync.poll_once().await.unwrap();
+    assert_eq!(
+        served().await,
+        2,
+        "ingress adopts the publication its router has"
+    );
+
+    worker_sync.poll_once().await.unwrap();
+    router_sync.poll_once().await.unwrap();
+    ingress_sync.poll_once().await.unwrap();
+    assert_eq!(served().await, 3);
+}
+
+/// With every retention slot full, a missed publication must not stall the
+/// stack. Ingress pins five views on the router, so the router can take a new
+/// publication only after ingress retires one, and ingress retires one only
+/// when it adopts. Polls here finish well inside the thirty-second pin
+/// lifetime, so without the fallback the router stays full and ingress keeps
+/// serving 5.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_missed_publication_with_full_retention_slots_still_advances() {
+    use pir_e2e_tests::enhance_fixture::serve;
+    use pir_query_server::enhance::{ingress_sync, router_sync, worker_sync};
+    let fixture = publication_source::Published::new().await;
+    let worker = worker_sync::Worker::open(
+        &fixture.scratch.path().join("worker"),
+        worker_sync::Config {
+            source: fixture.source(),
+            shards: [0].into(),
+        },
+        Default::default(),
+        Default::default(),
+    )
+    .unwrap();
+    let mut worker_sync = worker.synchronizer().unwrap();
+    let worker_http = serve(worker.router()).await;
+    let router = router_sync::PackingRouter::open(
+        &fixture.scratch.path().join("router"),
+        router_sync::Config {
+            source: fixture.source(),
+            workers: [(0, vec![worker_http.url.clone()])].into(),
+            preferred: Default::default(),
+        },
+        6,
+        4,
+    )
+    .unwrap();
+    let mut router_sync = router.synchronizer().unwrap();
+    let router_http = serve(router.public_router()).await;
+    let router_control = serve(router.control_router()).await;
+    let ingress = ingress_sync::QueryIngress::open(
+        &fixture.scratch.path().join("ingress"),
+        ingress_sync::Config {
+            source: fixture.source(),
+            routers: [(
+                0,
+                vec![ingress_sync::RouterPeer {
+                    control_origin: router_control.url.clone(),
+                    query_origin: router_http.url.clone(),
+                }],
+            )]
+            .into(),
+        },
+        16,
+        256,
+    )
+    .unwrap();
+    let mut ingress_sync = ingress.synchronizer().unwrap();
+    let public = serve(ingress.public_router()).await;
+    let served = || async {
+        let init: serde_json::Value = reqwest::get(format!("{}/v1/enhance/init", public.url))
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        init["generation"].as_u64().unwrap()
+    };
+
+    for generation in 1..=5 {
+        if generation > 1 {
+            republish(&fixture, generation).await;
+        }
+        for _ in 0..3 {
+            worker_sync.poll_once().await.unwrap();
+            router_sync.poll_once().await.unwrap();
+            ingress_sync.poll_once().await.unwrap();
+        }
+        assert_eq!(served().await, generation);
+    }
+
+    // Ingress selects 6 and retires its oldest view, and its next poll
+    // releases that pin. The router then adopts 6, and 7 lands before ingress
+    // polls again.
+    republish(&fixture, 6).await;
+    ingress_sync.poll_once().await.unwrap();
+    ingress_sync.poll_once().await.unwrap();
+    for _ in 0..3 {
+        worker_sync.poll_once().await.unwrap();
+        router_sync.poll_once().await.unwrap();
+    }
+    assert_eq!(served().await, 5);
+    republish(&fixture, 7).await;
+    for _ in 0..4 {
+        ingress_sync.poll_once().await.unwrap();
+        worker_sync.poll_once().await.unwrap();
+        router_sync.poll_once().await.unwrap();
+    }
+    ingress_sync.poll_once().await.unwrap();
+    assert_eq!(served().await, 7);
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn wallet_binding_mismatches_are_refused_before_forwarding() {
     let system = System::start((0..67).map(record).collect()).await;

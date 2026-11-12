@@ -261,6 +261,7 @@ impl QueryIngress {
             engine: ConsumerEngine::new(EnhanceConsumer::new(
                 IngressConsumer {
                     ingress: self.clone(),
+                    missed: Vec::new(),
                 },
                 Client::new(
                     &self.root,
@@ -508,6 +509,11 @@ pub struct Synchronizer {
 }
 struct IngressConsumer {
     ingress: QueryIngress,
+    /// Publications selected but not adopted yet, oldest first. Routers keep
+    /// every view ingress serves pinned, so a router that took one of these
+    /// while the publisher moved on can have no free slot for the newer one
+    /// until ingress adopts it; see [`ConsumerRole::fallback`].
+    missed: Vec<Manifest>,
 }
 enum IngressSelection {
     Refresh,
@@ -550,7 +556,27 @@ impl ConsumerRole for IngressConsumer {
             let old = inner.retained.remove(0);
             QueryIngress::retire(&mut inner, old);
         }
+        self.missed.retain(|m| m.generation < manifest.generation);
+        self.missed.push(manifest.clone());
+        if self.missed.len() > RETAINED_GENERATIONS {
+            self.missed.remove(0);
+        }
         Ok(Input::Work(IngressSelection::New))
+    }
+    fn fallback(&self, current: &Manifest) -> Option<Manifest> {
+        let active = self
+            .ingress
+            .inner
+            .lock()
+            .unwrap()
+            .active
+            .as_ref()
+            .map(|view| view.manifest.generation);
+        self.missed
+            .iter()
+            .rev()
+            .find(|m| m.generation < current.generation && active.is_none_or(|a| m.generation > a))
+            .cloned()
     }
     fn objects(&self, _: &IngressSelection) -> Vec<enhance_shared::publication::Object> {
         Vec::new()
@@ -608,6 +634,7 @@ impl ConsumerRole for IngressConsumer {
     ) -> Result<(), Error> {
         let guard = self.ingress.authority.install(manifest.clone(), lease)?;
         guard.check()?;
+        self.missed.retain(|m| m.generation > manifest.generation);
         let mut inner = self.ingress.inner.lock().unwrap();
         if let Some(active) = inner
             .active

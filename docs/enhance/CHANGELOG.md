@@ -2,6 +2,14 @@
 
 ## 0.0.1 — Unreleased
 
+- Enhance ingress no longer falls behind during a burst of fast blocks. When
+  the publisher committed again before ingress adopted the publication its
+  router had just taken, ingress waited for the newest one, but the router could
+  not take it while every view ingress served stayed pinned. The stack was stuck
+  until the oldest pinned publication lost authority, so ingress fell up to five
+  commits behind and wallet `init` stalled once its own publication lost
+  authority too. Ingress now adopts the publication its router has ready.
+
 - A reorganization that replaces only blocks above the current Enhance
   publication's anchor no longer leaves Enhance withdrawn until a replacement is
   built. The publisher still withdraws first, so earlier leases stay void, then

@@ -57,8 +57,12 @@ Workers download only assigned rows, verify hashes and lengths, and construct
 the selected CPU or CUDA evaluation database without preparing hints. Routers
 verify and map publisher-prepared packing, then require exact worker readiness.
 Ingress advertises a publication only after every covered domain has compatible
-router readiness. Future static responsibilities may be configured before those
-domains exist; a publication with missing responsibilities remains unready.
+router readiness. When routers are not ready for the newest publication yet,
+ingress adopts a newer one it selected earlier that they are ready for. Routers
+keep every view ingress serves pinned, so waiting for the newest could leave a
+router with no free slot to take it. Future static responsibilities may be
+configured before those domains exist; a publication with missing
+responsibilities remains unready.
 
 Each process distinguishes candidate, active and retained material. Activation
 atomically swaps local metadata and routes. Bounded consumer-to-consumer pins
