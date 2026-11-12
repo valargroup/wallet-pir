@@ -2,6 +2,13 @@
 
 ## 0.0.1 — Unreleased
 
+- Wallet `init` no longer stalls for several seconds, or fails, after a burst of
+  fast blocks. The publisher kept authority only for its five newest
+  publications. When blocks arrived about ten seconds apart, the ingress could
+  fall five commits behind, and the publication it still served was refused
+  until it caught up. The publisher now keeps ten publications authorizable.
+  Roll back only to a release that opens ten retained publications.
+
 - A reorganization that replaces only blocks above the current Enhance
   publication's anchor no longer leaves Enhance withdrawn until a replacement is
   built. The publisher still withdraws first, so earlier leases stay void, then

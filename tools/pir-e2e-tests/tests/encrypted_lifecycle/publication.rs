@@ -1,7 +1,10 @@
 //! The real publisher distribution router, node RPC and TLS transport.
 use super::encrypted::{record, serve};
 use crate::publication_source::Published;
-use enhance_publisher::{chain_source::ZakuraClient, distribution::PublicationDistribution};
+use enhance_publisher::{
+    chain_source::ZakuraClient,
+    distribution::{PublicationDistribution, RETAINED_PUBLICATIONS},
+};
 use enhance_shared::{
     protocol::{self, Geometry, Lifecycle, Manifest},
     publication::{AuthorityRequest, AuthorityResponse, Inventory, Object, Revocation, PREFIX},
@@ -1137,7 +1140,7 @@ async fn collection_keeps_retained_material_and_open_files_and_removes_interrupt
         std::fs::write(&partial_path, b"unfinished write").unwrap();
         let mut pinned = std::fs::File::open(&orphan_path).unwrap();
         std::fs::write(root.join("objects/operator-note"), b"not collector-owned").unwrap();
-        for epoch in 0..7 {
+        for epoch in 0..RETAINED_PUBLICATIONS as u64 + 2 {
             let mut inventory = initial.clone();
             for unit in &mut inventory.domains[0].plan.units { unit.recovery_epoch = epoch; }
             let domain = &inventory.domains[0];
@@ -1156,9 +1159,9 @@ async fn collection_keeps_retained_material_and_open_files_and_removes_interrupt
             std::fs::write(runtime.join("retention-marker"), b"runtime identity").unwrap();
             distribution.publish(manifest, inventory, pir_publisher::publisher::PublisherEngine).await.unwrap();
         }
-        assert_eq!(std::fs::read_dir(root.join("inventories")).unwrap().count(), protocol::RETAINED_GENERATIONS);
-        assert_eq!(std::fs::read_dir(root.join("domains")).unwrap().count(), protocol::RETAINED_GENERATIONS);
-        assert_eq!(std::fs::read_dir(root.join("preparation/artifacts-9")).unwrap().count(), protocol::RETAINED_GENERATIONS);
+        assert_eq!(std::fs::read_dir(root.join("inventories")).unwrap().count(), RETAINED_PUBLICATIONS);
+        assert_eq!(std::fs::read_dir(root.join("domains")).unwrap().count(), RETAINED_PUBLICATIONS);
+        assert_eq!(std::fs::read_dir(root.join("preparation/artifacts-9")).unwrap().count(), RETAINED_PUBLICATIONS);
         assert!(!orphan_path.exists());
         assert!(!partial_path.exists());
         let mut bytes = String::new();

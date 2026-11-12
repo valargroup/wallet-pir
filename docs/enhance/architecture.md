@@ -99,7 +99,10 @@ local timer. Processes persist publication/recovery floors before serving.
 Cached bytes on restart confer no authority. Explicit withdrawal, revocation,
 expired source authority and failed safety persistence close admission.
 
-An ordinary update preserves still-authorized active and admitted views. A slow
+An ordinary update preserves still-authorized active and admitted views. The
+publisher keeps its ten newest publications authorizable, more than the five
+views each consumer keeps, because an ingress can adopt several commits late
+during a burst of fast blocks. A slow
 request may renew authority for its exact original manifest before release.
 Renewal must preserve its admission withdrawal revision: withdrawal followed by
 fresh publication cannot revive that old request. Results and response bodies

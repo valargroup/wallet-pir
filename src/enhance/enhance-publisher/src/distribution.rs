@@ -17,7 +17,7 @@ use axum::{
 };
 use enhance_shared::{
     artifact,
-    protocol::{digest, Manifest, RETAINED_GENERATIONS},
+    protocol::{digest, Manifest},
     publication::{Current, Inventory, Object, Revocation, METADATA_LIMIT, PREFIX, VERSION},
 };
 use std::{
@@ -30,10 +30,12 @@ use std::{
     },
 };
 
-/// Most retained publications a distribution state may hold. Commits keep
-/// [`RETAINED_GENERATIONS`]; opening a longer list lets a later release that
-/// retains more roll back to this one.
-const RETAINED_PUBLICATIONS: usize = 10;
+/// Committed publications that stay authorizable, newest first. Consumers
+/// keep only [`enhance_shared::protocol::RETAINED_GENERATIONS`] views each,
+/// but during a burst of fast blocks an ingress can adopt five or more commits
+/// late, and the publication it still serves must keep its authority until
+/// then. Consecutive publications share most retained material.
+pub const RETAINED_PUBLICATIONS: usize = 10;
 
 /// Durable publication selection and read-only artifact distribution.
 /// Stored eligibility is checked against the chain before granting authority.
@@ -206,7 +208,7 @@ impl PublicationDistribution {
                 inventory: object,
             },
         );
-        next.retained.truncate(RETAINED_GENERATIONS);
+        next.retained.truncate(RETAINED_PUBLICATIONS);
         self.commit(&mut disk, next)?;
         drop(disk);
         self.collect_retired()?;

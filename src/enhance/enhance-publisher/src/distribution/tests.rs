@@ -136,3 +136,36 @@ fn a_longer_retained_list_still_opens() {
     persist(&root, &state(RETAINED_PUBLICATIONS as u64 + 1)).unwrap();
     assert!(PublicationDistribution::open(&root, rpc).is_err());
 }
+
+/// The oldest of a full retained list still gets authority after newer
+/// commits, while a publication outside the list is refused.
+#[tokio::test]
+async fn every_retained_publication_stays_authorizable() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let node = axum::Router::new().route(
+        "/",
+        axum::routing::post(
+            |axum::Json(request): axum::Json<serde_json::Value>| async move {
+                let height = request["params"][0].as_u64().unwrap();
+                axum::Json(serde_json::json!({
+                    "id": request["id"], "error": null, "result": format!("{height:064x}")
+                }))
+            },
+        ),
+    );
+    tokio::spawn(async move { axum::serve(listener, node).await.unwrap() });
+    let scratch = tempfile::tempdir().unwrap();
+    let root = scratch.path().join("https");
+    fs::create_dir(&root).unwrap();
+    let count = RETAINED_PUBLICATIONS as u64;
+    persist(&root, &state(count)).unwrap();
+    let distribution = PublicationDistribution::open(&root, rpc(scratch.path(), &origin)).unwrap();
+    // Reopening withdraws until a fresh commit; this test needs the newest one served.
+    distribution.disk.lock().unwrap().current.eligible = true;
+    let oldest = digest(&manifest(1));
+    let granted = distribution.authority(Some(&oldest)).await.unwrap();
+    assert_eq!(granted.authorized_manifest_sha256, oldest);
+    let outside = digest(&manifest(count + 1));
+    assert!(distribution.authority(Some(&outside)).await.is_err());
+}
