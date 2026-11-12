@@ -615,8 +615,10 @@ fn service_rules(a: &mut Adder, svc: &ServiceView, view: &View, now: u64, p: &Po
 
 /// Server errors and latency of the outer HTTP layer (or the edge's Caddy).
 ///
-/// Wallets retry the edge's reorg refusals (`reorg_refusals`, the service's
-/// workers' count in this window), so those 503s are not server errors. A
+/// Wallets retry reorg refusals, so those 503s are not server errors. The edge
+/// subtracts `reorg_refusals`, the service's workers' count in this window. A
+/// worker's outer HTTP layer also counts the refusals it answered, so a worker
+/// subtracts its own count. A
 /// query's HTTP duration includes the client's upload, so where a worker
 /// reports `transparent_shard_server_seconds` for an endpoint, that endpoint's
 /// latency is its server time instead.
@@ -658,10 +660,16 @@ fn http_rules(a: &mut Adder, name: &str, s: &Source, now: u64, reorg_refusals: f
         known = fresh && window.observed_seconds > 0 && !requests.is_empty() && errors <= completed;
     }
     let excused = if s.role == "edge" {
-        reorg_refusals.min(errors)
+        reorg_refusals
     } else {
-        0.
-    };
+        window
+            .values
+            .counters
+            .get("transparent_shard_reorg_unavailable_total")
+            .copied()
+            .unwrap_or(0.)
+    }
+    .min(errors);
     errors -= excused;
     let mut observed = format!("{errors:.0} server errors / {completed:.0} responses");
     if excused > 0. {
@@ -1044,6 +1052,32 @@ mod tests {
         // Refusals explain only that many 503s; the rest still count.
         let f = conditions(&edge(3.), 110, &Policy::default());
         assert_eq!(firing(&f, "transparent", "http_errors_edge"), Some(true));
+    }
+
+    #[test]
+    fn worker_reorg_refusals_are_not_its_server_errors() {
+        let archive = |refused: f64| {
+            let mut w = source("transparent", "archive-owner", 100, &[]);
+            w.recent.push_back(point(
+                &[
+                    ("pir_http_responses_total|code=2xx,endpoint=init", 18.),
+                    ("pir_http_responses_total|code=5xx,endpoint=init", 5.),
+                    ("transparent_shard_reorg_unavailable_total", refused),
+                ],
+                &[],
+            ));
+            view(
+                vec![service("transparent", Kind::History)],
+                vec![("archive", w)],
+            )
+        };
+        let rule = "http_errors_archive";
+        let f = conditions(&archive(0.), 110, &Policy::default());
+        assert_eq!(firing(&f, "transparent", rule), Some(true));
+        let f = conditions(&archive(5.), 110, &Policy::default());
+        assert_eq!(firing(&f, "transparent", rule), Some(false));
+        let f = conditions(&archive(3.), 110, &Policy::default());
+        assert_eq!(firing(&f, "transparent", rule), Some(true));
     }
 
     #[test]
