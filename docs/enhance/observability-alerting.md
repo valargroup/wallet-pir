@@ -814,7 +814,7 @@ txid display controller.
 | `recent_redundancy` | history | warning | fewer ready recent replicas than the service's `min_recent_replicas` (default 2; a one-replica fleet sets 1, leaving only `recent_availability`) | 120 s |
 | `coverage_<source>` | both | warning | source unavailable | 45 s |
 | `http_coverage_<source>` | history | warning | publisher or worker lacks HTTP observation version 1 | 45 s |
-| `http_errors_<source>` | both | warning | 5xx > 5% with ≥ 10 responses in 5 min; the edge excludes reorg refusals | – |
+| `http_errors_<source>` | both | warning | 5xx > 5% with ≥ 10 responses in 5 min, excluding reorg refusals | – |
 | `latency_<source>_<endpoint>` | both | warning | p99 > 2 s (metadata) or > 5 s (setup, query), ≥ 20 samples; Transparent query p99 is server time, after the upload | 120 s |
 | `memory_<source>`, `disk_<source>` | both | warning | host memory < 15% or disk < 10% available | 120 s |
 | `oom_<source>` | both | critical | new OOM kills of the source's main unit | – |
@@ -822,8 +822,9 @@ txid display controller.
 
 A short reorg makes workers answer metadata reads 503 with `publication
 invalidated by reorg` until the next publication, and wallets retry them. Each
-worker counts those in `transparent_shard_reorg_unavailable_total`, and the
-edge's error ratio subtracts the service's total in the window. Workers keep
+worker counts those in `transparent_shard_reorg_unavailable_total`. The
+edge's error ratio subtracts the service's total in the window, and each
+worker's subtracts its own, since its HTTP layer counts the same 503s. Workers keep
 serving `/metrics` while invalidated, so the refusals are observed. Long
 withdrawals still page through `withdrawn`.
 
