@@ -37,6 +37,13 @@ pub(super) trait Role: Send {
         client: &mut Client,
     ) -> impl Future<Output = Result<Input<Self::Selection>, Error>> + Send;
     fn objects(&self, selection: &Self::Selection) -> Vec<Object>;
+    /// An earlier publication to reserve with the same selection when peers
+    /// are not ready for `current` yet, so a role whose peers adopted a
+    /// publication it missed still advances. It needs fresh authority of its
+    /// own before it is reserved.
+    fn fallback(&self, _current: &Manifest) -> Option<Manifest> {
+        None
+    }
     fn reserve(
         &mut self,
         manifest: &Manifest,
@@ -147,6 +154,20 @@ impl<R: Role> Consumer for EnhanceConsumer<R> {
             .role
             .reserve(&candidate.manifest, &candidate.selection)
             .await?;
+        if candidate.promise.is_none() {
+            if let Some(earlier) = self.role.fallback(&candidate.manifest) {
+                // An earlier publication that lost authority leaves the pass
+                // deferred, exactly as an unready current one does.
+                if let Ok(observed) = self.client.authority(&earlier).await {
+                    if let Some(promise) = self.role.reserve(&earlier, &candidate.selection).await?
+                    {
+                        candidate.manifest = earlier;
+                        candidate.observed = observed;
+                        candidate.promise = Some(promise);
+                    }
+                }
+            }
+        }
         Ok(if candidate.promise.is_some() {
             PeerReservation::Reserved
         } else {
