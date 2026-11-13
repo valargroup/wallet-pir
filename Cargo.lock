@@ -3312,6 +3312,7 @@ dependencies = [
  "pir-publication",
  "pir-query-server",
  "pir-service-discovery",
+ "rayon",
  "reqwest",
  "serde",
  "serde_json",

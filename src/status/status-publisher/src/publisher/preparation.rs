@@ -1,6 +1,32 @@
 //! Status material and guarded authority operations supplied to the host engine.
 use super::*;
 use pir_publication::ObjectReference;
+use std::sync::OnceLock;
+
+/// Threads Status material is prepared on unless `STATUS_PREPARATION_THREADS`
+/// sets another positive count.
+const PREPARATION_THREADS: usize = 2;
+
+/// The pool Status material is prepared on. The other products in the unified
+/// publisher share the process's global rayon pool, so Status keeps its own and
+/// neither waits behind their preparation nor delays it.
+fn preparation_pool() -> &'static rayon::ThreadPool {
+    static POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
+    POOL.get_or_init(|| {
+        let threads = match std::env::var("STATUS_PREPARATION_THREADS") {
+            Ok(value) => value.parse().ok().filter(|n| *n > 0).unwrap_or_else(|| {
+                tracing::warn!(%value, "ignoring invalid STATUS_PREPARATION_THREADS");
+                PREPARATION_THREADS
+            }),
+            Err(_) => PREPARATION_THREADS,
+        };
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .thread_name(|i| format!("status-prep-{i}"))
+            .build()
+            .expect("Status preparation threads start")
+    })
+}
 
 pub(super) struct StatusPublication<'a> {
     shutdown: pir_pipeline::service::Shutdown,
@@ -66,15 +92,17 @@ impl pir_pipeline::publisher::Publication for StatusPublication<'_> {
             self.generation,
             self.epoch,
         );
-        tokio::task::spawn_blocking(move || -> Result<Generation, Failure> {
-            Ok(Generation::prepare(
-                &observed.snapshot,
-                generation,
-                epoch,
-                observed.observed_ms,
-                previous.as_ref(),
-            )?
-            .0)
+        tokio::task::spawn_blocking(move || {
+            preparation_pool().install(|| -> Result<Generation, Failure> {
+                Ok(Generation::prepare(
+                    &observed.snapshot,
+                    generation,
+                    epoch,
+                    observed.observed_ms,
+                    previous.as_ref(),
+                )?
+                .0)
+            })
         })
         .await?
     }
@@ -144,5 +172,38 @@ impl pir_pipeline::publisher::Publication for StatusPublication<'_> {
             "Status prepared publication"
         );
         Ok(prepared)
+    }
+}
+
+#[cfg(test)]
+mod pool_tests {
+    use super::preparation_pool;
+    use rayon::prelude::*;
+    use std::{sync::mpsc, time::Duration};
+
+    #[test]
+    fn preparation_runs_while_the_global_pool_is_busy() {
+        // Hold every global worker until the Status work has finished.
+        let (release, held) = mpsc::channel::<()>();
+        let held = std::sync::Arc::new(std::sync::Mutex::new(held));
+        let (started, busy) = mpsc::channel();
+        for _ in 0..rayon::current_num_threads() {
+            let (held, started) = (held.clone(), started.clone());
+            rayon::spawn(move || {
+                started.send(()).unwrap();
+                let _ = held.lock().unwrap().recv_timeout(Duration::from_secs(30));
+            });
+        }
+        for _ in 0..rayon::current_num_threads() {
+            busy.recv_timeout(Duration::from_secs(10)).unwrap();
+        }
+        let (done, finished) = mpsc::channel();
+        std::thread::spawn(move || {
+            let sum: u64 = preparation_pool().install(|| (0..10_000u64).into_par_iter().sum());
+            done.send(sum).unwrap();
+        });
+        let sum = finished.recv_timeout(Duration::from_secs(10));
+        drop(release);
+        assert_eq!(sum, Ok(49_995_000));
     }
 }

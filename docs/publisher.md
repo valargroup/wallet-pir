@@ -168,7 +168,10 @@ Do not proxy `/health`, `/ready` or any other management or control route. The
 document is compatibility metadata only; it is not health and grants no
 publication authority.
 
-Status retains a bounded dedicated runtime. Receiver also uses a dedicated
+Status retains a bounded dedicated runtime and prepares material on its own
+rayon pool, two threads unless `STATUS_PREPARATION_THREADS` sets another count,
+so its rebuilds neither wait behind other products' preparation on the global
+pool nor delay it. Receiver also uses a dedicated
 runtime thread because its SQLite connections belong to their owner thread.
 Other product tasks remain independently scheduled with existing preparation
 and admission limits. These are scheduling boundaries, not process memory
