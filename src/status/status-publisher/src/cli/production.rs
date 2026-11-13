@@ -46,15 +46,30 @@ pub async fn probe_live(
     let mut wallet = super::http_client::HttpClient::new(&origin, http);
     let began = Instant::now();
     for _ in 0..queries {
+        // The session initializes on its own, so a block published since the
+        // manifest above gives it a later anchor. That anchor is accepted here
+        // and must be canonical once the answer is in.
+        let mut session = (block.height, anchor);
         let answer = wallet
-            .lookup(txid, Some(block.height), |_| {
+            .lookup(txid, Some(block.height), |manifest| {
+                session = if manifest.anchor_height > block.height {
+                    (manifest.anchor_height, manifest.anchor_hash)
+                } else {
+                    (block.height, anchor)
+                };
                 Ok(AcceptedAnchor {
                     network,
-                    height: block.height,
-                    hash: anchor,
+                    height: session.0,
+                    hash: session.1,
                 })
             })
             .await?;
+        if session.0 > block.height {
+            require(
+                canonical_hash(&rpc, session.0).await? == session.1,
+                "live session anchor is not canonical",
+            )?;
+        }
         let current_anchor = rpc.block_hash(u64::from(block.height)).await?;
         require(
             current_anchor == anchor,
@@ -72,6 +87,18 @@ pub async fn probe_live(
             "source":"canonical_rpc","txid_logged":false})
     );
     Ok(())
+}
+
+/// The node's hash at `height`, waiting up to 5 s for a block the publisher's node
+/// reported before this one.
+async fn canonical_hash(rpc: &ZakuraClient, height: u32) -> Result<Hash, AnyError> {
+    for _ in 0..10 {
+        if let Ok(hash) = rpc.block_hash(u64::from(height)).await {
+            return Ok(hash);
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    Ok(rpc.block_hash(u64::from(height)).await?)
 }
 
 /// One encrypted lookup of a random txid, accepted against the service's own fresh
