@@ -302,6 +302,12 @@ async fn acquire_history(
 static INTERRUPT_AFTER_INTENT: std::sync::Mutex<std::collections::BTreeSet<PathBuf>> =
     std::sync::Mutex::new(std::collections::BTreeSet::new());
 
+/// Publication roots whose next activation a test asks to stop once its intent
+/// is written, as a service stop arriving there would.
+#[cfg(test)]
+static SHUTDOWN_AFTER_INTENT: std::sync::Mutex<std::collections::BTreeSet<PathBuf>> =
+    std::sync::Mutex::new(std::collections::BTreeSet::new());
+
 fn unix_now() -> f64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
