@@ -39,6 +39,12 @@ const CATCH_UP_PAUSE: std::time::Duration = std::time::Duration::from_secs(1);
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
+/// Health reports one run has seen, by the publication each names. Health names a
+/// publication several seconds before the origin serves it, and with publications
+/// a few seconds apart it may already name the next one once a lookup ends, so the
+/// probed publication's report is often one an earlier read saw.
+type Reports = std::sync::Mutex<std::collections::HashMap<String, Value>>;
+
 /// The probe's command line.
 #[derive(Clone, Parser)]
 pub struct Args {
@@ -116,11 +122,12 @@ fn bytes<const N: usize>(hex: &str) -> Option<[u8; N]> {
 /// Runs the probe with the embedded mainnet fixture, prints its JSON line and returns
 /// whether every check passed.
 pub async fn run(args: Args) -> bool {
+    let reports = Reports::default();
     let (result, lookup, waited) = until_caught_up(CATCH_UP, CATCH_UP_PAUSE, || {
-        let args = args.clone();
+        let (args, reports) = (args.clone(), &reports);
         async move {
             let mut lookup = None;
-            let result = probe(args, MAINNET_FIXTURE, &mut lookup).await;
+            let result = probe(args, MAINNET_FIXTURE, &mut lookup, reports).await;
             (result, lookup)
         }
     })
@@ -175,11 +182,13 @@ where
 }
 
 /// The failed check for the JSON `fixture`, or `None` when every check passes. `lookup`
-/// records the encrypted queries made and whether they found the fixture's payment.
+/// records the encrypted queries made and whether they found the fixture's payment;
+/// `reports` collects the health reports read, across attempts.
 async fn probe(
     args: Args,
     fixture: &[u8],
     lookup: &mut Option<(u32, bool)>,
+    reports: &Reports,
 ) -> Result<Option<Failure>> {
     let Ok(fixture) = serde_json::from_slice::<Fixture>(fixture) else {
         return Ok(Some(("oracle_invalid", json!({"fixture": "malformed"}))));
@@ -218,6 +227,11 @@ async fn probe(
         .timeout(std::time::Duration::from_secs(20))
         .redirect(reqwest::redirect::Policy::none())
         .build()?;
+    // Health usually names a publication before the origin serves it. A failed read
+    // here is retried after the lookup.
+    if let Some(url) = &args.health_url {
+        let _ = read_health(&http, url, reports).await;
+    }
 
     let origin = args.origin.trim_end_matches('/');
     let genesis = Network::Mainnet.genesis_hash();
@@ -384,7 +398,7 @@ async fn probe(
         .chain(segment_anchors(segment));
     still_anchored(&rpc, anchors.map(|(anchor, _, _)| anchor)).await?;
     match &args.health_url {
-        Some(url) => indexer_report(&http, url, &hex::encode(head.inventory)).await,
+        Some(url) => indexer_report(&http, url, &hex::encode(head.inventory), reports).await,
         None => Ok(None),
     }
 }
@@ -792,26 +806,39 @@ async fn check_filters(
     Ok(None)
 }
 
-/// The indexer's payout check from health, which must report serving the probed
-/// publication `id`. Otherwise the report may describe another publication, such as
-/// one rotated in since the lookup, or another service. Confirmed missing payouts
-/// fail the probe. Unavailable audit data is diagnostic only.
-async fn indexer_report(
-    http: &reqwest::Client,
-    health_url: &str,
-    id: &str,
-) -> Result<Option<Failure>> {
+/// Reads health and records the report under the publication it names.
+async fn read_health(http: &reqwest::Client, health_url: &str, reports: &Reports) -> Result<Value> {
     // The indexer's monitoring channel, not wallet data: a bad body is an availability
     // failure, not an answer mismatch (see `fetch`).
     let response = http.get(health_url).send().await?.error_for_status()?;
     let health: Value = serde_json::from_slice(&read_limited(response, MAX_HEALTH_BYTES).await?)?;
-    let serving = health["serving"].as_str();
-    if serving != Some(id) {
+    if let Some(serving) = health["serving"].as_str() {
+        reports
+            .lock()
+            .unwrap()
+            .insert(serving.to_owned(), health.clone());
+    }
+    Ok(health)
+}
+
+/// The indexer's payout check from a health report that names the probed publication
+/// `id`, read now or earlier in this run (see [`Reports`]). A report naming another
+/// publication may describe one rotated in since the lookup, or another service.
+/// Confirmed missing payouts fail the probe. Unavailable audit data is diagnostic only.
+async fn indexer_report(
+    http: &reqwest::Client,
+    health_url: &str,
+    id: &str,
+    reports: &Reports,
+) -> Result<Option<Failure>> {
+    let latest = read_health(http, health_url, reports).await;
+    let Some(health) = reports.lock().unwrap().get(id).cloned() else {
+        let serving = latest?["serving"].as_str().map(str::to_owned);
         return Ok(Some((
             "report_unavailable",
             json!({"probed": id, "health_serving": serving}),
         )));
-    }
+    };
     let count = |field: &str| health["indexer"][field].as_u64();
     match (count("payouts_missing"), count("payouts_uncheckable")) {
         (Some(missing), _) if missing > 0 => Ok(Some((
@@ -1323,6 +1350,46 @@ mod tests {
         assert!(failure.is_none(), "{failure:?}");
     }
 
+    /// Health that moved on to the next publication since an earlier read still
+    /// vouches for the probed one through that earlier report. A publication no
+    /// report named is unavailable, and an earlier report's missing payouts still fail.
+    #[tokio::test]
+    async fn an_earlier_report_covers_a_publication_health_has_moved_past() {
+        let serving = Arc::new(std::sync::Mutex::new(json!({})));
+        let app = Router::new().route(
+            "/health",
+            routing::get({
+                let serving = serving.clone();
+                move || async move { Json(serving.lock().unwrap().clone()) }
+            }),
+        );
+        let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/health", socket.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
+        let http = reqwest::Client::new();
+        let report = |id: &str, missing: u64| json!({"serving": id, "indexer": {"payouts_missing": missing, "payouts_uncheckable": 0}});
+
+        let reports = Reports::default();
+        *serving.lock().unwrap() = report("a", 0);
+        read_health(&http, &url, &reports).await.unwrap();
+        *serving.lock().unwrap() = report("b", 2);
+        assert_eq!(
+            indexer_report(&http, &url, "a", &reports).await.unwrap(),
+            None
+        );
+        let (category, detail) = indexer_report(&http, &url, "c", &reports)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(category, "report_unavailable");
+        assert_eq!(detail["health_serving"], "b");
+        // The report for "b" was recorded by the reads above.
+        assert_eq!(
+            indexer_report(&http, &url, "b", &reports).await.unwrap(),
+            Some(("answer_mismatch", json!({"payouts_missing": 2})))
+        );
+    }
+
     /// [`fetch`] against a real server: a successful body within its bound that decodes
     /// is the value; a successful body over its bound or one the decoder refuses is an
     /// `answer_mismatch` naming the artifact; a redirect or a failure status is an
@@ -1459,7 +1526,7 @@ mod tests {
         .await;
         let mut lookup = None;
         let args = publish(start, end, &rpc).await;
-        let (category, detail) = probe(args, fixture.as_bytes(), &mut lookup)
+        let (category, detail) = probe(args, fixture.as_bytes(), &mut lookup, &Reports::default())
             .await
             .unwrap()
             .unwrap();
@@ -1610,7 +1677,8 @@ mod tests {
             let fixture = fixture.to_string();
             async move {
                 let mut lookup = None;
-                let failure = probe(args, fixture.as_bytes(), &mut lookup).await;
+                let failure =
+                    probe(args, fixture.as_bytes(), &mut lookup, &Reports::default()).await;
                 (failure.unwrap(), lookup)
             }
         };
