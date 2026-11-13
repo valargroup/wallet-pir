@@ -79,6 +79,14 @@ pub(super) async fn activate_history(
     {
         return Err("interrupted after writing activation intent".into());
     }
+    #[cfg(test)]
+    if SHUTDOWN_AFTER_INTENT
+        .lock()
+        .unwrap()
+        .remove(&config.publication_root)
+    {
+        authority.0.shutdown.request();
+    }
     if authority.0.epoch.load(Ordering::Acquire) != epoch
         || rpc.block_hash_display(height).await? != hash
     {
@@ -98,6 +106,14 @@ pub(super) async fn activate_history(
     {
         let _gate = authority.0.publication_gate.lock().unwrap();
         if authority.0.shutdown.requested() {
+            // The active pointer has not moved, so the intent goes with the
+            // candidate and a restart restores the active publication cheaply.
+            match std::fs::remove_file(config.publication_root.join("activation.json")) {
+                Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+                    return Err(error.into())
+                }
+                _ => {}
+            }
             return Err(transparent_shared::publication::Stopped.into());
         }
         if authority.0.epoch.load(Ordering::Acquire) != epoch {

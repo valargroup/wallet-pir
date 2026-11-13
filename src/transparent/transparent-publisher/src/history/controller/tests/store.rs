@@ -407,6 +407,9 @@ enum Interrupt {
     /// Once activation wrote the candidate's completion evidence and
     /// `activation.json`, before the active pointer moves.
     AfterActivationIntent,
+    /// A service stop requested at that same point, which activation
+    /// observes before moving the active pointer.
+    ShutdownAfterActivationIntent,
 }
 
 /// A publication interrupted at `interrupt` leaves complete durable state: the
@@ -499,6 +502,17 @@ async fn interrupted_publication_restarts_from_complete_state(interrupt: Interru
                 .to_string();
             assert!(error.contains("interrupted after writing"), "{error}");
         }
+        Interrupt::ShutdownAfterActivationIntent => {
+            super::super::SHUTDOWN_AFTER_INTENT
+                .lock()
+                .unwrap()
+                .insert(config.publication_root.clone());
+            let error = publish_follow(config, &follow.client, &follow.store, &first)
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("finalization stopped"), "{error}");
+        }
     }
     drop(first);
     let interrupted: Vec<_> = candidates(config).difference(&before).cloned().collect();
@@ -518,6 +532,9 @@ async fn interrupted_publication_restarts_from_complete_state(interrupt: Interru
             serde_json::from_slice(&std::fs::read(&intent).unwrap()).unwrap();
         assert_eq!(&pending.directory, interrupted);
         assert!(completion.exists());
+    } else if interrupt == Interrupt::ShutdownAfterActivationIntent {
+        // The stop withdrew the intent; the candidate's evidence is unused.
+        assert!(!intent.exists() && completion.exists());
     } else {
         assert!(!intent.exists() && !completion.exists());
     }
@@ -607,6 +624,12 @@ async fn a_publication_interrupted_before_completion_restarts_complete() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_publication_interrupted_after_its_activation_intent_restarts_complete() {
     interrupted_publication_restarts_from_complete_state(Interrupt::AfterActivationIntent).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stop_after_the_activation_intent_restarts_cheaply() {
+    interrupted_publication_restarts_from_complete_state(Interrupt::ShutdownAfterActivationIntent)
+        .await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
