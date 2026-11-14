@@ -49,6 +49,16 @@
   after two hours, so each publication checks only recent items instead of every
   payout ever recorded. The audit tables are additive, so a rollback keeps working.
 
+- pir-apm checks the refund audit against NEAR instead of a timer.
+  `receiver_refund_crosscheck_idle` warned after 48 h without a newly checked
+  refund, but refunds to an Orchard receiver come in clumps with gaps of up to a
+  week, so it fired on 2026-11-14 with the audit healthy.
+  `receiver_refund_crosscheck_behind` replaces it: with the NEAR key, APM reads
+  the explorer's refunded swaps itself and warns when one to a unified address has
+  been listed for 3 h without the audit's watermark passing it. Policy field
+  `receiver_refund_idle_seconds` becomes `receiver_refund_behind_seconds`. An open
+  idle incident is retired.
+
 - The NEAR audit finds excess refunds that NEAR lists beside the payout, as a second
   destination transaction, as it has for most since 2026-11-04. The audit looked
   only for a second origin transaction, so it saw almost none and pir-apm's
