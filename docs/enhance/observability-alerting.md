@@ -158,7 +158,7 @@ null report retires nothing.
 | --- | --- | --- |
 | `receiver_payout_crosscheck_idle` | `indexer.payouts_checked` has not increased for `receiver_audit_idle_seconds` (6 h) | 0 |
 | `receiver_excess_refund_crosscheck_idle` | `indexer.excess_refunds_checked_through` has not advanced for `receiver_excess_refund_idle_seconds` (6 h) | 0 |
-| `receiver_refund_crosscheck_idle` | `indexer.refunds_checked_through` has not advanced for `receiver_refund_idle_seconds` (48 h) | 0 |
+| `receiver_refund_crosscheck_idle` | `indexer.refunds_checked_through` has not advanced for `receiver_refund_idle_seconds` (8 days) | 0 |
 | `receiver_refund_not_found` | `refunds_missing_new + refunds_uncheckable_new + refunds_unconfirmed_new > 0` (last 3 h) | `receiver_refund_missing_hold_seconds` (1 h) |
 | `receiver_refunds_not_found_repeatedly` | `refunds_missing_day >= receiver_refund_pattern_count` (3) | `receiver_refund_missing_hold_seconds` (1 h) |
 
@@ -191,7 +191,7 @@ Optional `PIR_APM_ALERT_POLICY` names a JSON file. Fields and defaults:
   "receiver_audit_stale_seconds": 1800,
   "receiver_audit_idle_seconds": 21600,
   "receiver_excess_refund_idle_seconds": 21600,
-  "receiver_refund_idle_seconds": 172800,
+  "receiver_refund_idle_seconds": 691200,
   "receiver_refund_missing_hold_seconds": 3600,
   "receiver_refund_pattern_count": 3,
   "quality": {

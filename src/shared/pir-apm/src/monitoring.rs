@@ -576,7 +576,9 @@ pub struct Policy {
     pub receiver_audit_idle_seconds: u64,
     /// How long the excess refund cross-check watermark may stay put.
     pub receiver_excess_refund_idle_seconds: u64,
-    /// How long the REFUNDED swap cross-check watermark may stay put.
+    /// How long the REFUNDED swap cross-check watermark may stay put. Refunds to an
+    /// Orchard receiver come in clumps, with quiet spells of up to 7 days over the
+    /// year to 2026-11.
     pub receiver_refund_idle_seconds: u64,
     /// Hold for both refund not-found conditions.
     pub receiver_refund_missing_hold_seconds: u64,
@@ -606,7 +608,7 @@ impl Default for Policy {
             receiver_audit_stale_seconds: 1800,
             receiver_audit_idle_seconds: 21600,
             receiver_excess_refund_idle_seconds: 21600,
-            receiver_refund_idle_seconds: 172800,
+            receiver_refund_idle_seconds: 691200,
             receiver_refund_missing_hold_seconds: 3600,
             receiver_refund_pattern_count: 3,
             quality: Default::default(),
@@ -2223,7 +2225,10 @@ mod tests {
         d.monitoring.receiver.observe(Some(&body(at)), at);
         assert_eq!(check(&d, at, EXCESS_REFUND_IDLE).firing, Some(true));
         assert_eq!(check(&d, at, REFUND_IDLE).firing, None);
-        let at = a + 172800;
+        let at = a + 4 * 86400;
+        d.monitoring.receiver.observe(Some(&body(at)), at);
+        assert_eq!(check(&d, at, REFUND_IDLE).firing, None);
+        let at = a + 691200;
         d.monitoring.receiver.observe(Some(&body(at)), at);
         assert_eq!(check(&d, at, REFUND_IDLE).firing, Some(true));
     }
@@ -2247,7 +2252,7 @@ mod tests {
         let not_found = check(&d, t, REFUND_NOT_FOUND);
         assert_eq!(not_found.firing, None);
         assert_eq!(not_found.observed, "Refund counts unavailable");
-        let later = t + 172800;
+        let later = t + 691200;
         d.monitoring.receiver.observe(Some(&body(later)), later);
         assert_eq!(check(&d, later, REFUND_IDLE).firing, Some(true));
         assert_eq!(check(&d, later, REFUND_NOT_FOUND).firing, None);
@@ -2325,9 +2330,9 @@ mod tests {
                 }),
             )
         };
-        // The feed reports a null watermark for 48 h, so its idle warning fires.
+        // The feed reports a null watermark for 8 days, so its idle warning fires.
         let mut now = start;
-        while now <= start + 48 * hour {
+        while now <= start + 192 * hour {
             sample(
                 &mut store,
                 &mut d,
