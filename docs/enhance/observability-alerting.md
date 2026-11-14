@@ -154,11 +154,29 @@ none. A successful response that has `near.reads` and an indexer report but no
 longer lists a refund feed retires that feed's incidents. A failed request or
 null report retires nothing.
 
+Refunded swaps that pay an Orchard receiver are rare and come in clumps, with
+gaps of up to a week, so an idle timer cannot watch that feed.
+`receiver_refund_crosscheck_behind` compares it with NEAR instead. When the APM
+unit also loads the publisher's NEAR key (`NEAR_INTENTS_EXPLORER`, the same
+`EnvironmentFile`), APM reads the explorer's newest 100 refunded swaps out of ZEC
+every 10 minutes and notes when it first sees each refund to a `u1` address with a
+transaction listed. The audit's watermark is its own sighting plus an hour, so
+a checked refund puts it at least 50 minutes past APM's sighting. The condition
+fires when a refund first seen three hours ago is still not within 30 minutes of
+the watermark. It does not decode the address or read the refund type, so a
+record the indexer stops recognising still counts. Refunds already listed at
+APM's first read, or after 20 minutes without one, are not dated and not
+checked. The condition is unknown until the watermark advances after a restart,
+and while explorer reads fail. The watermark is a maximum, so one skipped
+refund among checked ones does not fire. Without the key there is no such
+condition. A NEAR key rotation renames the file, so update the APM drop-in with
+the publisher's.
+
 | Key | Fires when | Hold |
 | --- | --- | --- |
 | `receiver_payout_crosscheck_idle` | `indexer.payouts_checked` has not increased for `receiver_audit_idle_seconds` (6 h) | 0 |
 | `receiver_excess_refund_crosscheck_idle` | `indexer.excess_refunds_checked_through` has not advanced for `receiver_excess_refund_idle_seconds` (6 h) | 0 |
-| `receiver_refund_crosscheck_idle` | `indexer.refunds_checked_through` has not advanced for `receiver_refund_idle_seconds` (48 h) | 0 |
+| `receiver_refund_crosscheck_behind` | NEAR has listed a refund to a unified address for `receiver_refund_behind_seconds` (3 h) and `indexer.refunds_checked_through` has not passed it | 0 |
 | `receiver_refund_not_found` | `refunds_missing_new + refunds_uncheckable_new + refunds_unconfirmed_new > 0` (last 3 h) | `receiver_refund_missing_hold_seconds` (1 h) |
 | `receiver_refunds_not_found_repeatedly` | `refunds_missing_day >= receiver_refund_pattern_count` (3) | `receiver_refund_missing_hold_seconds` (1 h) |
 
@@ -191,7 +209,7 @@ Optional `PIR_APM_ALERT_POLICY` names a JSON file. Fields and defaults:
   "receiver_audit_stale_seconds": 1800,
   "receiver_audit_idle_seconds": 21600,
   "receiver_excess_refund_idle_seconds": 21600,
-  "receiver_refund_idle_seconds": 172800,
+  "receiver_refund_behind_seconds": 10800,
   "receiver_refund_missing_hold_seconds": 3600,
   "receiver_refund_pattern_count": 3,
   "quality": {
@@ -224,7 +242,7 @@ described in [Transparent service alerts](#transparent-service-alerts) and
 [Transparent RAM capacity](#transparent-ram-capacity). Any field may be left
 out to keep its default; warnings must not exceed their critical limits.
 The policy refuses unknown fields, so remove the `receiver_*_idle_seconds`,
-`receiver_refund_missing_hold_seconds` and `receiver_refund_pattern_count`
+`receiver_refund_behind_seconds`, `receiver_refund_missing_hold_seconds` and `receiver_refund_pattern_count`
 fields before rolling back to an APM that predates them.
 
 The independent checker requires:
@@ -289,6 +307,7 @@ Investigate by check family:
 | `service_canary_*` | Run the probe's configured command by hand on the monitor host to read its error. `block_undecodable` usually means the probe predates a network upgrade ([refresh it](#seven-day-quality-history-and-transparent-page)). |
 | `external_monitor`, `apm_progress` | Inspect systemd, loop progress, and state-database permissions on the named monitoring host. |
 | `receiver_payout_crosscheck_paused`, `receiver_health` | Read the Receiver health route on the coordinator, then the publisher journal for `near feed deferred`; a feed with no stored cursor starts from `near_since`. |
+| `receiver_refund_crosscheck_behind` | Look up the listed deposit addresses on the NEAR explorer and compare with `refunds_*` on the Receiver health route. A refund that is `refundType` `INTENTS`, or to a unified address without an Orchard receiver, is not one the audit checks. Otherwise the indexer's refund read is missing swaps: check the publisher journal for `near feed read feed="near-refund-audit"` and the explorer's record fields. |
 | `receiver_*_crosscheck_idle` | Read `indexer` on the Receiver health route. Uncheckable counts point at the explorer not reporting txids. Otherwise compare with recent NEAR Intents traffic and the chain tip before suspecting the feed. |
 | `receiver_refund_not_found`, `receiver_refunds_not_found_repeatedly` | Read the `refunds_*` counts on the Receiver health route, then inspect the swaps by hand: a deposit-only candidate list, a late explorer listing, a 1Click outage (`refunds_unconfirmed_new`), or a refund Receiver PIR cannot find (OVK or pool change). |
 | `*delivery*` | Check credential presence, sanitized last failure, and oldest pending age; preserve the outbox. |
@@ -329,7 +348,7 @@ remain deployed. Never delete incident/outbox state to clear an alarm.
 
 Before rolling APM back past the NEAR cross-check conditions, make sure
 `receiver_payout_crosscheck_idle`, `receiver_excess_refund_crosscheck_idle`,
-`receiver_refund_crosscheck_idle`, `receiver_refund_not_found` and
+`receiver_refund_crosscheck_behind`, `receiver_refund_not_found` and
 `receiver_refunds_not_found_repeatedly` are not active. An older APM never
 evaluates these keys, so an open one would stay open. Wait for it to recover,
 or run the publisher without its refund feeds first so this APM retires the

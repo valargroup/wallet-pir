@@ -29,6 +29,9 @@ pub struct View {
     pub peer: Peer,
     pub publication: Publication,
     pub receiver: ReceiverAudit,
+    /// `None` without a NEAR explorer key.
+    #[serde(default)]
+    pub refund_reference: Option<RefundReference>,
 }
 /// Fresh measurements used by publication rules, also retained by the observer.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -187,10 +190,119 @@ pub struct RefundCounts {
     /// Deposit addresses of the missing refunds due in the last day.
     pub missing_deposits: Vec<String>,
 }
+/// This monitor's own reading of the refunded swaps out of ZEC that NEAR lists,
+/// which the audit's refund watermark is checked against. It keeps a refund when
+/// `refundTo` is a unified address and a transaction is listed. That is looser
+/// than the indexer's own filter on purpose, so a record the indexer stops
+/// recognising still counts here.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct RefundReference {
+    /// When the last explorer read succeeded, 0 before one.
+    pub read_at: u64,
+    /// The kept refunds by deposit address.
+    pub seen: BTreeMap<String, Sighting>,
+}
+/// When this monitor first saw a listed refund.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Sighting {
+    pub at: u64,
+    /// It was already listed at a first read or after a gap in reads, so `at` is
+    /// not when NEAR listed it and it is not checked.
+    pub baseline: bool,
+}
+/// One explorer record, reduced to what [`RefundReference`] reads. Every field takes
+/// any JSON, so a record NEAR reshapes is left out instead of failing the read.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ListedRefund {
+    #[serde(default)]
+    deposit_address: serde_json::Value,
+    #[serde(default)]
+    status: serde_json::Value,
+    #[serde(default)]
+    refund_to: serde_json::Value,
+    #[serde(default)]
+    origin_chain_tx_hashes: serde_json::Value,
+    #[serde(default)]
+    destination_chain_tx_hashes: serde_json::Value,
+}
+impl ListedRefund {
+    /// The deposit address of a refund to a unified address with a listed
+    /// transaction, kept only as a short printable string since it reaches Slack.
+    fn kept(&self) -> Option<&str> {
+        let listed = |hashes: &serde_json::Value| {
+            hashes
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|hash| hash.as_str())
+                .any(|hash| hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_hexdigit()))
+        };
+        let address = self.deposit_address.as_str()?;
+        (self.status.as_str() == Some("REFUNDED")
+            && self
+                .refund_to
+                .as_str()
+                .is_some_and(|to| to.starts_with("u1"))
+            && (listed(&self.origin_chain_tx_hashes) || listed(&self.destination_chain_tx_hashes))
+            && (1..=128).contains(&address.len())
+            && address.bytes().all(|b| b.is_ascii_graphic()))
+        .then_some(address)
+    }
+}
+/// How often the reference reads the explorer. The indexer shares the key's one
+/// request per 5 s.
+const REFERENCE_INTERVAL_SECONDS: u64 = 600;
+/// A read this long after the last one cannot date what it finds, and the
+/// reference is unknown once its last read is this old.
+const REFERENCE_GAP_SECONDS: u64 = 2 * REFERENCE_INTERVAL_SECONDS;
+/// The watermark covers a refund first seen at `t` once it reaches `t` plus this.
+/// The watermark is the indexer's own sighting plus its hour of grace
+/// (`COMPLETION_GRACE_SECS` in receiver-indexer), and the indexer sights a refund at
+/// most one reference interval before this monitor, so a checked refund puts it at
+/// `t` + 50 min or later.
+const REFERENCE_COVER_SECONDS: u64 = 1800;
+/// Sightings are dropped after this long. NEAR's newest 100 refunds span about 12
+/// days.
+const REFERENCE_KEEP_SECONDS: u64 = 30 * 86400;
+impl RefundReference {
+    /// Records one successful explorer read at `now`. A refund keeps its first
+    /// sighting, including through a read that omits it.
+    fn observe(&mut self, listed: &[ListedRefund], now: u64) {
+        let baseline =
+            self.read_at == 0 || now.saturating_sub(self.read_at) > REFERENCE_GAP_SECONDS;
+        for address in listed.iter().filter_map(ListedRefund::kept) {
+            self.seen
+                .entry(address.to_owned())
+                .or_insert(Sighting { at: now, baseline });
+        }
+        self.seen
+            .retain(|_, seen| now.saturating_sub(seen.at) <= REFERENCE_KEEP_SECONDS);
+        self.read_at = now;
+    }
+    /// The refunds first seen at least `after` seconds ago that `watermark` does not
+    /// cover, oldest first, as deposit address and sighting.
+    fn unchecked(&self, watermark: Option<u64>, now: u64, after: u64) -> Vec<(&str, u64)> {
+        let mut unchecked: Vec<_> = self
+            .seen
+            .iter()
+            .filter(|(_, seen)| {
+                !seen.baseline
+                    && now.saturating_sub(seen.at) >= after
+                    && watermark.is_none_or(|w| w < seen.at + REFERENCE_COVER_SECONDS)
+            })
+            .map(|(address, seen)| (address.as_str(), seen.at))
+            .collect();
+        unchecked.sort_by_key(|&(_, at)| at);
+        unchecked
+    }
+}
 const PAYOUT_FEED: &str = "near-payout-audit";
 const REFUND_FEED: &str = "near-refund-audit";
 const EXCESS_REFUND_FEED: &str = "near-excess-refund-audit";
-const REFUND_IDLE: &str = "receiver_refund_crosscheck_idle";
+const REFUND_BEHIND: &str = "receiver_refund_crosscheck_behind";
+/// The idle timer [`REFUND_BEHIND`] replaced. An incident it left open is retired.
+const REFUND_IDLE_REPLACED: &str = "receiver_refund_crosscheck_idle";
 const EXCESS_REFUND_IDLE: &str = "receiver_excess_refund_crosscheck_idle";
 const REFUND_NOT_FOUND: &str = "receiver_refund_not_found";
 const REFUND_PATTERN: &str = "receiver_refunds_not_found_repeatedly";
@@ -542,6 +654,13 @@ pub fn start(dashboard: SharedDashboard, config: Config) -> Result<()> {
     }
     if let Ok(url) = std::env::var("PIR_APM_RECEIVER_HEALTH_URL") {
         tokio::spawn(receiver_loop(dashboard.clone(), url));
+        // The key the publisher's audit reads NEAR with.
+        if let Some(key) = std::env::var("NEAR_INTENTS_EXPLORER")
+            .ok()
+            .filter(|key| !key.is_empty())
+        {
+            tokio::spawn(refund_reference_loop(dashboard.clone(), key));
+        }
     }
     if let Ok(url) = std::env::var("PIR_APM_PEER_STATUS_URL") {
         tokio::spawn(peer_loop(dashboard, url));
@@ -576,8 +695,8 @@ pub struct Policy {
     pub receiver_audit_idle_seconds: u64,
     /// How long the excess refund cross-check watermark may stay put.
     pub receiver_excess_refund_idle_seconds: u64,
-    /// How long the REFUNDED swap cross-check watermark may stay put.
-    pub receiver_refund_idle_seconds: u64,
+    /// How long a refund NEAR lists to a unified address may go unchecked.
+    pub receiver_refund_behind_seconds: u64,
     /// Hold for both refund not-found conditions.
     pub receiver_refund_missing_hold_seconds: u64,
     /// Refunded swaps due in one day and not found that make a pattern.
@@ -606,7 +725,7 @@ impl Default for Policy {
             receiver_audit_stale_seconds: 1800,
             receiver_audit_idle_seconds: 21600,
             receiver_excess_refund_idle_seconds: 21600,
-            receiver_refund_idle_seconds: 172800,
+            receiver_refund_behind_seconds: 10800,
             receiver_refund_missing_hold_seconds: 3600,
             receiver_refund_pattern_count: 3,
             quality: Default::default(),
@@ -642,7 +761,7 @@ impl Policy {
                     p.receiver_audit_stale_seconds,
                     p.receiver_audit_idle_seconds,
                     p.receiver_excess_refund_idle_seconds,
-                    p.receiver_refund_idle_seconds,
+                    p.receiver_refund_behind_seconds,
                     p.receiver_refund_missing_hold_seconds,
                     p.receiver_refund_pattern_count,
                 ]
@@ -1161,15 +1280,6 @@ pub fn conditions(d: &DashboardData, now: u64, p: &Policy) -> Vec<Condition> {
                 "quiet swap traffic, a paused chain, the explorer not reporting refund \
                  txids, 1Click status being unavailable, or reads returning no usable swaps",
             ),
-            (
-                REFUND_IDLE,
-                "refunds",
-                receiver.refunds.as_ref().map(|f| &f.progress),
-                p.receiver_refund_idle_seconds,
-                &refund_uncheckable,
-                "few refunded swaps, a paused chain, the explorer not reporting refund \
-                 txids, or reads returning no usable swaps",
-            ),
         ] {
             let Some(progress) = progress else { continue };
             let firing = sampled.then(|| progress.idle(now, threshold)).flatten();
@@ -1180,6 +1290,33 @@ pub fn conditions(d: &DashboardData, now: u64, p: &Policy) -> Vec<Condition> {
                 firing,
                 idle_observed(what, progress, now, firing, detail, causes),
                 format!("no new NEAR {what} checked for {}", span(threshold)),
+                0,
+                receiver.sampled_at,
+            );
+        }
+        if let (Some(feed), Some(reference)) = (&receiver.refunds, &d.monitoring.refund_reference) {
+            let after = p.receiver_refund_behind_seconds;
+            let unchecked = reference.unchecked(feed.progress.value, now, after);
+            let read = reference.read_at > 0
+                && now.saturating_sub(reference.read_at) <= REFERENCE_GAP_SECONDS;
+            // Clear needs a watermark this monitor has seen advance, so an APM
+            // restart, which forgets its sightings, cannot recover an incident.
+            let firing = match () {
+                _ if !sampled => None,
+                _ if !unchecked.is_empty() => Some(true),
+                _ if read && feed.progress.progressed_at.is_some() => Some(false),
+                _ => None,
+            };
+            add(
+                REFUND_BEHIND.into(),
+                "receiver".into(),
+                "warning",
+                firing,
+                behind_observed(reference, &unchecked, now, read),
+                format!(
+                    "a refund NEAR lists to a unified address not checked for {}",
+                    span(after)
+                ),
                 0,
                 receiver.sampled_at,
             );
@@ -1230,7 +1367,7 @@ pub fn conditions(d: &DashboardData, now: u64, p: &Policy) -> Vec<Condition> {
         if sampled && receiver.complete {
             let mut gone = Vec::new();
             if receiver.refunds.is_none() {
-                gone.push(REFUND_IDLE);
+                gone.push(REFUND_BEHIND);
             }
             if receiver.excess_refunds.is_none() {
                 gone.push(EXCESS_REFUND_IDLE);
@@ -1247,6 +1384,17 @@ pub fn conditions(d: &DashboardData, now: u64, p: &Policy) -> Vec<Condition> {
                         c.observed = "The publisher no longer reports this NEAR refund feed".into();
                         retired.push(c);
                     }
+                }
+            }
+        }
+        for incident in &d.monitoring.incidents {
+            if let Some(c) = &incident.condition {
+                if c.key == REFUND_IDLE_REPLACED {
+                    let mut c = c.clone();
+                    c.retired = true;
+                    c.sample = now;
+                    c.observed = format!("Replaced by `{REFUND_BEHIND}`");
+                    retired.push(c);
                 }
             }
         }
@@ -1395,6 +1543,39 @@ fn idle_observed(
     } else {
         format!("No new NEAR {what} checked in {age} of monitoring{detail}")
     }
+}
+
+/// Observed text for `receiver_refund_crosscheck_behind`. Recovery reuses it, so the
+/// impact and possible causes follow only the unchecked refunds.
+fn behind_observed(
+    reference: &RefundReference,
+    unchecked: &[(&str, u64)],
+    now: u64,
+    read: bool,
+) -> String {
+    let Some(&(_, oldest)) = unchecked.first() else {
+        let tracked = reference.seen.values().filter(|s| !s.baseline).count();
+        return if read {
+            format!(
+                "No refund NEAR lists is overdue a check ({tracked} seen since monitoring began)"
+            )
+        } else {
+            "No NEAR explorer read to compare with".into()
+        };
+    };
+    let addresses: Vec<_> = unchecked.iter().take(10).map(|&(a, _)| a).collect();
+    format!(
+        "NEAR lists {} to a unified address that the refund audit has not checked, the oldest \
+         first seen {} ago. Receiver lookups are unaffected. Possible causes: the explorer \
+         changed its records, the audit's refund read skips swaps, or a paused chain. Deposit \
+         addresses: {}.",
+        match unchecked.len() {
+            1 => "1 refund".to_string(),
+            n => format!("{n} refunds"),
+        },
+        span(now.saturating_sub(oldest)),
+        addresses.join(", ")
+    )
 }
 
 /// Observed text for `receiver_refund_not_found`, one sentence per kind of
@@ -1575,6 +1756,41 @@ async fn receiver_loop(d: SharedDashboard, url: String) {
         audit.observe(result.as_ref().ok(), incidents::unix_time());
         d.write().await.monitoring.receiver = audit.clone();
         tokio::time::sleep(Duration::from_secs(30)).await;
+    }
+}
+
+/// Reads NEAR's newest refunded swaps out of ZEC into [`View::refund_reference`]. A
+/// failed read keeps the last one, which goes unknown after [`REFERENCE_GAP_SECONDS`].
+async fn refund_reference_loop(d: SharedDashboard, key: String) {
+    const EXPLORER: &str = "https://explorer.near-intents.org/api/v0/transactions";
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .expect("NEAR explorer client");
+    let mut reference = RefundReference::default();
+    d.write().await.monitoring.refund_reference = Some(reference.clone());
+    loop {
+        let result = async {
+            client
+                .get(EXPLORER)
+                .bearer_auth(&key)
+                .query(&[
+                    ("fromChainId", "zec"),
+                    ("statuses", "REFUNDED"),
+                    ("numberOfTransactions", "100"),
+                ])
+                .send()
+                .await?
+                .error_for_status()?
+                .json::<Vec<ListedRefund>>()
+                .await
+        }
+        .await;
+        if let Ok(listed) = result {
+            reference.observe(&listed, incidents::unix_time());
+            d.write().await.monitoring.refund_reference = Some(reference.clone());
+        }
+        tokio::time::sleep(Duration::from_secs(REFERENCE_INTERVAL_SECONDS)).await;
     }
 }
 
@@ -2212,7 +2428,12 @@ mod tests {
             )
         };
         d.monitoring.receiver.observe(Some(&body(a)), a);
-        assert_eq!(check(&d, a, REFUND_IDLE).firing, None);
+        assert!(
+            conditions(&d, a, &Policy::default())
+                .iter()
+                .all(|c| c.key != REFUND_BEHIND),
+            "no NEAR explorer key, so nothing to compare the refund feed with"
+        );
         assert_eq!(check(&d, a, EXCESS_REFUND_IDLE).firing, None);
         assert_eq!(check(&d, a, REFUND_NOT_FOUND).firing, Some(false));
         assert_eq!(
@@ -2222,10 +2443,6 @@ mod tests {
         let at = a + 21600;
         d.monitoring.receiver.observe(Some(&body(at)), at);
         assert_eq!(check(&d, at, EXCESS_REFUND_IDLE).firing, Some(true));
-        assert_eq!(check(&d, at, REFUND_IDLE).firing, None);
-        let at = a + 172800;
-        d.monitoring.receiver.observe(Some(&body(at)), at);
-        assert_eq!(check(&d, at, REFUND_IDLE).firing, Some(true));
     }
     #[test]
     fn a_null_report_from_a_supporting_publisher_is_no_progress_and_unknown_not_found() {
@@ -2243,13 +2460,11 @@ mod tests {
         };
         d.monitoring.receiver.observe(Some(&body(t)), t);
         assert!(d.monitoring.receiver.refunds.is_some());
-        assert_eq!(check(&d, t, REFUND_IDLE).firing, None);
         let not_found = check(&d, t, REFUND_NOT_FOUND);
         assert_eq!(not_found.firing, None);
         assert_eq!(not_found.observed, "Refund counts unavailable");
         let later = t + 172800;
         d.monitoring.receiver.observe(Some(&body(later)), later);
-        assert_eq!(check(&d, later, REFUND_IDLE).firing, Some(true));
         assert_eq!(check(&d, later, REFUND_NOT_FOUND).firing, None);
         assert_eq!(check(&d, later, REFUND_PATTERN).firing, None);
     }
@@ -2320,14 +2535,14 @@ mod tests {
                 now,
                 serde_json::json!({
                     "payouts_checked": now,
-                    "refunds_checked_through": through,
-                    "excess_refunds_checked_through": now,
+                    "refunds_checked_through": now,
+                    "excess_refunds_checked_through": through,
                 }),
             )
         };
-        // The feed reports a null watermark for 48 h, so its idle warning fires.
+        // The feed reports a null watermark for 6 h, so its idle warning fires.
         let mut now = start;
-        while now <= start + 48 * hour {
+        while now <= start + 6 * hour {
             sample(
                 &mut store,
                 &mut d,
@@ -2336,39 +2551,278 @@ mod tests {
             );
             now += 60;
         }
-        assert!(active_id(&store, REFUND_IDLE).is_some());
+        assert!(active_id(&store, EXCESS_REFUND_IDLE).is_some());
         // Its first check is an advance from the empty baseline, so the
         // incident recovers on two fresh samples without a second advance.
         let through = serde_json::json!(now - 600);
         for _ in 0..2 {
             let cs = sample(&mut store, &mut d, Some(&body(now, through.clone())), now);
-            let idle = cs.iter().find(|c| c.key == REFUND_IDLE).unwrap();
+            let idle = cs.iter().find(|c| c.key == EXCESS_REFUND_IDLE).unwrap();
             assert_eq!(idle.firing, Some(false));
             now += 60;
         }
-        assert!(active_id(&store, REFUND_IDLE).is_none());
+        assert!(active_id(&store, EXCESS_REFUND_IDLE).is_none());
 
-        // Null until a check at hour 47 is not "no new refunds for 48 h" at 48.
+        // Null until a check at hour 5 is not "no new refunds for 6 h" at 6.
         let mut audit = ReceiverAudit::default();
         let null = body(start, serde_json::Value::Null);
         audit.observe(Some(&null), start);
-        let at = start + 47 * hour;
+        let at = start + 5 * hour;
         audit.observe(Some(&body(at, at.into())), at);
-        let progress = &audit.refunds.as_ref().unwrap().progress;
+        let progress = &audit.excess_refunds.as_ref().unwrap().progress;
         assert_eq!(progress.progressed_at, Some(at));
-        assert_eq!(progress.idle(start + 48 * hour, 48 * hour), Some(false));
+        assert_eq!(progress.idle(start + 6 * hour, 6 * hour), Some(false));
         // A null report is unavailable, not empty, so it keeps the baseline.
         let mut audit = ReceiverAudit::default();
         let unavailable = serde_json::json!({
-            "near": {"reads": {"near-payout-audit": start, "near-refund-audit": null}},
+            "near": {"reads": {"near-payout-audit": start, "near-excess-refund-audit": null}},
             "indexer": null,
         });
         audit.observe(Some(&unavailable), start);
         // So does a restarted APM's first sample: a value is only a baseline.
         audit.observe(Some(&body(at, at.into())), at);
-        let progress = &audit.refunds.as_ref().unwrap().progress;
+        let progress = &audit.excess_refunds.as_ref().unwrap().progress;
         assert_eq!(progress.progressed_at, None);
-        assert_eq!(progress.idle(start + 48 * hour, 48 * hour), Some(true));
+        assert_eq!(progress.idle(start + 6 * hour, 6 * hour), Some(true));
+    }
+    /// One explorer read of refunds given as (deposit address, refund address, has
+    /// a transaction).
+    fn listed(refunds: &[(&str, &str, bool)]) -> Vec<ListedRefund> {
+        let records: Vec<_> = refunds
+            .iter()
+            .map(|&(deposit, to, tx)| {
+                let hashes = if tx { vec!["ab".repeat(32)] } else { vec![] };
+                serde_json::json!({
+                    "createdAtTimestamp": 1, "depositAddress": deposit, "depositMemo": null,
+                    "status": "REFUNDED", "refundTo": to, "refundType": "ORIGIN_CHAIN",
+                    "originChainTxHashes": hashes, "destinationChainTxHashes": [],
+                })
+            })
+            .collect();
+        serde_json::from_value(serde_json::Value::Array(records)).unwrap()
+    }
+    #[test]
+    fn the_reference_keeps_refunds_to_unified_addresses_with_a_transaction() {
+        let kept = |record: serde_json::Value| {
+            let record: ListedRefund = serde_json::from_value(record).unwrap();
+            record.kept().map(String::from)
+        };
+        let hash = "0F".repeat(32);
+        let refund = |to: &str, origin: serde_json::Value, destination: serde_json::Value| {
+            serde_json::json!({
+                "depositAddress": "t1deposit", "status": "REFUNDED", "refundTo": to,
+                "originChainTxHashes": origin, "destinationChainTxHashes": destination,
+            })
+        };
+        let none = serde_json::json!([]);
+        assert_eq!(
+            kept(refund("u1abc", serde_json::json!([hash]), none.clone())).as_deref(),
+            Some("t1deposit")
+        );
+        // NEAR lists some refunds under the destination, and a null list is empty.
+        assert!(kept(refund(
+            "u1abc",
+            serde_json::Value::Null,
+            serde_json::json!([hash])
+        ))
+        .is_some());
+        // The refund type is not read, so a renamed one still counts.
+        assert!(kept(refund("t1abc", serde_json::json!([hash]), none.clone())).is_none());
+        assert!(kept(refund("u1abc", none.clone(), none.clone())).is_none());
+        assert!(kept(refund(
+            "u1abc",
+            serde_json::json!(["not a hash", 7]),
+            none.clone()
+        ))
+        .is_none());
+        let mut success = refund("u1abc", serde_json::json!([hash]), none.clone());
+        success["status"] = "SUCCESS".into();
+        assert!(kept(success).is_none());
+        let mut unprintable = refund("u1abc", serde_json::json!([hash]), none);
+        unprintable["depositAddress"] = "t1 <!channel>".into();
+        assert!(kept(unprintable).is_none());
+        assert!(kept(serde_json::json!({})).is_none());
+        assert!(
+            kept(serde_json::json!({"depositAddress": 7, "status": [], "refundTo": {}})).is_none()
+        );
+    }
+    #[test]
+    fn the_reference_dates_only_refunds_it_saw_arrive() {
+        let t = 100_000;
+        let mut reference = RefundReference::default();
+        reference.observe(&listed(&[("old", "u1a", true), ("t", "t1a", true)]), t);
+        assert!(
+            reference.seen["old"].baseline,
+            "listed before monitoring began"
+        );
+        assert!(!reference.seen.contains_key("t"));
+        // A transaction listed later dates the refund from then, as the indexer does.
+        reference.observe(
+            &listed(&[("old", "u1a", true), ("new", "u1b", false)]),
+            t + 600,
+        );
+        assert!(!reference.seen.contains_key("new"));
+        reference.observe(&listed(&[("new", "u1b", true)]), t + 1200);
+        assert_eq!(reference.seen["new"].at, t + 1200);
+        assert!(!reference.seen["new"].baseline);
+        assert!(
+            reference.seen.contains_key("old"),
+            "kept through a read without it"
+        );
+        // After a gap in reads, a new record could have been listed at any time.
+        let late = t + 1200 + REFERENCE_GAP_SECONDS + 1;
+        reference.observe(&listed(&[("gap", "u1c", true), ("new", "u1b", true)]), late);
+        assert!(reference.seen["gap"].baseline);
+        assert_eq!(reference.seen["new"].at, t + 1200);
+        assert_eq!(
+            reference.unchecked(None, late + 86400, 10800),
+            [("new", t + 1200)]
+        );
+        reference.observe(&[], late + REFERENCE_KEEP_SECONDS);
+        assert_eq!(reference.seen.keys().collect::<Vec<_>>(), ["gap"]);
+    }
+    #[test]
+    fn a_refund_near_lists_must_be_checked_within_the_threshold() {
+        let (t, hour) = (100_000, 3600);
+        let mut d = view(t);
+        let mut reference = RefundReference::default();
+        // The watermark is the audit's sighting plus an hour: here an old refund's.
+        let health = |d: &mut DashboardData, now: u64, through: serde_json::Value| {
+            let body = refund_health(now, serde_json::json!({"refunds_checked_through": through}));
+            d.monitoring.receiver.observe(Some(&body), now);
+        };
+        let read = |d: &mut DashboardData, r: &mut RefundReference, now, refunds: &[_]| {
+            r.observe(&listed(refunds), now);
+            d.monitoring.refund_reference = Some(r.clone());
+        };
+        let old = serde_json::json!(t - 10 * hour);
+        health(&mut d, t, old.clone());
+        read(&mut d, &mut reference, t, &[("old", "u1a", true)]);
+        // Days of refunds to transparent addresses only: nothing is overdue, and
+        // until the watermark moves the check is unknown, not clear.
+        let quiet = t + 96 * hour;
+        health(&mut d, quiet, old.clone());
+        read(&mut d, &mut reference, quiet - 600, &[("t", "t1a", true)]);
+        read(
+            &mut d,
+            &mut reference,
+            quiet,
+            &[("t", "t1a", true), ("t2", "t1b", true)],
+        );
+        let c = check(&d, quiet, REFUND_BEHIND);
+        assert_eq!(c.firing, None);
+        assert_eq!(
+            c.observed,
+            "No refund NEAR lists is overdue a check (0 seen since monitoring began)"
+        );
+        assert_eq!(
+            c.threshold,
+            "a refund NEAR lists to a unified address not checked for 3 h"
+        );
+        // NEAR lists a refund to a unified address at `seen`.
+        let seen = quiet + 600;
+        read(&mut d, &mut reference, seen, &[("dep1", "u1b", true)]);
+        let at = seen + 3 * hour - 1;
+        health(&mut d, at, old.clone());
+        read(&mut d, &mut reference, at, &[("dep1", "u1b", true)]);
+        assert_eq!(check(&d, at, REFUND_BEHIND).firing, None);
+        // The audit checks it: its sighting plus an hour passes ours plus 30 min.
+        let checked = serde_json::json!(seen - 300 + hour);
+        health(&mut d, at, checked.clone());
+        assert_eq!(check(&d, at + 1, REFUND_BEHIND).firing, Some(false));
+        assert_eq!(
+            check(&d, seen + 30 * hour, REFUND_BEHIND).firing,
+            None,
+            "stale"
+        );
+        // A second refund the audit never checks fires three hours on, even if
+        // the watermark moved for a refund seen before it.
+        let second = seen + 10 * hour;
+        read(
+            &mut d,
+            &mut reference,
+            second - 600,
+            &[("dep1", "u1b", true)],
+        );
+        read(
+            &mut d,
+            &mut reference,
+            second,
+            &[("dep2", "u1c", true), ("dep3", "u1d", true)],
+        );
+        let at = second + 3 * hour;
+        health(&mut d, at, serde_json::json!(second + 1799));
+        let c = check(&d, at, REFUND_BEHIND);
+        assert_eq!(c.firing, Some(true));
+        assert_eq!(
+            c.observed,
+            "NEAR lists 2 refunds to a unified address that the refund audit has not checked, \
+             the oldest first seen 3 h ago. Receiver lookups are unaffected. Possible causes: \
+             the explorer changed its records, the audit's refund read skips swaps, or a paused \
+             chain. Deposit addresses: dep2, dep3."
+        );
+        // It keeps firing through failed explorer reads, and a failed health read
+        // is unknown.
+        assert_eq!(check(&d, at + 30, REFUND_BEHIND).firing, Some(true));
+        d.monitoring.receiver.observe(None, at + 3 * hour);
+        assert_eq!(check(&d, at + 3 * hour, REFUND_BEHIND).firing, None);
+        health(&mut d, at + 4 * hour, serde_json::json!(second + 1800));
+        read(&mut d, &mut reference, at + 4 * hour, &[]);
+        assert_eq!(check(&d, at + 4 * hour, REFUND_BEHIND).firing, Some(false));
+        // A watermark that was never set covers nothing.
+        health(&mut d, at + 4 * hour + 30, serde_json::Value::Null);
+        assert_eq!(
+            check(&d, at + 4 * hour + 30, REFUND_BEHIND).firing,
+            Some(true)
+        );
+    }
+    #[test]
+    fn a_restarted_monitor_does_not_clear_the_refund_check() {
+        let t = 100_000;
+        let mut d = view(t);
+        let body = refund_health(t, serde_json::json!({"refunds_checked_through": t}));
+        d.monitoring.receiver.observe(Some(&body), t);
+        // Before the first explorer read, and after one that only sets a baseline.
+        d.monitoring.refund_reference = Some(RefundReference::default());
+        let c = check(&d, t, REFUND_BEHIND);
+        assert_eq!(
+            (c.firing, c.observed.as_str()),
+            (None, "No NEAR explorer read to compare with")
+        );
+        let mut reference = RefundReference::default();
+        reference.observe(&listed(&[("dep", "u1a", true)]), t);
+        d.monitoring.refund_reference = Some(reference);
+        let later = t + 30;
+        let body = refund_health(later, serde_json::json!({"refunds_checked_through": t}));
+        d.monitoring.receiver.observe(Some(&body), later);
+        assert_eq!(check(&d, later, REFUND_BEHIND).firing, None);
+    }
+    #[test]
+    fn the_replaced_refund_idle_incident_is_retired() {
+        let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
+        let now = 100_000;
+        let mut d = view(now);
+        let body = refund_health(now, serde_json::json!({}));
+        let mut idle = sample(&mut store, &mut d, Some(&body), now)
+            .into_iter()
+            .find(|c| c.key == EXCESS_REFUND_IDLE)
+            .unwrap();
+        idle.key = REFUND_IDLE_REPLACED.into();
+        idle.firing = Some(true);
+        for at in [now, now + 30] {
+            store
+                .evaluate(&[idle.clone()], at, false, "test", "")
+                .unwrap();
+        }
+        assert!(active_id(&store, REFUND_IDLE_REPLACED).is_some());
+        d.monitoring.incidents = store.incidents().unwrap();
+        let cs = sample(&mut store, &mut d, Some(&body), now + 60);
+        assert!(cs
+            .iter()
+            .any(|c| c.retired && c.key == REFUND_IDLE_REPLACED));
+        assert!(active_id(&store, REFUND_IDLE_REPLACED).is_none());
+        let cs = sample(&mut store, &mut d, Some(&body), now + 90);
+        assert!(cs.iter().all(|c| !c.retired));
     }
     #[test]
     fn an_isolated_refund_discrepancy_and_a_later_ovk_change_notify_separately() {
