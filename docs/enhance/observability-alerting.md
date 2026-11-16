@@ -172,7 +172,9 @@ after a restart, and while explorer reads fail. A publisher whose report has no
 `refunds_checked_deposits` is compared by its watermark instead: the audit's own
 sighting plus an hour, which must come within 30 minutes of APM's sighting. That
 watermark is a maximum, so there one skipped refund among checked ones does not
-fire. Without the key there is no such
+fire. So do refunds first seen more than 23 hours before APM read the publisher's
+first list, which only covers the last day, and a report without the list, as
+after a rollback, drops it. Without the key there is no such
 condition. A NEAR key rotation renames the file, so update the APM drop-in with
 the publisher's.
 

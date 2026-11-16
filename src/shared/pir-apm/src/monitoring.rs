@@ -179,35 +179,61 @@ pub struct RefundFeed {
     /// Over the feed's checked-through watermark. Its first sample stands in
     /// for [`ReceiverAudit::since`] when the feed has no read yet.
     pub progress: Progress,
-    /// Deposit addresses the report has listed as checked, with when this monitor
-    /// first saw each listed. `None` while reports carry no list, as from an older
-    /// publisher, so [`RefundReference::unchecked`] falls back to the watermark.
+    /// The deposit addresses reports have listed as checked. `None` while reports
+    /// carry no list, as from an older publisher, so [`RefundReference::unchecked`]
+    /// falls back to the watermark.
     #[serde(default)]
-    pub checked: Option<BTreeMap<String, u64>>,
+    pub checked: Option<CheckedDeposits>,
+}
+/// The deposit addresses in reports' `refunds_checked_deposits`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct CheckedDeposits {
+    /// When this monitor read the first report with a list. A report lists only
+    /// the last day's checks, so a sighting from before [`CHECKED_LISTED_SECONDS`]
+    /// ahead of this falls back to the watermark.
+    pub since: u64,
+    /// Each listed address, with when this monitor first saw it listed.
+    pub deposits: BTreeMap<String, u64>,
 }
 impl RefundFeed {
-    /// Adds the addresses in the report's `refunds_checked_deposits` at `now`.
-    /// Each stays for [`REFERENCE_KEEP_SECONDS`], like the sightings it covers, so
-    /// one checked and then left out of the report's day stays checked.
-    fn observe_checked(&mut self, listed: &serde_json::Value, now: u64) {
+    /// Records the report's `refunds_checked_deposits` at `now`. Each address stays
+    /// for [`REFERENCE_KEEP_SECONDS`], like the sightings it covers, so one checked
+    /// and then left out of the report's day stays checked. A report without the
+    /// field is from an older publisher, as after a rollback, and drops the list.
+    fn observe_checked(&mut self, report: &serde_json::Value, now: u64) {
+        let Some(listed) = report.get("refunds_checked_deposits") else {
+            if report.is_object() {
+                self.checked = None;
+            }
+            return;
+        };
         let Some(listed) = listed.as_array() else {
             return;
         };
-        let checked = self.checked.get_or_insert_with(BTreeMap::new);
+        let checked = self.checked.get_or_insert_with(|| CheckedDeposits {
+            since: now,
+            deposits: BTreeMap::new(),
+        });
         for address in listed
             .iter()
             .take(CHECKED_LISTED_MAX)
             .filter_map(|v| v.as_str())
             .filter(|s| (1..=128).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_graphic()))
         {
-            checked.entry(address.to_owned()).or_insert(now);
+            checked.deposits.entry(address.to_owned()).or_insert(now);
         }
-        checked.retain(|_, at| now.saturating_sub(*at) <= REFERENCE_KEEP_SECONDS);
+        checked
+            .deposits
+            .retain(|_, at| now.saturating_sub(*at) <= REFERENCE_KEEP_SECONDS);
     }
 }
 /// The most checked deposit addresses read from one report, above the indexer's
 /// own limit.
 const CHECKED_LISTED_MAX: usize = 1000;
+/// How long before the first checked list a sighting can rely on it. The indexer
+/// lists a day of checks, and the hour spare covers its anchor trailing this
+/// monitor's clock and a check made just before this monitor's sighting.
+const CHECKED_LISTED_SECONDS: u64 = 23 * 3600;
 /// Refund discrepancy counts from one health report.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct RefundCounts {
@@ -310,12 +336,15 @@ impl RefundReference {
     }
     /// The refunds first seen at least `after` seconds ago that `feed` has not
     /// checked, oldest first, as deposit address and sighting. A refund is checked
-    /// once `feed` lists its deposit address. Without a list, it is checked once the
-    /// watermark covers it, which a later checked refund also does.
+    /// once `feed` lists its deposit address. Without a list, or for a sighting from
+    /// before the list could cover it, it is checked once the watermark covers it,
+    /// which a later checked refund also does.
     fn unchecked(&self, feed: &RefundFeed, now: u64, after: u64) -> Vec<(&str, u64)> {
         let checked = |address: &str, seen: &Sighting| match &feed.checked {
-            Some(checked) => checked.contains_key(address),
-            None => feed
+            Some(listed) if seen.at + CHECKED_LISTED_SECONDS >= listed.since => {
+                listed.deposits.contains_key(address)
+            }
+            _ => feed
                 .progress
                 .value
                 .is_some_and(|w| w >= seen.at + REFERENCE_COVER_SECONDS),
@@ -374,7 +403,7 @@ impl ReceiverAudit {
                 state.last_read = state.last_read.max(audit_read(body, feed));
                 state.progress.observe(reported(report, watermark), now);
                 if feed == REFUND_FEED {
-                    state.observe_checked(&report["refunds_checked_deposits"], now);
+                    state.observe_checked(report, now);
                 }
             } else if self.complete {
                 *state = None;
@@ -2867,6 +2896,55 @@ mod tests {
         health(&mut d, at + 48 * hour, a + 600 + hour, &[]);
         read(&mut d, &mut reference, at + 48 * hour, &[]);
         assert_eq!(check(&d, at + 48 * hour, REFUND_BEHIND).firing, Some(false));
+    }
+    /// When a publisher starts listing checks, sightings from before its list's day
+    /// stay on the watermark, and a report without the list drops it again.
+    #[test]
+    fn an_upgraded_publisher_lists_only_recent_checks() {
+        let (t, hour) = (100_000, 3600);
+        let mut d = view(t);
+        let mut reference = RefundReference::default();
+        let health = |d: &mut DashboardData, now: u64, through: u64, checked: Option<&[&str]>| {
+            let mut report = serde_json::json!({ "refunds_checked_through": through });
+            if let Some(checked) = checked {
+                report["refunds_checked_deposits"] = serde_json::json!(checked);
+            }
+            d.monitoring
+                .receiver
+                .observe(Some(&refund_health(now, report)), now);
+        };
+        let read = |d: &mut DashboardData, r: &mut RefundReference, now, refunds: &[_]| {
+            r.observe(&listed(refunds), now);
+            d.monitoring.refund_reference = Some(r.clone());
+        };
+        health(&mut d, t, t - 10 * hour, None);
+        // Under the older publisher NEAR lists "old" and, a day later, "recent".
+        let (old, upgrade) = (t + 600, t + 48 * hour);
+        let recent = upgrade - 22 * hour;
+        read(&mut d, &mut reference, old - 600, &[]);
+        read(&mut d, &mut reference, old, &[("old", "u1a", true)]);
+        read(&mut d, &mut reference, recent - 600, &[]);
+        read(&mut d, &mut reference, recent, &[("recent", "u1b", true)]);
+        let through = recent + 600 + hour;
+        health(&mut d, upgrade - hour, through, None);
+        read(&mut d, &mut reference, upgrade - hour, &[]);
+        assert_eq!(check(&d, upgrade - hour, REFUND_BEHIND).firing, Some(false));
+        // The first list leaves "old" on the watermark, but "recent" is in its day.
+        health(&mut d, upgrade, through, Some(&["other"]));
+        read(&mut d, &mut reference, upgrade, &[]);
+        let c = check(&d, upgrade, REFUND_BEHIND);
+        assert_eq!(c.firing, Some(true));
+        assert!(
+            c.observed.ends_with("Deposit addresses: recent."),
+            "{}",
+            c.observed
+        );
+        health(&mut d, upgrade + 30, through, Some(&["recent"]));
+        assert_eq!(check(&d, upgrade + 30, REFUND_BEHIND).firing, Some(false));
+        // A rollback to a publisher without the list goes back to the watermark.
+        health(&mut d, upgrade + 60, through, None);
+        let refunds = d.monitoring.receiver.refunds.as_ref().unwrap();
+        assert!(refunds.checked.is_none());
     }
     #[test]
     fn a_restarted_monitor_does_not_clear_the_refund_check() {
