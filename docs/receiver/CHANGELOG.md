@@ -55,7 +55,9 @@
   week, so it fired on 2026-11-14 with the audit healthy.
   `receiver_refund_crosscheck_behind` replaces it: with the NEAR key, APM reads
   the explorer's refunded swaps itself and warns when one to a unified address has
-  been listed for 3 h without the audit's watermark passing it. Policy field
+  been listed for 3 h without the audit checking it. The health report's
+  `indexer.refunds_checked_deposits` names the refunds checked in the last day, so
+  one skipped refund fires even when later ones were checked. Policy field
   `receiver_refund_idle_seconds` becomes `receiver_refund_behind_seconds`. An open
   idle incident is retired.
 
