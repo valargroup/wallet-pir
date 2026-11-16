@@ -192,14 +192,16 @@ pub struct CheckedDeposits {
     /// the last day's checks, so a sighting from before [`CHECKED_LISTED_SECONDS`]
     /// ahead of this falls back to the watermark.
     pub since: u64,
-    /// Each listed address, with when this monitor first saw it listed.
+    /// Each listed address, with when this monitor last saw it listed.
     pub deposits: BTreeMap<String, u64>,
 }
 impl RefundFeed {
     /// Records the report's `refunds_checked_deposits` at `now`. Each address stays
-    /// for [`REFERENCE_KEEP_SECONDS`], like the sightings it covers, so one checked
-    /// and then left out of the report's day stays checked. A report without the
-    /// field is from an older publisher, as after a rollback, and drops the list.
+    /// for [`REFERENCE_KEEP_SECONDS`] after it was last listed. It is listed for a
+    /// day after its check, and the indexer checks a refund at most one reference
+    /// interval before this monitor sights it, so it outlasts the sighting it covers.
+    /// A report without the field is from an older publisher, as after a rollback,
+    /// and drops the list.
     fn observe_checked(&mut self, report: &serde_json::Value, now: u64) {
         let Some(listed) = report.get("refunds_checked_deposits") else {
             if report.is_object() {
@@ -220,7 +222,7 @@ impl RefundFeed {
             .filter_map(|v| v.as_str())
             .filter(|s| (1..=128).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_graphic()))
         {
-            checked.deposits.entry(address.to_owned()).or_insert(now);
+            checked.deposits.insert(address.to_owned(), now);
         }
         checked
             .deposits
@@ -2945,6 +2947,41 @@ mod tests {
         health(&mut d, upgrade + 60, through, None);
         let refunds = d.monitoring.receiver.refunds.as_ref().unwrap();
         assert!(refunds.checked.is_none());
+    }
+    /// A check the indexer records just before this monitor sights the refund
+    /// lasts as long as the sighting.
+    #[test]
+    fn a_check_listed_before_its_sighting_outlasts_it() {
+        let (t, hour, day) = (100_000, 3600, 86_400);
+        let mut d = view(t);
+        let mut reference = RefundReference::default();
+        let health = |d: &mut DashboardData, now: u64, through: u64, checked: &[&str]| {
+            let body = refund_health(
+                now,
+                serde_json::json!({
+                    "refunds_checked_through": through,
+                    "refunds_checked_deposits": checked,
+                }),
+            );
+            d.monitoring.receiver.observe(Some(&body), now);
+        };
+        let read = |d: &mut DashboardData, r: &mut RefundReference, now, refunds: &[_]| {
+            r.observe(&listed(refunds), now);
+            d.monitoring.refund_reference = Some(r.clone());
+        };
+        health(&mut d, t, t - 10 * hour, &[]);
+        let seen = t + hour;
+        let through = seen - 300 + hour;
+        health(&mut d, seen - 300, through, &["depC"]);
+        read(&mut d, &mut reference, seen - 600, &[]);
+        read(&mut d, &mut reference, seen, &[("depC", "u1c", true)]);
+        health(&mut d, seen + day - 600, through, &["depC"]);
+        // The sighting is kept until 30 days after it, and so is the check.
+        let end = seen + REFERENCE_KEEP_SECONDS;
+        health(&mut d, end, through, &[]);
+        read(&mut d, &mut reference, end, &[]);
+        assert!(reference.seen.contains_key("depC"));
+        assert_eq!(check(&d, end, REFUND_BEHIND).firing, Some(false));
     }
     #[test]
     fn a_restarted_monitor_does_not_clear_the_refund_check() {

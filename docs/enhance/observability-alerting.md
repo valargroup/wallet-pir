@@ -162,7 +162,7 @@ unit also loads the publisher's NEAR key (`NEAR_INTENTS_EXPLORER`, the same
 every 10 minutes and notes when it first sees each refund to a `u1` address with a
 transaction listed. The indexer report's `refunds_checked_deposits` names the
 deposit addresses of the REFUNDED swaps the audit checked in the last day, and
-APM keeps each one it has seen listed for 30 days. The condition fires when a
+APM keeps each one for 30 days after it was last listed. The condition fires when a
 refund first seen three hours ago is not among them, so one skipped refund fires
 even beside later checked ones. It does not decode the address or read the
 refund type, so a record the indexer stops recognising still counts. Refunds
