@@ -206,7 +206,7 @@ companion session IDs and its filter in order. Chunks list 16 shards each; a ful
 sealed shard's descriptor is about 2.2 KB, so the 128 MiB capture budget holds about
 60,000 shards. A displaced inventory keeps serving its head's chunks, sessions,
 choice objects and filters for `--retention-seconds` (default 600, ten minutes) so a
-wallet that captured it can finish a restore pass; at most 16 are retained, and a
+wallet that captured it can finish a restore pass; at most 32 are retained, and a
 publication waits for one to expire rather than drop one early. Sealed directories
 are shared between inventories, so retention costs only displaced open segments and
 companions.

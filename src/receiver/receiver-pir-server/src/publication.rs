@@ -292,8 +292,10 @@ pub const DEFAULT_RETENTION: Duration = Duration::from_secs(600);
 /// `MemoryMax` beside preparation, the index and witness paths.
 pub const DEFAULT_TABLE_BUDGET: usize = 4 << 30;
 /// Most displaced inventories retained at once. A publication waits while this many are
-/// still within their retention, so a captured inventory is never dropped early.
-pub const MAX_RETAINED: usize = 16;
+/// still within their retention, so a captured inventory is never dropped early. 32
+/// covers the bursts of fast blocks seen in production (21 within ten minutes) at the
+/// cost of their open segments and companions on disk.
+pub const MAX_RETAINED: usize = 32;
 
 /// The directory and block hints [`Publications::install_view`] installed.
 pub type Installed = (

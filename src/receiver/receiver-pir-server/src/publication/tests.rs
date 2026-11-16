@@ -155,6 +155,23 @@ fn a_full_retained_set_holds_back_the_next_publication() {
     publications.0.write().unwrap().retained[0].1 = Instant::now();
     assert!(publications.ready_at().is_none());
 }
+
+/// A burst of 21 publications within one retention, as on 2026-11-16, still activates
+/// through both the publisher's `publish` and a query node's `install_view`.
+#[test]
+fn a_burst_of_twenty_one_publications_activates() {
+    let publications = Publications::default();
+    // Prepare before arming retention; see the full-set test above.
+    let (newer, view) = (of(empty(2)), of(empty(1)));
+    assert!(publications.publish(of(empty(1)), 0));
+    let held = publications.current().unwrap();
+    let until = Instant::now() + Duration::from_secs(5);
+    publications.0.write().unwrap().retained = vec![(held, until); 20];
+    assert!(publications.ready_at().is_none());
+    assert!(publications.publish(newer, 0));
+    assert!(publications.install_view(Some(view), None, 0, 0).is_ok());
+    assert_eq!(publications.0.read().unwrap().retained.len(), 22);
+}
 /// Health's retained reports list the displaced inventories newest first, each with
 /// the report it was displaced with, until its retention ends.
 #[test]

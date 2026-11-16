@@ -64,7 +64,7 @@ pub struct Config {
     pub filter_blocks: Option<u32>,
     /// How long a displaced inventory, with every session, chunk and shard filter it
     /// names, keeps serving, in seconds: long enough for a wallet that captured it to
-    /// finish a restore pass. At most 16 are retained; a new publication waits for one to
+    /// finish a restore pass. At most 32 are retained; a new publication waits for one to
     /// expire rather than drop one early.
     #[arg(long, default_value_t = 600, value_parser = clap::value_parser!(u64).range(60..=86_400))]
     #[serde(default = "default_retention_seconds")]
