@@ -179,19 +179,20 @@ pub struct RefundFeed {
     /// Over the feed's checked-through watermark. Its first sample stands in
     /// for [`ReceiverAudit::since`] when the feed has no read yet.
     pub progress: Progress,
-    /// The deposit addresses reports have listed as checked. `None` while reports
-    /// carry no list, as from an older publisher, so [`RefundReference::unchecked`]
-    /// falls back to the watermark.
+    /// The deposit addresses reports have listed as checked, `None` before a report
+    /// with a list.
     #[serde(default)]
     pub checked: Option<CheckedDeposits>,
 }
 /// The deposit addresses in reports' `refunds_checked_deposits`.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct CheckedDeposits {
-    /// When this monitor read the first report with a list. A report lists only
-    /// the last day's checks, so a sighting from before [`CHECKED_LISTED_SECONDS`]
-    /// ahead of this falls back to the watermark.
+    /// When this monitor read its first list. A report lists only the last day's
+    /// checks, so a refund sighted more than [`CHECKED_LISTED_SECONDS`] earlier may
+    /// have been checked and dropped from the list unseen, and is not checked.
     pub since: u64,
+    /// When this monitor last read a list.
+    pub listed_at: u64,
     /// Each listed address, with when this monitor last saw it listed.
     pub deposits: BTreeMap<String, u64>,
 }
@@ -200,22 +201,17 @@ impl RefundFeed {
     /// for [`REFERENCE_KEEP_SECONDS`] after it was last listed. It is listed for a
     /// day after its check, and the indexer checks a refund at most one reference
     /// interval before this monitor sights it, so it outlasts the sighting it covers.
-    /// A report without the field is from an older publisher, as after a rollback,
-    /// and drops the list.
+    /// A report without a list changes nothing, and the condition is unknown until
+    /// one has it again.
     fn observe_checked(&mut self, report: &serde_json::Value, now: u64) {
-        let Some(listed) = report.get("refunds_checked_deposits") else {
-            if report.is_object() {
-                self.checked = None;
-            }
+        let Some(listed) = report["refunds_checked_deposits"].as_array() else {
             return;
         };
-        let Some(listed) = listed.as_array() else {
-            return;
-        };
-        let checked = self.checked.get_or_insert_with(|| CheckedDeposits {
-            since: now,
-            deposits: BTreeMap::new(),
-        });
+        let checked = self.checked.get_or_insert_with(CheckedDeposits::default);
+        if checked.listed_at == 0 {
+            checked.since = now;
+        }
+        checked.listed_at = now;
         for address in listed
             .iter()
             .take(CHECKED_LISTED_MAX)
@@ -232,9 +228,9 @@ impl RefundFeed {
 /// The most checked deposit addresses read from one report, above the indexer's
 /// own limit.
 const CHECKED_LISTED_MAX: usize = 1000;
-/// How long before the first checked list a sighting can rely on it. The indexer
-/// lists a day of checks, and the hour spare covers its anchor trailing this
-/// monitor's clock and a check made just before this monitor's sighting.
+/// How far back a checked list covers. The indexer lists a day of checks, and the
+/// hour spare covers its anchor trailing this monitor's clock and a check made just
+/// before this monitor's sighting.
 const CHECKED_LISTED_SECONDS: u64 = 23 * 3600;
 /// Refund discrepancy counts from one health report.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -247,7 +243,7 @@ pub struct RefundCounts {
     pub missing_deposits: Vec<String>,
 }
 /// This monitor's own reading of the refunded swaps out of ZEC that NEAR lists,
-/// which the audit's refund watermark is checked against. It keeps a refund when
+/// which the audit's checked deposits are compared with. It keeps a refund when
 /// `refundTo` is a unified address and a transaction is listed. That is looser
 /// than the indexer's own filter on purpose, so a record the indexer stops
 /// recognising still counts here.
@@ -312,12 +308,6 @@ const REFERENCE_INTERVAL_SECONDS: u64 = 600;
 /// A read this long after the last one cannot date what it finds, and the
 /// reference is unknown once its last read is this old.
 const REFERENCE_GAP_SECONDS: u64 = 2 * REFERENCE_INTERVAL_SECONDS;
-/// Without a checked list, the watermark covers a refund first seen at `t` once it
-/// reaches `t` plus this. The watermark is the indexer's own sighting plus its hour
-/// of grace (`COMPLETION_GRACE_SECS` in receiver-indexer), and the indexer sights a
-/// refund at most one reference interval before this monitor, so a checked refund
-/// puts it at `t` + 50 min or later.
-const REFERENCE_COVER_SECONDS: u64 = 1800;
 /// Sightings are dropped after this long. NEAR's newest 100 refunds span about 12
 /// days.
 const REFERENCE_KEEP_SECONDS: u64 = 30 * 86400;
@@ -336,28 +326,18 @@ impl RefundReference {
             .retain(|_, seen| now.saturating_sub(seen.at) <= REFERENCE_KEEP_SECONDS);
         self.read_at = now;
     }
-    /// The refunds first seen at least `after` seconds ago that `feed` has not
-    /// checked, oldest first, as deposit address and sighting. A refund is checked
-    /// once `feed` lists its deposit address. Without a list, or for a sighting from
-    /// before the list could cover it, it is checked once the watermark covers it,
-    /// which a later checked refund also does.
-    fn unchecked(&self, feed: &RefundFeed, now: u64, after: u64) -> Vec<(&str, u64)> {
-        let checked = |address: &str, seen: &Sighting| match &feed.checked {
-            Some(listed) if seen.at + CHECKED_LISTED_SECONDS >= listed.since => {
-                listed.deposits.contains_key(address)
-            }
-            _ => feed
-                .progress
-                .value
-                .is_some_and(|w| w >= seen.at + REFERENCE_COVER_SECONDS),
-        };
+    /// The refunds first seen at least `after` seconds ago that `checked` does not
+    /// list, oldest first, as deposit address and sighting. A refund sighted before
+    /// the lists could cover it (see [`CheckedDeposits::since`]) is left out.
+    fn unchecked(&self, checked: &CheckedDeposits, now: u64, after: u64) -> Vec<(&str, u64)> {
         let mut unchecked: Vec<_> = self
             .seen
             .iter()
             .filter(|&(address, seen)| {
                 !seen.baseline
                     && now.saturating_sub(seen.at) >= after
-                    && !checked(address.as_str(), seen)
+                    && seen.at + CHECKED_LISTED_SECONDS >= checked.since
+                    && !checked.deposits.contains_key(address.as_str())
             })
             .map(|(address, seen)| (address.as_str(), seen.at))
             .collect();
@@ -1367,13 +1347,18 @@ pub fn conditions(d: &DashboardData, now: u64, p: &Policy) -> Vec<Condition> {
         }
         if let (Some(feed), Some(reference)) = (&receiver.refunds, &d.monitoring.refund_reference) {
             let after = p.receiver_refund_behind_seconds;
-            let unchecked = reference.unchecked(feed, now, after);
+            // Only the latest sample's list is current.
+            let listed = feed
+                .checked
+                .as_ref()
+                .filter(|c| c.listed_at == receiver.sampled_at);
+            let unchecked = listed.map_or_else(Vec::new, |c| reference.unchecked(c, now, after));
             let read = reference.read_at > 0
                 && now.saturating_sub(reference.read_at) <= REFERENCE_GAP_SECONDS;
             // Clear needs a watermark this monitor has seen advance, so an APM
             // restart, which forgets its sightings, cannot recover an incident.
             let firing = match () {
-                _ if !sampled => None,
+                _ if !sampled || listed.is_none() => None,
                 _ if !unchecked.is_empty() => Some(true),
                 _ if read && feed.progress.progressed_at.is_some() => Some(false),
                 _ => None,
@@ -1383,7 +1368,7 @@ pub fn conditions(d: &DashboardData, now: u64, p: &Policy) -> Vec<Condition> {
                 "receiver".into(),
                 "warning",
                 firing,
-                behind_observed(reference, &unchecked, now, read),
+                behind_observed(reference, &unchecked, now, read, listed.is_some()),
                 format!(
                     "a refund NEAR lists to a unified address not checked for {}",
                     span(after)
@@ -1623,10 +1608,13 @@ fn behind_observed(
     unchecked: &[(&str, u64)],
     now: u64,
     read: bool,
+    listed: bool,
 ) -> String {
     let Some(&(_, oldest)) = unchecked.first() else {
         let tracked = reference.seen.values().filter(|s| !s.baseline).count();
-        return if read {
+        return if !listed {
+            "The health report lists no checked refunds".into()
+        } else if read {
             format!(
                 "No refund NEAR lists is overdue a check ({tracked} seen since monitoring began)"
             )
@@ -2746,7 +2734,7 @@ mod tests {
         assert!(reference.seen["gap"].baseline);
         assert_eq!(reference.seen["new"].at, t + 1200);
         assert_eq!(
-            reference.unchecked(&RefundFeed::default(), late + 86400, 10800),
+            reference.unchecked(&CheckedDeposits::default(), late + 86400, 10800),
             [("new", t + 1200)]
         );
         reference.observe(&[], late + REFERENCE_KEEP_SECONDS);
@@ -2757,22 +2745,29 @@ mod tests {
         let (t, hour) = (100_000, 3600);
         let mut d = view(t);
         let mut reference = RefundReference::default();
-        // The watermark is the audit's sighting plus an hour: here an old refund's.
-        let health = |d: &mut DashboardData, now: u64, through: serde_json::Value| {
-            let body = refund_health(now, serde_json::json!({"refunds_checked_through": through}));
-            d.monitoring.receiver.observe(Some(&body), now);
+        let health = |d: &mut DashboardData,
+                      now: u64,
+                      through: serde_json::Value,
+                      checked: Option<&[&str]>| {
+            let mut report = serde_json::json!({ "refunds_checked_through": through });
+            if let Some(checked) = checked {
+                report["refunds_checked_deposits"] = serde_json::json!(checked);
+            }
+            d.monitoring
+                .receiver
+                .observe(Some(&refund_health(now, report)), now);
         };
         let read = |d: &mut DashboardData, r: &mut RefundReference, now, refunds: &[_]| {
             r.observe(&listed(refunds), now);
             d.monitoring.refund_reference = Some(r.clone());
         };
         let old = serde_json::json!(t - 10 * hour);
-        health(&mut d, t, old.clone());
+        health(&mut d, t, old.clone(), Some(&[]));
         read(&mut d, &mut reference, t, &[("old", "u1a", true)]);
         // Days of refunds to transparent addresses only: nothing is overdue, and
         // until the watermark moves the check is unknown, not clear.
         let quiet = t + 96 * hour;
-        health(&mut d, quiet, old.clone());
+        health(&mut d, quiet, old.clone(), Some(&[]));
         read(&mut d, &mut reference, quiet - 600, &[("t", "t1a", true)]);
         read(
             &mut d,
@@ -2794,12 +2789,12 @@ mod tests {
         let seen = quiet + 600;
         read(&mut d, &mut reference, seen, &[("dep1", "u1b", true)]);
         let at = seen + 3 * hour - 1;
-        health(&mut d, at, old.clone());
+        health(&mut d, at, old.clone(), Some(&[]));
         read(&mut d, &mut reference, at, &[("dep1", "u1b", true)]);
         assert_eq!(check(&d, at, REFUND_BEHIND).firing, None);
-        // The audit checks it: its sighting plus an hour passes ours plus 30 min.
+        // The audit checks it and lists its deposit address.
         let checked = serde_json::json!(seen - 300 + hour);
-        health(&mut d, at, checked.clone());
+        health(&mut d, at, checked.clone(), Some(&["dep1"]));
         assert_eq!(check(&d, at + 1, REFUND_BEHIND).firing, Some(false));
         assert_eq!(
             check(&d, seen + 30 * hour, REFUND_BEHIND).firing,
@@ -2822,7 +2817,12 @@ mod tests {
             &[("dep2", "u1c", true), ("dep3", "u1d", true)],
         );
         let at = second + 3 * hour;
-        health(&mut d, at, serde_json::json!(second + 1799));
+        health(
+            &mut d,
+            at,
+            serde_json::json!(second + 1799),
+            Some(&["dep1"]),
+        );
         let c = check(&d, at, REFUND_BEHIND);
         assert_eq!(c.firing, Some(true));
         assert_eq!(
@@ -2837,14 +2837,26 @@ mod tests {
         assert_eq!(check(&d, at + 30, REFUND_BEHIND).firing, Some(true));
         d.monitoring.receiver.observe(None, at + 3 * hour);
         assert_eq!(check(&d, at + 3 * hour, REFUND_BEHIND).firing, None);
-        health(&mut d, at + 4 * hour, serde_json::json!(second + 1800));
+        let listed_all: &[&str] = &["dep1", "dep2", "dep3"];
+        health(
+            &mut d,
+            at + 4 * hour,
+            serde_json::json!(second + 1800),
+            Some(listed_all),
+        );
         read(&mut d, &mut reference, at + 4 * hour, &[]);
         assert_eq!(check(&d, at + 4 * hour, REFUND_BEHIND).firing, Some(false));
-        // A watermark that was never set covers nothing.
-        health(&mut d, at + 4 * hour + 30, serde_json::Value::Null);
+        // A report without the list is unknown.
+        health(
+            &mut d,
+            at + 4 * hour + 30,
+            serde_json::json!(second + 1800),
+            None,
+        );
+        let c = check(&d, at + 4 * hour + 30, REFUND_BEHIND);
         assert_eq!(
-            check(&d, at + 4 * hour + 30, REFUND_BEHIND).firing,
-            Some(true)
+            (c.firing, c.observed.as_str()),
+            (None, "The health report lists no checked refunds")
         );
     }
     /// With a checked list, each refund NEAR lists must be on it. A later checked
@@ -2899,14 +2911,18 @@ mod tests {
         read(&mut d, &mut reference, at + 48 * hour, &[]);
         assert_eq!(check(&d, at + 48 * hour, REFUND_BEHIND).firing, Some(false));
     }
-    /// When a publisher starts listing checks, sightings from before its list's day
-    /// stay on the watermark, and a report without the list drops it again.
+    /// A refund sighted more than 23 h before the first checked list is not
+    /// checked. A report without
+    /// the list is unknown and keeps what was listed.
     #[test]
-    fn an_upgraded_publisher_lists_only_recent_checks() {
+    fn the_first_checked_list_covers_only_its_day() {
         let (t, hour) = (100_000, 3600);
         let mut d = view(t);
         let mut reference = RefundReference::default();
-        let health = |d: &mut DashboardData, now: u64, through: u64, checked: Option<&[&str]>| {
+        let health = |d: &mut DashboardData,
+                      now: u64,
+                      through: serde_json::Value,
+                      checked: Option<&[&str]>| {
             let mut report = serde_json::json!({ "refunds_checked_through": through });
             if let Some(checked) = checked {
                 report["refunds_checked_deposits"] = serde_json::json!(checked);
@@ -2919,34 +2935,43 @@ mod tests {
             r.observe(&listed(refunds), now);
             d.monitoring.refund_reference = Some(r.clone());
         };
-        health(&mut d, t, t - 10 * hour, None);
-        // Under the older publisher NEAR lists "old" and, a day later, "recent".
-        let (old, upgrade) = (t + 600, t + 48 * hour);
-        let recent = upgrade - 22 * hour;
+        health(&mut d, t, serde_json::json!(t - 10 * hour), None);
+        // Before any list NEAR lists "old" and, a day later, "recent".
+        let (old, first) = (t + 600, t + 48 * hour);
+        let recent = first - 22 * hour;
         read(&mut d, &mut reference, old - 600, &[]);
         read(&mut d, &mut reference, old, &[("old", "u1a", true)]);
         read(&mut d, &mut reference, recent - 600, &[]);
         read(&mut d, &mut reference, recent, &[("recent", "u1b", true)]);
-        let through = recent + 600 + hour;
-        health(&mut d, upgrade - hour, through, None);
-        read(&mut d, &mut reference, upgrade - hour, &[]);
-        assert_eq!(check(&d, upgrade - hour, REFUND_BEHIND).firing, Some(false));
-        // The first list leaves "old" on the watermark, but "recent" is in its day.
-        health(&mut d, upgrade, through, Some(&["other"]));
-        read(&mut d, &mut reference, upgrade, &[]);
-        let c = check(&d, upgrade, REFUND_BEHIND);
+        let through = serde_json::json!(recent + 600 + hour);
+        health(&mut d, first - hour, through.clone(), None);
+        read(&mut d, &mut reference, first - hour, &[]);
+        let c = check(&d, first - hour, REFUND_BEHIND);
+        assert_eq!(
+            (c.firing, c.observed.as_str()),
+            (None, "The health report lists no checked refunds")
+        );
+        // The first list could have dropped "old" unseen, but "recent" is in its day.
+        health(&mut d, first, through.clone(), Some(&["other"]));
+        read(&mut d, &mut reference, first, &[]);
+        let c = check(&d, first, REFUND_BEHIND);
         assert_eq!(c.firing, Some(true));
         assert!(
             c.observed.ends_with("Deposit addresses: recent."),
             "{}",
             c.observed
         );
-        health(&mut d, upgrade + 30, through, Some(&["recent"]));
-        assert_eq!(check(&d, upgrade + 30, REFUND_BEHIND).firing, Some(false));
-        // A rollback to a publisher without the list goes back to the watermark.
-        health(&mut d, upgrade + 60, through, None);
+        health(&mut d, first + 30, through.clone(), Some(&["recent"]));
+        assert_eq!(check(&d, first + 30, REFUND_BEHIND).firing, Some(false));
+        health(&mut d, first + 60, through.clone(), None);
+        assert_eq!(check(&d, first + 60, REFUND_BEHIND).firing, None);
         let refunds = d.monitoring.receiver.refunds.as_ref().unwrap();
-        assert!(refunds.checked.is_none());
+        assert!(refunds
+            .checked
+            .as_ref()
+            .unwrap()
+            .deposits
+            .contains_key("recent"));
     }
     /// A check the indexer records just before this monitor sights the refund
     /// lasts as long as the sighting.
@@ -2975,9 +3000,13 @@ mod tests {
         health(&mut d, seen - 300, through, &["depC"]);
         read(&mut d, &mut reference, seen - 600, &[]);
         read(&mut d, &mut reference, seen, &[("depC", "u1c", true)]);
+        health(&mut d, seen + 12 * hour, through, &["depC"]);
         health(&mut d, seen + day - 600, through, &["depC"]);
         // The sighting is kept until 30 days after it, and so is the check.
         let end = seen + REFERENCE_KEEP_SECONDS;
+        for at in (seen + day..end).step_by((12 * hour) as usize) {
+            health(&mut d, at, through, &[]);
+        }
         health(&mut d, end, through, &[]);
         read(&mut d, &mut reference, end, &[]);
         assert!(reference.seen.contains_key("depC"));
@@ -2987,7 +3016,10 @@ mod tests {
     fn a_restarted_monitor_does_not_clear_the_refund_check() {
         let t = 100_000;
         let mut d = view(t);
-        let body = refund_health(t, serde_json::json!({"refunds_checked_through": t}));
+        let body = refund_health(
+            t,
+            serde_json::json!({"refunds_checked_through": t, "refunds_checked_deposits": []}),
+        );
         d.monitoring.receiver.observe(Some(&body), t);
         // Before the first explorer read, and after one that only sets a baseline.
         d.monitoring.refund_reference = Some(RefundReference::default());
@@ -3000,7 +3032,10 @@ mod tests {
         reference.observe(&listed(&[("dep", "u1a", true)]), t);
         d.monitoring.refund_reference = Some(reference);
         let later = t + 30;
-        let body = refund_health(later, serde_json::json!({"refunds_checked_through": t}));
+        let body = refund_health(
+            later,
+            serde_json::json!({"refunds_checked_through": t, "refunds_checked_deposits": []}),
+        );
         d.monitoring.receiver.observe(Some(&body), later);
         assert_eq!(check(&d, later, REFUND_BEHIND).firing, None);
     }

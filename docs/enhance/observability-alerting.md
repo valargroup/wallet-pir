@@ -167,16 +167,12 @@ refund first seen three hours ago is not among them, so one skipped refund fires
 even beside later checked ones. It does not decode the address or read the
 refund type, so a record the indexer stops recognising still counts. Refunds
 already listed at APM's first read, or after 20 minutes without one, are not
-dated and not checked. The condition is unknown until the watermark advances
-after a restart, and while explorer reads fail. A publisher whose report has no
-`refunds_checked_deposits` is compared by its watermark instead: the audit's own
-sighting plus an hour, which must come within 30 minutes of APM's sighting. That
-watermark is a maximum, so there one skipped refund among checked ones does not
-fire. So do refunds first seen more than 23 hours before APM read the publisher's
-first list, which only covers the last day, and a report without the list, as
-after a rollback, drops it. Without the key there is no such
-condition. A NEAR key rotation renames the file, so update the APM drop-in with
-the publisher's.
+dated and not checked. A list only covers the last day, so refunds first seen
+more than 23 hours before APM read the first list are not checked either. The condition is unknown
+while the latest report has no `refunds_checked_deposits`, until the watermark
+advances after a restart, and while explorer reads fail. Without the key there
+is no such condition. A NEAR key rotation renames the file, so update the APM
+drop-in with the publisher's.
 
 | Key | Fires when | Hold |
 | --- | --- | --- |
