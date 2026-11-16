@@ -168,7 +168,8 @@ even beside later checked ones. It does not decode the address or read the
 refund type, so a record the indexer stops recognising still counts. Refunds
 already listed at APM's first read, or after 20 minutes without one, are not
 dated and not checked. A list only covers the last day, so refunds first seen
-more than 23 hours before APM read the first list are not checked either. The condition is unknown
+more than 23 hours before APM read the first list, or before a list that follows
+more than 23 hours without one, are not checked either. The condition is unknown
 while the latest report has no `refunds_checked_deposits`, until the watermark
 advances after a restart, and while explorer reads fail. Without the key there
 is no such condition. A NEAR key rotation renames the file, so update the APM

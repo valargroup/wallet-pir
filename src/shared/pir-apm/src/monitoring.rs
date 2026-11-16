@@ -187,9 +187,10 @@ pub struct RefundFeed {
 /// The deposit addresses in reports' `refunds_checked_deposits`.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct CheckedDeposits {
-    /// When this monitor read its first list. A report lists only the last day's
-    /// checks, so a refund sighted more than [`CHECKED_LISTED_SECONDS`] earlier may
-    /// have been checked and dropped from the list unseen, and is not checked.
+    /// When this monitor read the first list after a gap of more than
+    /// [`CHECKED_LISTED_SECONDS`] without one, including its first list. A report
+    /// lists only the last day's checks, so a refund sighted earlier may have been
+    /// checked and dropped from the list unseen, and is not checked.
     pub since: u64,
     /// When this monitor last read a list.
     pub listed_at: u64,
@@ -208,7 +209,7 @@ impl RefundFeed {
             return;
         };
         let checked = self.checked.get_or_insert_with(CheckedDeposits::default);
-        if checked.listed_at == 0 {
+        if now.saturating_sub(checked.listed_at) > CHECKED_LISTED_SECONDS {
             checked.since = now;
         }
         checked.listed_at = now;
@@ -2911,11 +2912,11 @@ mod tests {
         read(&mut d, &mut reference, at + 48 * hour, &[]);
         assert_eq!(check(&d, at + 48 * hour, REFUND_BEHIND).firing, Some(false));
     }
-    /// A refund sighted more than 23 h before the first checked list is not
-    /// checked. A report without
+    /// A refund sighted before the checked lists could cover it, before the first
+    /// list or across more than 23 h without one, is not checked. A report without
     /// the list is unknown and keeps what was listed.
     #[test]
-    fn the_first_checked_list_covers_only_its_day() {
+    fn checked_lists_cover_only_refunds_sighted_within_their_day() {
         let (t, hour) = (100_000, 3600);
         let mut d = view(t);
         let mut reference = RefundReference::default();
@@ -2972,6 +2973,17 @@ mod tests {
             .unwrap()
             .deposits
             .contains_key("recent"));
+        // Health fails for longer than a day while explorer reads go on. NEAR lists
+        // "during", which the audit checks and drops from its list before health
+        // returns.
+        let during = first + 2 * hour;
+        read(&mut d, &mut reference, during - 600, &[]);
+        read(&mut d, &mut reference, during, &[("during", "u1c", true)]);
+        d.monitoring.receiver.observe(None, during);
+        let back = first + 40 * hour;
+        read(&mut d, &mut reference, back, &[]);
+        health(&mut d, back, through.clone(), Some(&[]));
+        assert_eq!(check(&d, back, REFUND_BEHIND).firing, Some(false));
     }
     /// A check the indexer records just before this monitor sights the refund
     /// lasts as long as the sighting.
