@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Up to 32 displaced publications are retained, up from 16, so a burst of fast
+  blocks no longer stalls new publications. On 2026-11-16, 21 publications landed
+  within ten minutes and held the publisher back for 2.5 minutes. Each extra
+  retained publication costs its open segments and companions on disk only during
+  such a burst.
+
 - Publisher health lists `retained`, the payout audit of each publication still
   within its retention, and `receiver-probe` checks the probed publication against
   it. A query node whose retained set is full keeps serving the previous
