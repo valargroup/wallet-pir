@@ -190,7 +190,8 @@ async fn run<E: PublisherExecutor + IngestionExecutor>(
                 let reads = audit_reads.clone();
                 async move {
                     let (current, epoch) = publications.health();
-                    axum::Json(audit_fields(current, epoch, &reads))
+                    let retained = publications.retained_reports();
+                    axum::Json(audit_fields(current, epoch, &retained, &reads))
                 }
             }),
         )
@@ -263,9 +264,13 @@ async fn run<E: PublisherExecutor + IngestionExecutor>(
 }
 
 /// Keep report and inventory identity from one atomic publication snapshot.
+/// `retained` adds each displaced inventory still within its retention, by ID, with
+/// only its payout audit, so a monitor probing a query node that has not yet moved
+/// to `serving` can still check the inventory it was served.
 pub(crate) fn audit_fields(
     current: Option<([u8; 32], Option<serde_json::Value>)>,
     epoch: u64,
+    retained: &[([u8; 32], Option<serde_json::Value>)],
     reads: &crate::near::Reads,
 ) -> serde_json::Value {
     let mut fields = reads.health();
@@ -273,6 +278,22 @@ pub(crate) fn audit_fields(
     fields.insert("epoch".into(), epoch.into());
     fields.insert("serving".into(), serving.map(hex::encode).into());
     fields.insert("indexer".into(), report.flatten().into());
+    let retained: serde_json::Map<_, _> = retained
+        .iter()
+        .map(|(id, report)| {
+            let field = |name: &str| {
+                report
+                    .as_ref()
+                    .map_or(serde_json::Value::Null, |r| r[name].clone())
+            };
+            let audit = serde_json::json!({
+                "payouts_missing": field("payouts_missing"),
+                "payouts_uncheckable": field("payouts_uncheckable"),
+            });
+            (hex::encode(id), audit)
+        })
+        .collect();
+    fields.insert("retained".into(), retained.into());
     serde_json::Value::Object(fields)
 }
 
@@ -489,6 +510,33 @@ mod tests {
                 history_revision: 0,
             },
         }
+    }
+
+    /// Health keeps the current report whole and gives each retained inventory only
+    /// its payout audit, null where it has no report.
+    #[test]
+    fn health_lists_retained_payout_audits() {
+        let report = serde_json::json!({
+            "payouts_missing": 0,
+            "payouts_uncheckable": 2,
+            "refunds_checked_deposits": ["d"],
+        });
+        let retained = [([2; 32], Some(report.clone())), ([3; 32], None)];
+        let fields = audit_fields(
+            Some(([1; 32], Some(report.clone()))),
+            4,
+            &retained,
+            &crate::near::Reads::default(),
+        );
+        assert_eq!(fields["serving"], hex::encode([1; 32]));
+        assert_eq!(fields["indexer"], report);
+        assert_eq!(
+            fields["retained"],
+            serde_json::json!({
+                hex::encode([2; 32]): {"payouts_missing": 0, "payouts_uncheckable": 2},
+                hex::encode([3; 32]): {"payouts_missing": null, "payouts_uncheckable": null},
+            })
+        );
     }
 
     /// Reopening the existing SQLite journal preserves its commits and does

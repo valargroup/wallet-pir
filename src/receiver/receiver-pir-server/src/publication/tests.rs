@@ -155,6 +155,31 @@ fn a_full_retained_set_holds_back_the_next_publication() {
     publications.0.write().unwrap().retained[0].1 = Instant::now();
     assert!(publications.ready_at().is_none());
 }
+/// Health's retained reports list the displaced inventories newest first, each with
+/// the report it was displaced with, until its retention ends.
+#[test]
+fn retained_reports_follow_the_retained_set() {
+    let publications = Publications::default();
+    let mut ids = Vec::new();
+    for n in 1..=3 {
+        let publication = of(empty(n)).with_report(serde_json::json!(n));
+        ids.push(publication.id());
+        assert!(publications.publish(publication, 0));
+    }
+    assert_eq!(publications.health().0.map(|(id, _)| id), Some(ids[2]));
+    assert_eq!(
+        publications.retained_reports(),
+        [
+            (ids[1], Some(serde_json::json!(2))),
+            (ids[0], Some(serde_json::json!(1)))
+        ]
+    );
+    publications.0.write().unwrap().retained[0].1 = Instant::now();
+    assert_eq!(
+        publications.retained_reports(),
+        [(ids[1], Some(serde_json::json!(2)))]
+    );
+}
 /// A report update keeps the current session and its prepared PIR state, and is
 /// refused for another anchor or after a revocation.
 #[test]
