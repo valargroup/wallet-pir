@@ -370,7 +370,9 @@ An unmatched excess refund counts only once 1Click's status confirms a refund wa
 made. A found item is rechecked for two hours, then retired, so the audit never
 rechecks history; index completeness is the canary's.
 `/operator/receiver/health` reports the counts that pir-apm alerts on
-([conditions](../enhance/observability-alerting.md)).
+([conditions](../enhance/observability-alerting.md)). Its `retained` map gives the
+payout audit of each publication displaced within its retention, by ID, since a
+query node can keep serving one for minutes after health names a newer one.
 
 Queries run through `pir-query-server --config FILE` with the Receiver feature.
 Use the [Receiver-only examples](../../tools/receiver/deploy/) or add the Receiver

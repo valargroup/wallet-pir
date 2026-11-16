@@ -42,7 +42,9 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>
 /// Health reports one run has seen, by the publication each names. Health names a
 /// publication several seconds before the origin serves it, and with publications
 /// a few seconds apart it may already name the next one once a lookup ends, so the
-/// probed publication's report is often one an earlier read saw.
+/// probed publication's report is often one an earlier read saw. A query node can also
+/// lag for minutes, when its retained set is full and the publisher's is not, so each
+/// read also records the payout audit health lists for every retained publication.
 type Reports = std::sync::Mutex<std::collections::HashMap<String, Value>>;
 
 /// The probe's command line.
@@ -806,18 +808,23 @@ async fn check_filters(
     Ok(None)
 }
 
-/// Reads health and records the report under the publication it names.
+/// Reads health and records the report under the publication it names, and each
+/// retained publication's payout audit under its own, keeping a report already seen.
 async fn read_health(http: &reqwest::Client, health_url: &str, reports: &Reports) -> Result<Value> {
     // The indexer's monitoring channel, not wallet data: a bad body is an availability
     // failure, not an answer mismatch (see `fetch`).
     let response = http.get(health_url).send().await?.error_for_status()?;
     let health: Value = serde_json::from_slice(&read_limited(response, MAX_HEALTH_BYTES).await?)?;
+    let mut reports = reports.lock().unwrap();
     if let Some(serving) = health["serving"].as_str() {
-        reports
-            .lock()
-            .unwrap()
-            .insert(serving.to_owned(), health.clone());
+        reports.insert(serving.to_owned(), health.clone());
     }
+    for (id, audit) in health["retained"].as_object().into_iter().flatten() {
+        reports
+            .entry(id.clone())
+            .or_insert_with(|| json!({"serving": id, "indexer": audit}));
+    }
+    drop(reports);
     Ok(health)
 }
 
@@ -1388,6 +1395,45 @@ mod tests {
             indexer_report(&http, &url, "b", &reports).await.unwrap(),
             Some(("answer_mismatch", json!({"payouts_missing": 2})))
         );
+    }
+
+    /// A publication this run's reads never named still passes through the payout
+    /// audit health lists for it as retained, and fails on that audit's missing payouts.
+    #[tokio::test]
+    async fn a_retained_audit_covers_a_publication_health_never_named() {
+        let health = json!({
+            "serving": "c",
+            "indexer": {"payouts_missing": 0, "payouts_uncheckable": 0},
+            "retained": {
+                "b": {"payouts_missing": 0, "payouts_uncheckable": 0},
+                "a": {"payouts_missing": 1, "payouts_uncheckable": 0},
+            },
+        });
+        let app = Router::new().route(
+            "/health",
+            routing::get(move || {
+                let health = health.clone();
+                async move { Json(health) }
+            }),
+        );
+        let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/health", socket.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
+        let http = reqwest::Client::new();
+        let reports = Reports::default();
+        assert_eq!(
+            indexer_report(&http, &url, "b", &reports).await.unwrap(),
+            None
+        );
+        assert_eq!(
+            indexer_report(&http, &url, "a", &reports).await.unwrap(),
+            Some(("answer_mismatch", json!({"payouts_missing": 1})))
+        );
+        let (category, _) = indexer_report(&http, &url, "z", &reports)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(category, "report_unavailable");
     }
 
     /// [`fetch`] against a real server: a successful body within its bound that decodes

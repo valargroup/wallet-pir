@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Publisher health lists `retained`, the payout audit of each publication still
+  within its retention, and `receiver-probe` checks the probed publication against
+  it. A query node whose retained set is full keeps serving the previous
+  publication until the oldest one expires, while health names the publisher's
+  newer one. After a publisher restart reset the publisher's count but not the
+  query node's, that lasted 2.5 minutes on 2026-11-16 and raised a critical
+  availability alert while lookups worked.
+
 - Breaking: Receiver serves each segment as a directory and a companion. A lookup
   reads one 2,048-row directory row, chosen by the segment's choice object, and on a
   hit one companion row per record, which carries the record and its witness payload.

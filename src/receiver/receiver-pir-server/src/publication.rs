@@ -638,6 +638,19 @@ impl Publications {
         (serving, state.epoch)
     }
 
+    /// The displaced inventories still within their retention, newest first, each with
+    /// the report it had when displaced. Query nodes may still be serving them while
+    /// [`Self::health`] names a newer one.
+    pub fn retained_reports(&self) -> Vec<(Hash, Option<serde_json::Value>)> {
+        let state = self.0.read().unwrap();
+        let mut retained: Vec<_> = state
+            .live_retained()
+            .map(|(p, _)| (p.id(), p.report.clone()))
+            .collect();
+        retained.reverse();
+        retained
+    }
+
     /// When the next inventory may activate, if [`MAX_RETAINED`] displaced ones are still
     /// within their retention. Activating only once one expires keeps every captured
     /// inventory for its full retention.
