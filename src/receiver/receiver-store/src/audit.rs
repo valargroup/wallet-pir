@@ -282,6 +282,24 @@ impl PayoutStore {
         self.state(&format!("through:{feed}"))
     }
 
+    /// The deposit addresses of `feed`'s swaps checked at or after `since`, retired
+    /// ones included, newest check first and at most `limit`. Unlike
+    /// [`Self::checked_through`], this names each checked swap, so a swap the feed
+    /// never recorded is absent even when later ones were checked.
+    pub fn checked_deposits(
+        &self,
+        feed: &str,
+        since: i64,
+        limit: usize,
+    ) -> Result<Vec<String>, Error> {
+        let mut query = self.db.prepare(
+            "SELECT deposit_address FROM refunds WHERE feed=?1 AND checked_at>=?2
+             GROUP BY deposit_address ORDER BY MAX(checked_at) DESC LIMIT ?3",
+        )?;
+        let rows = query.query_map(params![feed, since, limit as i64], |r| r.get(0))?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
     /// Commits a refund feed's read atomically with its cursor. New swaps are added;
     /// for known ones, new candidates are merged (see [`Self::merge_candidates`]).
     pub fn record_refunds(

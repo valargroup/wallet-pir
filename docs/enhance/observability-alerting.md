@@ -160,23 +160,26 @@ gaps of up to a week, so an idle timer cannot watch that feed.
 unit also loads the publisher's NEAR key (`NEAR_INTENTS_EXPLORER`, the same
 `EnvironmentFile`), APM reads the explorer's newest 100 refunded swaps out of ZEC
 every 10 minutes and notes when it first sees each refund to a `u1` address with a
-transaction listed. The audit's watermark is its own sighting plus an hour, so
-a checked refund puts it at least 50 minutes past APM's sighting. The condition
-fires when a refund first seen three hours ago is still not within 30 minutes of
-the watermark. It does not decode the address or read the refund type, so a
-record the indexer stops recognising still counts. Refunds already listed at
-APM's first read, or after 20 minutes without one, are not dated and not
-checked. The condition is unknown until the watermark advances after a restart,
-and while explorer reads fail. The watermark is a maximum, so one skipped
-refund among checked ones does not fire. Without the key there is no such
-condition. A NEAR key rotation renames the file, so update the APM drop-in with
-the publisher's.
+transaction listed. The indexer report's `refunds_checked_deposits` names the
+deposit addresses of the REFUNDED swaps the audit checked in the last day, and
+APM keeps each one for 30 days after it was last listed. The condition fires when a
+refund first seen three hours ago is not among them, so one skipped refund fires
+even beside later checked ones. It does not decode the address or read the
+refund type, so a record the indexer stops recognising still counts. Refunds
+already listed at APM's first read, or after 20 minutes without one, are not
+dated and not checked. A list only covers the last day, so refunds first seen
+more than 23 hours before APM read the first list, or before a list that follows
+more than 23 hours without one, are not checked either. The condition is unknown
+while the latest report has no `refunds_checked_deposits`, until the watermark
+advances after a restart, and while explorer reads fail. Without the key there
+is no such condition. A NEAR key rotation renames the file, so update the APM
+drop-in with the publisher's.
 
 | Key | Fires when | Hold |
 | --- | --- | --- |
 | `receiver_payout_crosscheck_idle` | `indexer.payouts_checked` has not increased for `receiver_audit_idle_seconds` (6 h) | 0 |
 | `receiver_excess_refund_crosscheck_idle` | `indexer.excess_refunds_checked_through` has not advanced for `receiver_excess_refund_idle_seconds` (6 h) | 0 |
-| `receiver_refund_crosscheck_behind` | NEAR has listed a refund to a unified address for `receiver_refund_behind_seconds` (3 h) and `indexer.refunds_checked_through` has not passed it | 0 |
+| `receiver_refund_crosscheck_behind` | NEAR has listed a refund to a unified address for `receiver_refund_behind_seconds` (3 h) and `indexer.refunds_checked_deposits` has not named it | 0 |
 | `receiver_refund_not_found` | `refunds_missing_new + refunds_uncheckable_new + refunds_unconfirmed_new > 0` (last 3 h) | `receiver_refund_missing_hold_seconds` (1 h) |
 | `receiver_refunds_not_found_repeatedly` | `refunds_missing_day >= receiver_refund_pattern_count` (3) | `receiver_refund_missing_hold_seconds` (1 h) |
 

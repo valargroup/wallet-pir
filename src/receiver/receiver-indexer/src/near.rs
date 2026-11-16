@@ -72,6 +72,9 @@ const REFRESHES_PER_POLL: usize = 5;
 const REFRESH_SECS: i64 = 60 * 60;
 /// The most deposit addresses the report lists for the day's missing refunds.
 const MISSING_LISTED: usize = 10;
+/// The most deposit addresses the report lists as checked in the last
+/// [`DAY_SECS`]. Refunds to an Orchard receiver average a few a day.
+const CHECKED_LISTED: usize = 500;
 /// A completed payout to an Orchard receiver that NEAR reported without a parsable
 /// transaction is recorded under [`uncheckable_receiver`] and this many zero bytes,
 /// which no transaction hash starts with, then a digest of its swap's length-prefixed
@@ -123,6 +126,9 @@ pub struct Capture {
     refunds: Vec<OpenRefund>,
     /// Each refund feed's progress watermark; see [`PayoutStore::checked_through`].
     through: [Option<i64>; 2],
+    /// The REFUNDED feed's swaps checked within [`DAY_SECS`] of the anchor; see
+    /// [`PayoutStore::checked_deposits`].
+    checked_deposits: Vec<String>,
     anchor: i64,
 }
 
@@ -150,6 +156,11 @@ pub fn capture(store: &PayoutStore, anchor_time: i64) -> Result<Capture> {
                 store.checked_through(Feed::Refunds.name())?,
                 store.checked_through(Feed::ExcessRefunds.name())?,
             ],
+            checked_deposits: store.checked_deposits(
+                Feed::Refunds.name(),
+                anchor_time - DAY_SECS,
+                CHECKED_LISTED,
+            )?,
             anchor: anchor_time,
         })
     })
@@ -225,6 +236,9 @@ impl Capture {
     /// the last 3 h and 24 h, `refunds_unconfirmed_new` the excess refunds 1Click could
     /// not confirm, and `refunds_uncheckable_new` the refunded swaps reported without a
     /// transaction. Each feed's `*_checked_through` only moves forward.
+    /// `refunds_checked_deposits` lists the REFUNDED swaps the audit checked in the
+    /// last day, retired ones included, so a monitor can tell which refunds it never
+    /// recorded.
     pub fn report(&self, index: &Store) -> Result<serde_json::Value> {
         self.report_with(|receiver, txid| index.paid_in(receiver, txid))
     }
@@ -295,6 +309,7 @@ impl Capture {
             "refunds_unconfirmed_new": unconfirmed,
             "refunds_checked_through": through[0],
             "excess_refunds_checked_through": through[1],
+            "refunds_checked_deposits": self.checked_deposits,
         }))
     }
 }
@@ -1570,6 +1585,53 @@ mod tests {
         let next_day = report(&provider, &index, now + 24 * 60 * 60);
         assert_eq!(next_day["refunds_missing_day"], 0);
         assert_eq!(next_day["refunds_missing"], 1);
+    }
+
+    /// The report names each refunded swap checked in the last day, found or missing
+    /// and retired or not, so an unchecked swap is absent beside a later checked one.
+    /// Excess refunds and older checks are left out.
+    #[test]
+    fn checked_refunds_are_listed_by_deposit() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut provider = PayoutStore::open(dir.path().join("providers.sqlite")).unwrap();
+        let (index, _) = paid_index(&dir.path().join("directory.sqlite"));
+        let now = 1_000_000;
+        let refunds = [1, 2, 3, 4].map(|swap| refund(swap, receiver(1), &[[6; 32]], now));
+        provider
+            .record_refunds(Feed::Refunds.name(), &refunds, now, now, now)
+            .unwrap();
+        provider
+            .record_refunds(
+                Feed::ExcessRefunds.name(),
+                &[refund(5, receiver(1), &[[6; 32]], now)],
+                now,
+                now,
+                now,
+            )
+            .unwrap();
+        let old = now - DAY_SECS - 1;
+        provider
+            .settle_refunds(&[([4; 32], RefundChange::Found)], old)
+            .unwrap();
+        provider
+            .settle_refunds(
+                &[
+                    ([1; 32], RefundChange::Found),
+                    ([3; 32], RefundChange::Missing),
+                    ([5; 32], RefundChange::Found),
+                ],
+                now,
+            )
+            .unwrap();
+        provider
+            .settle_refunds(&[([1; 32], RefundChange::Retire)], now + 1)
+            .unwrap();
+        let mut listed: Vec<String> = serde_json::from_value(
+            report(&provider, &index, now)["refunds_checked_deposits"].clone(),
+        )
+        .unwrap();
+        listed.sort();
+        assert_eq!(listed, ["deposit-1", "deposit-3"]);
     }
 
     /// A candidate added later restarts the swap's grace, so a deposit-only list that
