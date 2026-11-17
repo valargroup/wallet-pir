@@ -276,6 +276,11 @@ async fn https_authority_controls_real_wallet_queries_and_restart() {
     let publications = Publications::default();
     let mut lifecycle = sync::synchronization(&config, publications.clone()).unwrap();
     lifecycle.synchronize().await.unwrap();
+    assert_eq!(
+        publications.tables().loads(),
+        0,
+        "a start loads tables lazily"
+    );
     lifecycle.context().adapter().check_unused_revocations();
     let first_inventory = publications.current().unwrap().id();
     let (wallet_slot, address, wallet) = serve_wallet(&publications).await;
@@ -357,6 +362,9 @@ async fn https_authority_controls_real_wallet_queries_and_restart() {
     server.abort();
 }
 
+// A second publication sequence. Fast already checks that a missed withdrawal
+// and a negative answer close admission without replacing the served view.
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_rejected_candidate_keeps_approved_views_and_retained_sessions() {
     let root = tempfile::tempdir().unwrap();
@@ -562,6 +570,9 @@ async fn tables_returning_after_a_publication_without_them_load_again() {
 /// served, so the first wallet query on it does not wait for that preparation.
 /// The first publication after a start stays lazy, so readiness does not wait for
 /// every table.
+// Another publication built only to count preparation before serving.
+// Fast still checks a start stays lazy inside the encrypted query case.
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_replacing_publication_is_prepared_before_it_is_served() {
     let root = tempfile::tempdir().unwrap();

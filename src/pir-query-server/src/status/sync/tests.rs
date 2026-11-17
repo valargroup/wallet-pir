@@ -1563,6 +1563,8 @@ async fn authority_answers_match_the_live_envelope_and_requested_anchor() {
 /// A publisher refreshing its observation while a candidate loads publishes
 /// the same material under new metadata. The loaded material commits under
 /// the latest metadata, after its live check, instead of failing as stale.
+// Same prepared snapshot as the metadata-only refresh, raced with the load.
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
 async fn a_metadata_refresh_during_the_load_commits_the_loaded_material_as_latest() {
     use status_shared::fixture::{self, NETWORK, SALT};
@@ -1610,6 +1612,8 @@ async fn a_metadata_refresh_during_the_load_commits_the_loaded_material_as_lates
 
 /// New data published while a worker loads does not require a quiet publisher
 /// before the worker can activate its still-fresh, live-checked candidate.
+// Same prepared snapshot, with one more publication arriving during the load.
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
 async fn changed_material_during_loading_still_allows_forward_progress() {
     use status_shared::fixture::{self, NETWORK, SALT};
