@@ -1,5 +1,5 @@
 //! Real TLS terminator over the real product HTTP routes, with transport faults.
-use std::{path::PathBuf, process::Stdio};
+use std::{path::PathBuf, process::Stdio, sync::OnceLock};
 use tokio::io::{AsyncBufReadExt, BufReader};
 pub struct Tls {
     pub origin: String,
@@ -21,33 +21,9 @@ impl Tls {
         let key = root.path().join("key.pem");
         let control = root.path().join("fault");
         std::fs::write(&control, "").unwrap();
-        let output = tokio::process::Command::new("openssl")
-            .args([
-                "req",
-                "-x509",
-                "-newkey",
-                "rsa:2048",
-                "-nodes",
-                "-days",
-                "1",
-                "-subj",
-                "/CN=localhost",
-                "-addext",
-                "subjectAltName=DNS:localhost",
-                "-addext",
-                "basicConstraints=critical,CA:FALSE",
-                "-keyout",
-            ])
-            .arg(&key)
-            .arg("-out")
-            .arg(&certificate)
-            .output()
-            .await
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "TLS test certificate generation failed"
-        );
+        let (key_bytes, cert_bytes) = localhost_material().clone();
+        std::fs::write(&key, key_bytes).unwrap();
+        std::fs::write(&certificate, cert_bytes).unwrap();
         let support = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let workspace = support
             .ancestors()
@@ -85,4 +61,48 @@ impl Tls {
             _child: child,
         }
     }
+}
+
+/// One localhost certificate for every case in this process.
+///
+/// Each terminator still has its own files and listener. Generating a 2048-bit
+/// key per case was repeated work with no bearing on the route under test.
+fn localhost_material() -> &'static (Vec<u8>, Vec<u8>) {
+    static MATERIAL: OnceLock<(Vec<u8>, Vec<u8>)> = OnceLock::new();
+    MATERIAL.get_or_init(|| {
+        let root = tempfile::tempdir().unwrap();
+        let key = root.path().join("key.pem");
+        let certificate = root.path().join("certificate.pem");
+        let output = std::process::Command::new("openssl")
+            .args([
+                "req",
+                "-x509",
+                "-newkey",
+                "rsa:2048",
+                "-nodes",
+                "-days",
+                "1",
+                "-subj",
+                "/CN=localhost",
+                "-addext",
+                "subjectAltName=DNS:localhost",
+                "-addext",
+                "basicConstraints=critical,CA:FALSE",
+                "-keyout",
+            ])
+            .arg(&key)
+            .arg("-out")
+            .arg(&certificate)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "TLS test certificate generation failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        (
+            std::fs::read(&key).unwrap(),
+            std::fs::read(&certificate).unwrap(),
+        )
+    })
 }

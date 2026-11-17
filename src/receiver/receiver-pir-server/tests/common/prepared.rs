@@ -54,7 +54,33 @@ pub fn tables(coverage: Coverage, paid: &[Paid], rows: u32) -> Tables {
 }
 
 /// [`tables`] with the companion built at `tree`.
+///
+/// Identical inputs are built once per process. Later cases clone that segment
+/// instead of repeating the publisher build; each case still prepares its own
+/// service state and checks the answer itself.
 pub fn tables_at(coverage: Coverage, paid: &[Paid], rows: u32, tree: Tree) -> Tables {
+    let key = tables_key(&coverage, paid, rows, &tree);
+    let mut cache = TABLES.get_or_init(Default::default).lock().unwrap();
+    if let Some(index) = cache.iter().position(|(cached, _)| *cached == key) {
+        let tables = cache[index].1.clone();
+        let entry = cache.remove(index);
+        cache.push(entry);
+        return tables;
+    }
+    if cache.len() == TABLE_ENTRIES {
+        cache.remove(0);
+    }
+    let built = build_tables(coverage, paid, rows, tree);
+    cache.push((key, built.clone()));
+    built
+}
+
+/// Distinct fixture geometries retained beside the eight prepared servers.
+const TABLE_ENTRIES: usize = 16;
+
+static TABLES: OnceLock<Mutex<Vec<([u8; 32], Tables)>>> = OnceLock::new();
+
+fn build_tables(coverage: Coverage, paid: &[Paid], rows: u32, tree: Tree) -> Tables {
     let mut projection = Projection::new(initial_salt(&coverage.start_parent, 0));
     let receivers: Vec<_> = paid.iter().map(|p| p.0).collect();
     projection
@@ -71,6 +97,40 @@ pub fn tables_at(coverage: Coverage, paid: &[Paid], rows: u32, tree: Tree) -> Ta
         paid,
     )
     .unwrap()
+}
+
+/// Stable identity of one fixture build. The projection is determined by these inputs.
+fn tables_key(coverage: &Coverage, paid: &[Paid], rows: u32, tree: &Tree) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(coverage.genesis);
+    hasher.update(coverage.history_revision.to_le_bytes());
+    hasher.update(coverage.start_height.to_le_bytes());
+    hasher.update(coverage.start_parent);
+    hasher.update(coverage.start_position.to_le_bytes());
+    hasher.update(coverage.end_height.to_le_bytes());
+    hasher.update(coverage.end_hash);
+    hasher.update(coverage.end_position.to_le_bytes());
+    hasher.update(rows.to_le_bytes());
+    hasher.update(tree.height.to_le_bytes());
+    hasher.update(tree.hash);
+    hasher.update(tree.size.to_le_bytes());
+    hasher.update((paid.len() as u32).to_le_bytes());
+    for (receiver, payment, payload) in paid {
+        hasher.update(receiver);
+        hasher.update(payment.height.to_le_bytes());
+        hasher.update(payment.block_hash);
+        hasher.update(payment.txid);
+        hasher.update(payment.tx_index.to_le_bytes());
+        hasher.update(payment.action_index.to_le_bytes());
+        hasher.update(payment.position.to_le_bytes());
+        hasher.update(payment.action_nullifier);
+        hasher.update(payment.cmx);
+        hasher.update(payment.ephemeral_key);
+        hasher.update(payment.ciphertext_prefix);
+        hasher.update(payload);
+    }
+    hasher.finalize().into()
 }
 
 /// An empty minimum-geometry segment ending at block `[end; 32]`.

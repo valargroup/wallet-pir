@@ -86,7 +86,8 @@ ring parameters. These component fixtures are not advertised publication
 geometries. Independent history oracles retain the 16-bit native profile, and
 HTTP checks retain registered publication geometries and real history rows. Publisher tests share immutable
 producer bytes and generated certificate material; writable state, listeners,
-trust checks and fault controls remain fresh. A query reused within one recovery
+trust checks and fault controls remain fresh. Receiver segment fixtures with
+identical inputs are built once per process. A query reused within one recovery
 scenario is first decoded against producer bytes, and every later check still
 sends it over HTTP and compares the complete answer. Large unit executables
 use up to three disjoint groups of exact discovered case names inside the same

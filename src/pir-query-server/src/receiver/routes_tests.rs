@@ -305,6 +305,10 @@ async fn a_revocation_after_selection_is_gone() {
 
 /// A shard filter whose load a revocation overtakes is 410, never the revoked
 /// inventory's filter; choice objects share that path.
+///
+/// Fast keeps the query selected before revocation. This second campaign
+/// rebuilds that publication only to revoke during a filter load.
+#[cfg(feature = "qualification-tests")]
 #[tokio::test]
 async fn a_revocation_during_a_filter_load_is_gone() {
     use std::sync::mpsc;

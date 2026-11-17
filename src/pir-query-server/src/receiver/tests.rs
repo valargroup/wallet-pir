@@ -445,6 +445,9 @@ fn configuration_is_offline_and_refuses_node_credentials() {
     assert!(serde_json::from_value::<Config>(value).is_err());
 }
 
+// Another serving refresh of the same publication. Fast already synchronizes
+// one encrypted query and checks it again after a restart.
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn filter_successors_reuse_loaded_directory_across_authority_conflicts() {
     let root = tempfile::tempdir().unwrap();
@@ -471,6 +474,7 @@ async fn filter_successors_reuse_loaded_directory_across_authority_conflicts() {
 /// A restarted publisher withdraws, starts a new recovery epoch and publishes its
 /// previous tables again. The query role serves them again on its next pass without
 /// reloading them.
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_restarted_publisher_republishing_the_same_tables_is_served_on_the_next_pass() {
     let root = tempfile::tempdir().unwrap();
@@ -513,6 +517,7 @@ async fn a_restarted_publisher_republishing_the_same_tables_is_served_on_the_nex
 
 /// A publication without tables drops the cached ones, so tables that return
 /// afterwards load from the files fetched for them rather than collected ones.
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tables_returning_after_a_publication_without_them_load_again() {
     let root = tempfile::tempdir().unwrap();
