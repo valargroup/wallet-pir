@@ -87,7 +87,7 @@ pub(super) struct Loaded {
     filters: Option<BlockWindow>,
 }
 impl Receiver {
-    #[cfg(test)]
+    #[cfg(all(test, feature = "qualification-tests"))]
     pub(super) fn directory_loads(&self) -> usize {
         self.loads
     }
