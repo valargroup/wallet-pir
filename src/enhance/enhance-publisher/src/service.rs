@@ -12,6 +12,21 @@ use pir_pipeline::service::{Http, Shutdown, Tasks};
 use serde::Deserialize;
 use std::{net::SocketAddr, path::PathBuf};
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
+
+/// Receipt id of a completed staged rebuild, when the receipt can be read.
+/// A corrupt receipt is absent here; adoption rejects it and the live journal stays.
+fn staged_receipt_id(data_dir: &std::path::Path) -> Option<String> {
+    let path = data_dir
+        .join(crate::rebuild::STAGED_DIR)
+        .join(crate::rebuild::RECEIPT_FILE);
+    let receipt: crate::rebuild::RebuildReceipt =
+        serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
+    let id = receipt.receipt_id;
+    if id.is_empty() || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+        return None;
+    }
+    Some(id)
+}
 /// Durable state directory and local publisher listeners; the canonical source
 /// is the root chain.
 /// Consumers choose their own serving destinations independently.
@@ -65,16 +80,12 @@ pub async fn run<E: PublisherExecutor + IngestionExecutor>(
             .ok_or("Enhance publisher requires a node cookie")?,
     )?;
     let publisher = EnhancePublisher::open(&config.data_dir.join("publication"), rpc.clone())?;
-    // A publication built from the journal a staged rebuild replaces is never served
-    // again. It is refused durably before adoption, so a stop in between cannot
-    // restore it from the rebuilt journal.
-    if config
-        .data_dir
-        .join(crate::rebuild::STAGED_DIR)
-        .join(crate::rebuild::RECEIPT_FILE)
-        .exists()
-    {
-        publisher.forgo_restore()?;
+    // A swap that already replaced the journal refuses its publication even if
+    // this process died before recording that. Arming the next swap does not
+    // refuse anything until adoption actually replaces the journal.
+    publisher.settle_armed_forgo(&config.data_dir)?;
+    if let Some(receipt_id) = staged_receipt_id(&config.data_dir) {
+        publisher.arm_forgo(&receipt_id)?;
     }
     match crate::rebuild::adopt_staged(&config.data_dir)? {
         crate::rebuild::JournalAdoption::None => {}
@@ -84,10 +95,12 @@ pub async fn run<E: PublisherExecutor + IngestionExecutor>(
             changed_records,
             previous,
         } => {
-            tracing::info!(%receipt_id, height, changed_records, previous = %previous.display(), "adopted staged Enhance journal rebuild")
+            tracing::info!(%receipt_id, height, changed_records, previous = %previous.display(), "adopted staged Enhance journal rebuild");
+            publisher.forgo_restore()?;
         }
         crate::rebuild::JournalAdoption::Rejected { reason, moved_to } => {
-            tracing::error!(%reason, moved_to = %moved_to.display(), "rejected staged Enhance journal rebuild")
+            tracing::error!(%reason, moved_to = %moved_to.display(), "rejected staged Enhance journal rebuild");
+            publisher.disarm_forgo()?;
         }
     }
     let artifacts =
