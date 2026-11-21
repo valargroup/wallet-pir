@@ -9,6 +9,14 @@ pub struct Placement {
     pub domains: BTreeMap<u64, Vec<String>>,
     pub revision: Option<u64>,
     pub published_revision: Option<u64>,
+    /// When the serving generation was first seen behind the publisher, in
+    /// unix seconds. It restarts only when serving advances, so the handover
+    /// alert times one stuck generation rather than a router that keeps
+    /// adopting during a burst of blocks. Generations only increase, so the
+    /// same generation seen behind on both sides of an observation gap was
+    /// behind throughout it.
+    #[serde(skip)]
+    pub behind_since: Option<u64>,
 }
 
 #[derive(Clone, Debug, serde::Deserialize)]
@@ -443,7 +451,19 @@ impl Report {
 /// inconsistent or unconfigured serving observations. A coherent older serving
 /// generation is observable, but never described as the newest publication.
 pub fn update(data: &mut crate::dashboard::DashboardData, now: SystemTime) {
-    if let Some((placement, replicas, at)) = collect(data, now) {
+    if let Some((mut placement, replicas, at)) = collect(data, now) {
+        if placement.revision < placement.published_revision {
+            let previous = data
+                .placement
+                .as_ref()
+                .filter(|p| p.revision == placement.revision)
+                .and_then(|p| p.behind_since);
+            placement.behind_since = previous.or_else(|| {
+                at.duration_since(std::time::UNIX_EPOCH)
+                    .ok()
+                    .map(|d| d.as_secs())
+            });
+        }
         data.placement = Some(placement);
         data.domain_ready_replicas = replicas;
         data.placement_success = Some(at);
@@ -548,6 +568,7 @@ fn collect(
             domains,
             revision: serving.map(|s| s.0),
             published_revision: Some(generation as u64),
+            behind_since: None,
         },
         replicas,
         at,
@@ -1412,11 +1433,8 @@ mod tests {
             .iter()
             .find(|c| c.key == "publication_handover_warning")
             .unwrap();
-        assert_eq!(lag.firing, Some(true));
-        assert_eq!(
-            lag.hold_seconds,
-            Policy::default().publication_warning_seconds
-        );
+        // Behind for no time yet; the handover tests below time the hold.
+        assert_eq!(lag.firing, Some(false));
         d.packing_routers.get_mut("router").unwrap().sample.error = Some("unreachable".into());
         update(&mut d, at(now + 2));
         let conditions = monitoring::conditions(&d, now + 2, &Policy::default());
@@ -1455,37 +1473,57 @@ mod tests {
             assert!(d.placement_error);
         }
     }
+    /// Evaluates the handover warning with the router serving `lag`
+    /// generations behind the publisher, keeping APM's placement between ticks.
+    fn evaluate_handover(store: &mut Store, kept: &mut Option<Placement>, t: u64, lag: u64) {
+        let mut d = view(t);
+        d.placement = kept.take();
+        d.packing_routers
+            .get_mut("router")
+            .unwrap()
+            .placement
+            .as_mut()
+            .unwrap()
+            .generation -= lag;
+        update(&mut d, at(t));
+        *kept = d.placement.clone();
+        let conditions = monitoring::conditions(&d, t, &Policy::default())
+            .into_iter()
+            .filter(|c| c.key == "publication_handover_warning")
+            .collect::<Vec<_>>();
+        store.evaluate(&conditions, t, true, "test", "").unwrap();
+    }
     #[test]
     fn handover_alert_waits_for_the_existing_budget_and_recovers_on_current_reports() {
         let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
-        let evaluate = |store: &mut Store, t, behind| {
-            let mut d = view(t);
-            if behind {
-                d.packing_routers
-                    .get_mut("router")
-                    .unwrap()
-                    .placement
-                    .as_mut()
-                    .unwrap()
-                    .generation -= 1;
-            }
-            update(&mut d, at(t));
-            let conditions = monitoring::conditions(&d, t, &Policy::default())
-                .into_iter()
-                .filter(|c| c.key == "publication_handover_warning")
-                .collect::<Vec<_>>();
-            store.evaluate(&conditions, t, true, "test", "").unwrap();
-        };
+        let mut kept = None;
         for t in (1000..1120).step_by(5) {
-            evaluate(&mut store, t, true);
+            evaluate_handover(&mut store, &mut kept, t, 1);
             assert!(!store.incidents().unwrap()[0].active);
         }
-        evaluate(&mut store, 1120, true);
+        evaluate_handover(&mut store, &mut kept, 1120, 1);
         assert!(store.incidents().unwrap()[0].active);
-        evaluate(&mut store, 1125, false);
+        evaluate_handover(&mut store, &mut kept, 1125, 0);
         assert!(store.incidents().unwrap()[0].active);
-        evaluate(&mut store, 1130, false);
+        evaluate_handover(&mut store, &mut kept, 1130, 0);
         assert!(!store.incidents().unwrap()[0].active);
+    }
+    #[test]
+    fn handover_alert_ignores_a_router_that_keeps_advancing_behind_a_burst() {
+        let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
+        let mut kept = None;
+        // Serving advances every tick but stays behind for 200s.
+        for (step, t) in (1000..1200).step_by(5).enumerate() {
+            evaluate_handover(&mut store, &mut kept, t, 41 - step as u64);
+            assert!(!store.incidents().unwrap()[0].active, "{t}");
+        }
+        // Once serving stops advancing, the full budget runs from there.
+        for t in (1200..1320).step_by(5) {
+            evaluate_handover(&mut store, &mut kept, t, 1);
+            assert!(!store.incidents().unwrap()[0].active, "{t}");
+        }
+        evaluate_handover(&mut store, &mut kept, 1320, 1);
+        assert!(store.incidents().unwrap()[0].active);
     }
     #[test]
     fn an_older_generation_with_no_eligible_workers_is_known_unavailability() {

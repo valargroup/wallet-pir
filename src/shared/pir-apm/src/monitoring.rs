@@ -1004,20 +1004,24 @@ pub fn conditions(d: &DashboardData, now: u64, p: &Policy) -> Vec<Condition> {
             .placement
             .as_ref()
             .and_then(|placement| Some((placement.revision?, placement.published_revision?)));
+        // The hold is timed by `Placement::behind_since`, which restarts when
+        // serving advances, so the incident engine itself waits no further.
+        let behind_since = d.placement.as_ref().and_then(|p| p.behind_since);
         add(
             format!("publication_handover_{severity}"),
             "placement".into(),
             severity,
-            generations
-                .filter(|_| topology)
-                .map(|(active, published)| active < published),
+            generations.filter(|_| topology).map(|(active, published)| {
+                active < published
+                    && behind_since.is_some_and(|since| now.saturating_sub(since) >= hold)
+            }),
             generations
                 .map(|(active, published)| {
                     format!("serving generation {active}; publisher generation {published}")
                 })
                 .unwrap_or_else(|| "unavailable".into()),
-            format!("serving generation behind publisher for {hold}s"),
-            hold,
+            format!("serving generation behind publisher for {hold}s without advancing"),
+            0,
             coordinator_sample.min(epoch(d.placement_success)),
         );
     }
@@ -3379,6 +3383,7 @@ mod tests {
             domains: BTreeMap::from([(0, vec!["w".into()])]),
             revision: Some(1),
             published_revision: Some(1),
+            behind_since: None,
         });
         d.placement_success = d.last_scrape;
         d.placement_error = false;

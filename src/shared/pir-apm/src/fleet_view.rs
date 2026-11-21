@@ -689,6 +689,7 @@ mod domain_tests {
             revision: Some(4),
             published_revision: Some(5),
             domains: BTreeMap::new(),
+            behind_since: None,
         });
         data.placement_error = false;
         data.placement_success = Some(SystemTime::now());
@@ -729,6 +730,7 @@ mod domain_tests {
                 (0, vec!["worker-a".into()]),
                 (2, vec!["worker-b".into(), "unknown-worker".into()]),
             ]),
+            behind_since: None,
         });
         data.placement_success = Some(SystemTime::now());
         data.placement_error = false;
