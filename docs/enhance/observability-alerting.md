@@ -33,11 +33,13 @@ once per minute from a separate region, and monitors APM task progress.
   failure alerts report a withdrawal that lasts 120s (warning) / 300s
   (critical).
   Worker metrics reachability remains a separate monitoring check.
-- `publication_handover_warning` / `publication_handover_critical` report a
-  continuously observed older serving generation for the existing publication
-  warning/critical durations (120s / 300s by default). These measure adoption by
-  the query fleet, separately from publisher-versus-chain lag. Missing observations
-  are unknown and cannot clear an active incident.
+- `publication_handover_warning` / `publication_handover_critical` report one
+  serving generation continuously observed behind the publisher for the existing
+  publication warning/critical durations (120s / 300s by default). The timer
+  restarts whenever serving advances, so a router that keeps adopting while a
+  burst of blocks keeps it one generation behind does not page. These measure
+  adoption by the query fleet, separately from publisher-versus-chain lag.
+  Missing observations are unknown and cannot clear an active incident.
   The topology page and `/apm/monitor-status` show serving and publisher generations
   and whether the observation is fresh. Router `/internal/health` also reports
   retained generations, full retention slots, live pin holders and remaining
