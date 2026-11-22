@@ -17,7 +17,6 @@ pub const LONG_WINDOW: u64 = 900;
 #[derive(Clone, Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Policy {
-    pub history_unpublished_warning_seconds: f64,
     pub history_unpublished_critical_seconds: f64,
     pub txid_unpublished_critical_seconds: f64,
     pub lag_warning_blocks: f64,
@@ -46,7 +45,6 @@ pub struct Policy {
 impl Default for Policy {
     fn default() -> Self {
         Self {
-            history_unpublished_warning_seconds: 30.,
             history_unpublished_critical_seconds: 60.,
             txid_unpublished_critical_seconds: 180.,
             lag_warning_blocks: 2.,
@@ -76,7 +74,7 @@ impl Policy {
         let positive = |v: f64| v.is_finite() && v > 0.;
         let ratio = |v: f64| v.is_finite() && v > 0. && v < 1.;
         [
-            self.history_unpublished_warning_seconds,
+            self.history_unpublished_critical_seconds,
             self.txid_unpublished_critical_seconds,
             self.lag_warning_blocks,
             self.last_success_warning_seconds,
@@ -87,7 +85,6 @@ impl Policy {
         ]
         .into_iter()
         .all(positive)
-            && self.history_unpublished_critical_seconds >= self.history_unpublished_warning_seconds
             && self.last_success_critical_seconds >= self.last_success_warning_seconds
             && self.rebuild_critical_seconds >= self.history_rebuild_warning_seconds
             && self.rebuild_critical_seconds >= self.txid_rebuild_warning_seconds
@@ -736,35 +733,30 @@ fn publication_rules(a: &mut Adder, kind: Kind, name: &str, s: &Source, now: u64
             .filter(|v| fresh && v.is_finite())
     };
     let sample = s.sampled_at;
-    // Unpublished age: history warns at 30 s and pages at 60 s held 60 s; the
-    // txid display seals every block, so it pages at 180 s and relies on the
-    // lag rule for its warning.
+    // Unpublished age only pages: a block burst keeps a healthy history
+    // publisher's oldest block waiting about two cycles (~40 s), so a lower
+    // warning fired on bursts or alongside the critical. Lag and rebuild cover
+    // slower drift.
     let age = gauge(c.oldest_unpublished);
-    let ages: Vec<(&str, f64, u64)> = match kind {
-        // Held like the critical rule, so one slow publication cycle does not alert.
-        Kind::History => vec![
-            ("warning", p.history_unpublished_warning_seconds, 30),
-            ("critical", p.history_unpublished_critical_seconds, 60),
-        ],
-        Kind::Txid => vec![("critical", p.txid_unpublished_critical_seconds, 0)],
+    let (budget, hold) = match kind {
+        Kind::History => (p.history_unpublished_critical_seconds, 60),
+        Kind::Txid => (p.txid_unpublished_critical_seconds, 0),
     };
-    for (level, budget, hold) in ages {
-        a.add(
-            format!("publication_{level}"),
-            name,
-            age.map(|v| v > budget),
-            level,
-            hold,
-            sample,
-            age.map(|v| format!("{v:.1}s unpublished"))
-                .unwrap_or_else(|| "unknown".into()),
-            if hold > 0 {
-                format!("unpublished age >{budget}s for {hold}s")
-            } else {
-                format!("unpublished age >{budget}s")
-            },
-        );
-    }
+    a.add(
+        "publication_critical",
+        name,
+        age.map(|v| v > budget),
+        "critical",
+        hold,
+        sample,
+        age.map(|v| format!("{v:.1}s unpublished"))
+            .unwrap_or_else(|| "unknown".into()),
+        if hold > 0 {
+            format!("unpublished age >{budget}s for {hold}s")
+        } else {
+            format!("unpublished age >{budget}s")
+        },
+    );
     let lag = gauge(c.lag);
     a.add(
         "publication_lag",
@@ -1239,7 +1231,7 @@ mod tests {
     }
 
     #[test]
-    fn history_keeps_its_30_and_60_second_age_rules() {
+    fn history_age_pages_at_60_seconds_without_a_warning() {
         let v = view(
             vec![service("transparent", Kind::History)],
             vec![(
@@ -1253,21 +1245,17 @@ mod tests {
             )],
         );
         let f = conditions(&v, 105, &Policy::default());
-        assert_eq!(firing(&f, "transparent", "publication_warning"), Some(true));
+        let ages: Vec<_> = f.services["transparent"]
+            .iter()
+            .filter(|c| {
+                c.key.starts_with("quality.transparent.publication_")
+                    && c.threshold.starts_with("unpublished age")
+            })
+            .map(|c| (c.key.as_str(), c.firing, c.hold_seconds))
+            .collect();
         assert_eq!(
-            firing(&f, "transparent", "publication_critical"),
-            Some(false)
-        );
-        let hold = |rule: &str| {
-            f.services["transparent"]
-                .iter()
-                .find(|c| c.key == format!("quality.transparent.{rule}"))
-                .unwrap()
-                .hold_seconds
-        };
-        assert_eq!(
-            (hold("publication_warning"), hold("publication_critical")),
-            (30, 60)
+            ages,
+            [("quality.transparent.publication_critical", Some(false), 60)]
         );
     }
 
