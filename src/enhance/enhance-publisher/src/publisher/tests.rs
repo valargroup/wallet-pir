@@ -73,6 +73,61 @@ fn rpc(root: &Path, origin: &str) -> ZakuraClient {
     fs::write(&cookie, "fixture:fixture").unwrap();
     ZakuraClient::from_cookie_file(origin, cookie).unwrap()
 }
+
+/// A finished journal swap keeps its refusal across a crash before that refusal
+/// is committed. A rejected swap, and an interrupted one, do not create one.
+#[test]
+fn a_rejected_rebuild_does_not_refuse_the_publication_a_finished_swap_does() {
+    let root = tempfile::tempdir().unwrap();
+    let data = root.path();
+    let publisher_root = data.join("publication");
+    let publisher =
+        EnhancePublisher::open(&publisher_root, rpc(data, "http://127.0.0.1:1")).unwrap();
+    publisher.arm_forgo("receipt-a").unwrap();
+    assert!(!publisher_root.join("restore-forgone").exists());
+    assert!(!publisher_root.join("restore-forgone.pending").exists());
+    assert!(publisher.arm_forgo("../escape").is_err());
+
+    let hash = "ab".repeat(32);
+    let pending = publisher_root.join("restore-forgone.pending");
+    let refused = publisher_root.join("restore-forgone");
+    fs::write(&pending, format!("{hash}\nreceipt-b\n")).unwrap();
+    fs::create_dir(data.join("enhance")).unwrap();
+    fs::create_dir(data.join("enhance.before-rebuild-receipt-b")).unwrap();
+    publisher.settle_armed_forgo(data).unwrap();
+    assert_eq!(fs::read_to_string(&refused).unwrap(), hash);
+    assert!(!pending.exists());
+
+    // The live journal is gone: adoption has not finished, so the armed hash
+    // must not become a refusal yet.
+    fs::remove_dir(data.join("enhance")).unwrap();
+    fs::create_dir_all(data.join("enhance-staged")).unwrap();
+    fs::write(data.join("enhance-staged").join("rebuild.json"), b"{}").unwrap();
+    fs::write(&pending, format!("{hash}\nreceipt-b\n")).unwrap();
+    fs::remove_file(&refused).unwrap();
+    publisher.settle_armed_forgo(data).unwrap();
+    assert!(pending.exists());
+    assert!(!refused.exists());
+
+    // Rejection drops that armed record and leaves a committed refusal alone.
+    fs::create_dir(data.join("enhance")).unwrap();
+    publisher.settle_armed_forgo(data).unwrap();
+    assert_eq!(fs::read_to_string(&refused).unwrap(), hash);
+    fs::write(&pending, format!("{hash}\nreceipt-c\n")).unwrap();
+    publisher.disarm_forgo().unwrap();
+    assert!(!pending.exists());
+    assert_eq!(fs::read_to_string(&refused).unwrap(), hash);
+
+    // A pending record whose swap is gone, with no predecessor journal left
+    // behind, is not a refusal on the next start.
+    fs::remove_file(&refused).unwrap();
+    fs::remove_dir_all(data.join("enhance.before-rebuild-receipt-b")).unwrap();
+    fs::remove_dir_all(data.join("enhance-staged")).unwrap();
+    fs::write(&pending, format!("{hash}\nreceipt-d\n")).unwrap();
+    publisher.settle_armed_forgo(data).unwrap();
+    assert!(!pending.exists());
+    assert!(!refused.exists());
+}
 /// Withdrawn work is rejected before preparation. The reference packing
 /// artifact is larger than 512 MiB, so this case must not build one.
 #[tokio::test]
