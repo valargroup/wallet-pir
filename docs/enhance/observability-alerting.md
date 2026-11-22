@@ -218,7 +218,6 @@ Optional `PIR_APM_ALERT_POLICY` names a JSON file. Fields and defaults:
   "receiver_refund_missing_hold_seconds": 3600,
   "receiver_refund_pattern_count": 3,
   "quality": {
-    "history_unpublished_warning_seconds": 30,
     "history_unpublished_critical_seconds": 60,
     "txid_unpublished_critical_seconds": 180,
     "lag_warning_blocks": 2,
@@ -822,7 +821,6 @@ txid display controller.
 | `publication_canonical` | both | critical | published block hash differs from the node's | 60 s |
 | `publication_origins` | both | critical | a public origin serves another map (only with origins) | 30 s; 180 s (`origin_lag_hold_seconds`) while every differing origin serves an older publication (its `covered_through` below the published height, or the previous map if it reports none), for that long after the coordinator published past it |
 | `publication_*_coverage` | both | warning | that check unavailable | 45 s |
-| `publication_warning` | history | warning | oldest unpublished block > 30 s | 30 s |
 | `publication_critical` | history | critical | oldest unpublished block > 60 s | 60 s |
 | `publication_critical` | txid | critical | oldest unpublished block > 180 s | – |
 | `publication_lag` | both | warning | coordinator ≥ 2 blocks behind its node | 5 min |
@@ -865,10 +863,11 @@ worker serving a map replaced less than 45 s earlier, from when APM first saw it
 successor, as on the published map. A worker stuck on a map fires about 105 s
 after APM saw that map replaced.
 
-History keeps its 30 s and 60 s unpublished-age rules, which already page
-earlier than 180 s; the txid display seals every block, so it has only the 180 s
-page and relies on the lag rule for its warning. Time since the last success
-counts only while the node's height is above the published height, so an idle
+Unpublished age only pages: 60 s held 60 s for history, 180 s for the txid
+display, which seals every block. History has no lower warning because a block
+burst keeps a healthy publisher's oldest block waiting about two cycles (~40 s).
+Both kinds rely on the lag and rebuild rules for slower drift. Time since the
+last success counts only while the node's height is above the published height, so an idle
 chain does not fire it, and a coordinator that reports 0 (no success since its
 restart) is unknown. Both levels hold 2 minutes
 (`last_success_hold_seconds`): after a quiet chain the first new block is
