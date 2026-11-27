@@ -50,8 +50,6 @@ pub struct Origin {
 /// Why the origin check did not find agreement, most specific first.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub enum Finding {
-    /// The coordinator's anchor is not on the node's chain.
-    NoncanonicalAnchor,
     /// The coordinator published between the reads: not a disagreement.
     ObservationRace,
     /// An origin could not be read or returned no valid map.
@@ -65,7 +63,6 @@ pub enum Finding {
 impl Finding {
     fn text(self) -> &'static str {
         match self {
-            Self::NoncanonicalAnchor => "noncanonical anchor",
             Self::ObservationRace => "observation race",
             Self::FailedObservation => "failed observation",
             Self::LaggingOrigin => "lagging origin",
@@ -119,10 +116,9 @@ async fn observe(client: &reqwest::Client, origin: &str, index: usize, path: &st
 }
 impl View {
     /// The reason origins do not agree, or `None` when they do or none are configured.
+    /// Whether the anchor is canonical is not an origin finding: the separate
+    /// `publication_canonical` rule judges it, with its own reorg hold.
     pub fn finding(&self) -> Option<Finding> {
-        if self.canonical == Some(false) {
-            return Some(Finding::NoncanonicalAnchor);
-        }
         if self.origins.is_empty() || self.map_sha256.is_none() {
             return None;
         }
@@ -357,7 +353,7 @@ mod tests {
     }
 
     #[test]
-    fn findings_separate_races_lag_failures_and_noncanonical_anchors() {
+    fn findings_separate_races_lag_and_failures() {
         assert_eq!(sampled(&[Some("aa"), Some("aa")]).finding(), None);
         assert_eq!(
             sampled(&[Some("aa"), Some("bb")]).finding(),
@@ -374,9 +370,9 @@ mod tests {
         let mut race = sampled(&[Some("aa"), Some("cc")]);
         race.map_after = Some("cc".repeat(32));
         assert_eq!(race.finding(), Some(Finding::ObservationRace));
-        let mut noncanonical = sampled(&[Some("aa"), Some("aa")]);
-        noncanonical.canonical = Some(false);
-        assert_eq!(noncanonical.finding(), Some(Finding::NoncanonicalAnchor));
+        let mut reorg = sampled(&[Some("aa"), Some("bb")]);
+        reorg.canonical = Some(false);
+        assert_eq!(reorg.finding(), Some(Finding::LaggingOrigin));
         let evidence = sampled(&[Some("aa"), None]).evidence();
         assert!(evidence.starts_with("failed observation; expected map "));
         assert!(evidence.contains("https://o1.example at 1: HTTP 200, HTTP failure"));
