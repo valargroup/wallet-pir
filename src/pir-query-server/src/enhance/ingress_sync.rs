@@ -262,6 +262,7 @@ impl QueryIngress {
                 IngressConsumer {
                     ingress: self.clone(),
                     missed: Vec::new(),
+                    made_room_for: None,
                 },
                 Client::new(
                     &self.root,
@@ -514,6 +515,11 @@ struct IngressConsumer {
     /// while the publisher moved on can have no free slot for the newer one
     /// until ingress adopts it; see [`ConsumerRole::fallback`].
     missed: Vec<Manifest>,
+    /// Generation [`ConsumerRole::select`] already retired one view to make
+    /// room for. A later poll of that same publication must not drop another:
+    /// routers often need more than one poll to pin it, and each extra drop
+    /// answers `/sessions` with GONE for a generation still inside retention.
+    made_room_for: Option<u64>,
 }
 enum IngressSelection {
     Refresh,
@@ -552,9 +558,12 @@ impl ConsumerRole for IngressConsumer {
         {
             return Ok(Input::Work(IngressSelection::Refresh));
         }
-        if inner.retained.len() >= RETAINED_GENERATIONS - 1 {
+        if inner.retained.len() >= RETAINED_GENERATIONS - 1
+            && self.made_room_for != Some(manifest.generation)
+        {
             let old = inner.retained.remove(0);
             QueryIngress::retire(&mut inner, old);
+            self.made_room_for = Some(manifest.generation);
         }
         self.missed.retain(|m| m.generation < manifest.generation);
         self.missed.push(manifest.clone());
@@ -644,6 +653,9 @@ impl ConsumerRole for IngressConsumer {
             *active.peers.lock().unwrap() = peers.lock().unwrap().clone();
             return Ok(());
         }
+        // The next publication needs its own slot. This adoption already
+        // consumed the one [`Self::select`] freed.
+        self.made_room_for = None;
         inner.incoming = None;
         let loaded = Arc::new(Loaded {
             manifest,
@@ -1110,5 +1122,106 @@ mod tests {
             ],
         );
         assert!(config.validate().is_err());
+    }
+
+    fn manifest(generation: u64) -> Manifest {
+        Manifest {
+            recovery_epoch: 0,
+            placement_revision: 1,
+            domain_recovery_epochs: BTreeMap::new(),
+            schema_version: protocol::SCHEMA_VERSION,
+            protocol_revision: protocol::PROTOCOL_REVISION.into(),
+            network: "main".into(),
+            pool: "ironwood".into(),
+            generation,
+            anchor_height: 1,
+            anchor_block_hash: "ab".repeat(32),
+            geometry: protocol::Geometry::default(),
+            coverage: protocol::Coverage {
+                records: 0,
+                shards: Vec::new(),
+                routes: Vec::new(),
+            },
+            sessions: Vec::new(),
+            unit_identities: BTreeMap::new(),
+        }
+    }
+
+    fn loaded(generation: u64) -> Arc<Loaded> {
+        Arc::new(Loaded {
+            manifest: manifest(generation),
+            peers: Mutex::new(BTreeMap::new()),
+        })
+    }
+
+    /// Routers are often not ready on the first poll after a commit. Making
+    /// room on every such poll used to drop the whole retained set within a
+    /// few seconds, and `/sessions` then answered GONE for those generations.
+    #[tokio::test]
+    async fn a_delayed_adoption_retires_one_retained_publication() {
+        let (_root, ingress) = ingress();
+        {
+            let mut inner = ingress.inner.lock().unwrap();
+            inner.active = Some(loaded(5));
+            inner.retained = (1..5).map(loaded).collect();
+        }
+        let mut role = IngressConsumer {
+            ingress: ingress.clone(),
+            missed: Vec::new(),
+            made_room_for: None,
+        };
+        let mut client = Client::new(
+            &role.ingress.root,
+            &role.ingress.config.source,
+            role.ingress.authority.safety.clone(),
+        )
+        .unwrap();
+        let response = |generation: u64| enhance_shared::publication::AuthorityResponse {
+            current: enhance_shared::publication::Current {
+                version: enhance_shared::publication::VERSION,
+                revision: generation,
+                withdrawal_revision: 1,
+                recovery_epoch: 0,
+                revoked: BTreeSet::new(),
+                eligible: true,
+                manifest: Some(manifest(generation)),
+                inventory: None,
+            },
+            authorized_manifest_sha256: "00".repeat(32),
+            source: pir_publication::SourceObservation::NONE,
+        };
+        for _ in 0..4 {
+            let selected = role.select(&response(6), &mut client).await.unwrap();
+            assert!(matches!(selected, Input::Work(IngressSelection::New)));
+        }
+        let retained: Vec<_> = role
+            .ingress
+            .inner
+            .lock()
+            .unwrap()
+            .retained
+            .iter()
+            .map(|view| view.manifest.generation)
+            .collect();
+        assert_eq!(retained, vec![2, 3, 4]);
+        // Full again for the next publication: one more slot, then no further drops.
+        role.ingress
+            .inner
+            .lock()
+            .unwrap()
+            .retained
+            .insert(0, loaded(1));
+        role.select(&response(7), &mut client).await.unwrap();
+        role.select(&response(7), &mut client).await.unwrap();
+        let retained: Vec<_> = role
+            .ingress
+            .inner
+            .lock()
+            .unwrap()
+            .retained
+            .iter()
+            .map(|view| view.manifest.generation)
+            .collect();
+        assert_eq!(retained, vec![2, 3, 4]);
     }
 }
