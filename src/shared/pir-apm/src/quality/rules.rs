@@ -1697,6 +1697,12 @@ mod tests {
         assert_eq!(rule(&v, 105, "publication_origins"), (Some(true), 180));
         // A reorg's stale anchor is held past the next publication.
         assert_eq!(rule(&v, 105, "publication_canonical"), (Some(false), 60));
+        // That stale anchor is the canonical rule's to judge, so the origin
+        // keeps its lag window instead of paging after 30 s.
+        v.services[0].publication.canonical = Some(false);
+        assert_eq!(rule(&v, 105, "publication_origins"), (Some(true), 180));
+        assert_eq!(rule(&v, 105, "publication_canonical"), (Some(true), 60));
+        v.services[0].publication.canonical = Some(true);
         v.services[0].publication.sampled_at = 245;
         assert_eq!(
             rule(&v, 245, "publication_origins"),
