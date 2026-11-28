@@ -851,12 +851,19 @@ txid display controller.
 | `oom_<source>_<unit>` | both | critical | new OOM kills of another unit the host sampler reports | – |
 
 A short reorg makes workers answer metadata reads 503 with `publication
-invalidated by reorg` until the next publication, and wallets retry them. Each
-worker counts those in `transparent_shard_reorg_unavailable_total`. The
+invalidated by reorg` until they adopt the next publication. A fenced history
+worker retries its synchronization every second, so the fence normally ends one
+publisher cycle after the reorg. Wallets do not retry these within a sync. The
+reference client (`zakura-pir-client`) treats a 5xx on the map, filters or init
+as an outage, ends that recovery pass and catches up on a later sync. Each
+worker counts those refusals in `transparent_shard_reorg_unavailable_total`. The
 edge's error ratio subtracts the service's total in the window, and each
 worker's subtracts its own, since its HTTP layer counts the same 503s. Workers keep
 serving `/metrics` while invalidated, so the refusals are observed. Long
-withdrawals still page through `withdrawn`.
+withdrawals still page through `withdrawn`. A fenced worker also fails its
+readiness probe, so a fence that outlasts 60 s pages `ready_<worker>`. Its
+Observed text gives the worker's ready flag, the map it serves, the published
+map and, for history workers, its reorg refusals in the last 5 minutes.
 
 A query's HTTP duration includes its upload, so a wallet on a slow link can
 push p99 past the budget alone when traffic is light. Workers time each query

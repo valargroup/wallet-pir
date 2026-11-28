@@ -9,7 +9,7 @@ use crate::transparent::{
         service::{ServiceConfig, ServiceState},
     },
     routing::bootstrap::{self, Config},
-    source::Source,
+    source::{is_superseded, superseded, Source},
 };
 use pir_pipeline::{
     consumer::{Consumer, ConsumerEngine, ConsumerPass, PeerHandover, PeerReservation},
@@ -474,7 +474,9 @@ impl Consumer for HistorySync {
             .or_else(|| self.current.clone())
             .ok_or("missing current publication")?;
         if !current.eligible() {
-            return Err("publisher current publication is withdrawn or noncanonical".into());
+            return Err(superseded(
+                "publisher current publication is withdrawn or noncanonical",
+            ));
         }
         Ok(current)
     }
@@ -655,7 +657,7 @@ impl Consumer for HistorySync {
             ),
         };
         if latest != current {
-            return Err("publication superseded before activation".into());
+            return Err(superseded("publication superseded before activation"));
         }
         Ok(HistoryValidation {
             current: current.clone(),
@@ -716,7 +718,7 @@ impl Consumer for HistorySync {
                     .await?
                     .ok_or("missing final current")?;
             if final_current != latest {
-                return Err("publication superseded during anchor checks".into());
+                return Err(superseded("publication superseded during anchor checks"));
             }
         } else {
             let final_current =
@@ -724,7 +726,9 @@ impl Consumer for HistorySync {
                     .await?
                     .ok_or("missing recovery recheck")?;
             if &final_current != current {
-                return Err("recovery snapshot superseded during anchor checks".into());
+                return Err(superseded(
+                    "recovery snapshot superseded during anchor checks",
+                ));
             }
         }
         Ok(())
@@ -887,6 +891,16 @@ impl Consumer for HistorySync {
     }
     fn terminal(&self, error: &Error) -> bool {
         crate::transparent::source::is_incompatible(error)
+    }
+    /// A pass that a newer publication or a reorg withdrawal outran, or that
+    /// found the publisher restarting, retries after a second instead of
+    /// backing off. A fenced worker refuses every wallet read until a pass
+    /// succeeds, so the backoff would extend the outage.
+    fn transient(&self, error: &Error) -> bool {
+        is_superseded(error)
+            || error
+                .downcast_ref::<pir_sync_manager::DiscoveryError>()
+                .is_some_and(pir_sync_manager::DiscoveryError::unavailable)
     }
 }
 /// Disk retention after an activation follows the owner's snapshot policy:

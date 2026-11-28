@@ -686,6 +686,90 @@ async fn manager_keeps_warmed_recovery_private_when_the_publisher_advances() {
     task.stop().await;
 }
 
+/// As on 2026-11-28: a reorg withdraws the current publication, and the
+/// publisher then offers one on the new chain, here the same map under a newer
+/// revision. The fenced worker refuses every wallet read meanwhile, so once it
+/// has refused the withdrawal it must serve the offer within seconds, not after
+/// a 10 s failure backoff.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_worker_fenced_by_a_reorg_serves_the_reoffer_within_seconds() {
+    use std::time::Duration;
+    use tower::ServiceExt;
+    /// Whether `check` passes within `within`, tried every 20 ms.
+    async fn eventually<F: std::future::Future<Output = bool>>(
+        within: Duration,
+        mut check: impl FnMut() -> F,
+    ) -> bool {
+        tokio::time::timeout(within, async {
+            while !check().await {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .is_ok()
+    }
+    let root = tempfile::tempdir().unwrap();
+    let (directory, set, distribution) = immutable_publication(2);
+    let rpc = canonical_rpc(root.path(), &set).await;
+    let owner = authority(&directory, Some(distribution), rpc.client.clone());
+    let tls = tls(root.path(), owner.clone()).await;
+    let mut follow = manager(&tls, &root.path().join("provider")).await;
+    follow.poll_once().await.unwrap();
+    let live = follow.live().unwrap();
+    assert!(live.ready());
+    let status = follow.router().unwrap();
+    // The worker's last completed pass, as `/v1/provider-status` reports it.
+    let synchronization = || {
+        let status = status.clone();
+        async move {
+            let request = axum::http::Request::get("/v1/provider-status")
+                .body(axum::body::Body::empty())
+                .unwrap();
+            let response = status.oneshot(request).await.unwrap();
+            let body = axum::body::to_bytes(response.into_body(), 1 << 20)
+                .await
+                .unwrap();
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap()["synchronization"].clone()
+        }
+    };
+    // What invalidate() and the next activation do to the advertised current.
+    let offer = |withdrawn: bool| {
+        let _gate = owner.0.publication_gate.lock().unwrap();
+        owner.0.epoch.fetch_add(1, Ordering::AcqRel);
+        owner.0.distribution_revision.fetch_add(1, Ordering::AcqRel);
+        let from = if withdrawn { 2 } else { u64::MAX };
+        owner.0.invalidated_from.store(from, Ordering::Release);
+        owner.0.withdrawn.store(withdrawn, Ordering::Release);
+    };
+    offer(true);
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let running = tokio::spawn(follow.run_until(async {
+        let _ = stopped.await;
+    }));
+    // Wait for the refusal itself. An offer racing the withdrawal pass would
+    // fail that pass as a superseded anchor check instead.
+    assert!(
+        eventually(Duration::from_secs(15), || async {
+            let sync = synchronization().await;
+            sync["state"] == "refused"
+                && sync["error"]
+                    .as_str()
+                    .is_some_and(|error| error.contains("withdrawn"))
+        })
+        .await,
+        "the worker never refused the withdrawn publication"
+    );
+    assert!(!live.ready(), "the withdrawal fences the worker");
+    offer(false);
+    assert!(
+        eventually(Duration::from_secs(8), || async { live.ready() }).await,
+        "the fenced worker waited out its failure backoff"
+    );
+    stop.send(()).unwrap();
+    let finished = tokio::time::timeout(Duration::from_secs(30), running).await;
+    assert!(finished.unwrap().unwrap().is_none());
+}
+
 /// Reusing immutable transfers through a failed update rebuilds the same
 /// publication the lifecycle and interrupted-activation cases already serve.
 #[cfg(feature = "qualification-tests")]

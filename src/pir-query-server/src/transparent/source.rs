@@ -44,11 +44,13 @@ pub fn is_incompatible(error: &Error) -> bool {
     pir_sync_manager::is_incompatible(error.as_ref())
 }
 
-/// A read that lost a race with the publisher's next publication, so the next pass
-/// can succeed at once: an answer for another revision, a candidate no longer
-/// current, or a refusal. The publisher answers 404 only for an inventory or
-/// artifact its active publication does not list, and 503 while it changes
-/// publications or has none, so a lasting refusal would be a publisher defect.
+/// A read that lost a race with the publisher's next publication, so a pass
+/// seconds later can succeed: an answer for another revision, a candidate no
+/// longer current, a current publication withdrawn for a reorg, or a refusal.
+/// The publisher answers 404 only for an inventory or artifact its active
+/// publication does not list, 409 to an anchor batch naming a replaced
+/// snapshot, and 503 while it changes publications or has none, so a lasting
+/// refusal would be a publisher defect.
 #[derive(Debug)]
 pub(crate) struct Superseded(String);
 
@@ -74,7 +76,6 @@ fn superseding(status: reqwest::StatusCode) -> bool {
 }
 
 /// Whether `error` is [`Superseded`] or an artifact refusal of the same kind.
-#[cfg_attr(not(feature = "transparent-detail"), allow(dead_code))]
 pub(crate) fn is_superseded(error: &Error) -> bool {
     error.downcast_ref::<Superseded>().is_some()
         || error
@@ -374,13 +375,20 @@ impl Source {
             .transport
             .post_json(publication::ANCHOR_BATCH_PATH, body)
             .await?;
-        if response.status() != reqwest::StatusCode::OK {
+        let status = response.status();
+        if status != reqwest::StatusCode::OK {
             response.discard().await?;
-            return Err(format!(
-                "publisher refused distribution with HTTP {}",
-                response.status()
-            )
-            .into());
+            let refused = format!("publisher refused distribution with HTTP {status}");
+            return Err(
+                if matches!(
+                    status,
+                    reqwest::StatusCode::CONFLICT | reqwest::StatusCode::SERVICE_UNAVAILABLE
+                ) {
+                    superseded(refused)
+                } else {
+                    refused.into()
+                },
+            );
         }
         let raw = response
             .read_limited(publication::MAX_ANCHOR_BATCH_BYTES)
