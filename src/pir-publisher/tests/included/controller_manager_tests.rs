@@ -687,17 +687,21 @@ async fn manager_keeps_warmed_recovery_private_when_the_publisher_advances() {
 }
 
 /// As on 2026-11-28: a reorg withdraws the current publication, and the
-/// publisher re-offers it under a newer revision because only blocks above its
-/// anchor forked. The fenced worker refuses every wallet read meanwhile, so it
-/// must serve the re-offer within seconds, not after a 10 s failure backoff.
+/// publisher then offers one on the new chain, here the same map under a newer
+/// revision. The fenced worker refuses every wallet read meanwhile, so once it
+/// has refused the withdrawal it must serve the offer within seconds, not after
+/// a 10 s failure backoff.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_worker_fenced_by_a_reorg_serves_the_reoffer_within_seconds() {
-    use pir_query_server::transparent::history::live::LiveService;
     use std::time::Duration;
-    /// Whether `live` reaches `ready` within `within`, checked every 20 ms.
-    async fn reaches(live: &LiveService, ready: bool, within: Duration) -> bool {
+    use tower::ServiceExt;
+    /// Whether `check` passes within `within`, tried every 20 ms.
+    async fn eventually<F: std::future::Future<Output = bool>>(
+        within: Duration,
+        mut check: impl FnMut() -> F,
+    ) -> bool {
         tokio::time::timeout(within, async {
-            while live.ready() != ready {
+            while !check().await {
                 tokio::time::sleep(Duration::from_millis(20)).await;
             }
         })
@@ -713,6 +717,21 @@ async fn a_worker_fenced_by_a_reorg_serves_the_reoffer_within_seconds() {
     follow.poll_once().await.unwrap();
     let live = follow.live().unwrap();
     assert!(live.ready());
+    let status = follow.router().unwrap();
+    // The worker's last completed pass, as `/v1/provider-status` reports it.
+    let synchronization = || {
+        let status = status.clone();
+        async move {
+            let request = axum::http::Request::get("/v1/provider-status")
+                .body(axum::body::Body::empty())
+                .unwrap();
+            let response = status.oneshot(request).await.unwrap();
+            let body = axum::body::to_bytes(response.into_body(), 1 << 20)
+                .await
+                .unwrap();
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap()["synchronization"].clone()
+        }
+    };
     // What invalidate() and the next activation do to the advertised current.
     let offer = |withdrawn: bool| {
         let _gate = owner.0.publication_gate.lock().unwrap();
@@ -727,13 +746,23 @@ async fn a_worker_fenced_by_a_reorg_serves_the_reoffer_within_seconds() {
     let running = tokio::spawn(follow.run_until(async {
         let _ = stopped.await;
     }));
+    // Wait for the refusal itself. An offer racing the withdrawal pass would
+    // fail that pass as a superseded anchor check instead.
     assert!(
-        reaches(&live, false, Duration::from_secs(15)).await,
-        "the withdrawal never fenced the worker"
+        eventually(Duration::from_secs(15), || async {
+            let sync = synchronization().await;
+            sync["state"] == "refused"
+                && sync["error"]
+                    .as_str()
+                    .is_some_and(|error| error.contains("withdrawn"))
+        })
+        .await,
+        "the worker never refused the withdrawn publication"
     );
+    assert!(!live.ready(), "the withdrawal fences the worker");
     offer(false);
     assert!(
-        reaches(&live, true, Duration::from_secs(6)).await,
+        eventually(Duration::from_secs(8), || async { live.ready() }).await,
         "the fenced worker waited out its failure backoff"
     );
     stop.send(()).unwrap();
