@@ -29,9 +29,10 @@ static WAITING: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::
 /// returned, or `expired` when no attempt finished. A first refresh stuck
 /// behind the shared publisher client has no refusal yet.
 ///
-/// An answer comes with the time slept between attempts, which the caller
-/// attaches to its successful response (see [`HeldWait`]). Attempts themselves,
-/// including slow refusals, are not part of it.
+/// An answer comes with the time slept between attempts, as measured, so a
+/// late wakeup on a busy host counts as waiting. The caller attaches it to its
+/// successful response (see [`HeldWait`]). Attempts themselves, including slow
+/// refusals, are not part of it.
 pub async fn until<T, E, F, A>(
     window: Duration,
     retry: impl Fn(&E) -> bool,
@@ -65,11 +66,12 @@ where
             }
             Ok(done) => return done.map(|value| (value, HeldWait(slept))),
         }
-        if tokio::time::Instant::now() + RETRY >= deadline {
+        let resting = tokio::time::Instant::now();
+        if resting + RETRY >= deadline {
             break;
         }
         tokio::time::sleep(RETRY).await;
-        slept += RETRY;
+        slept += resting.elapsed();
     }
     Err(last.unwrap_or_else(expired))
 }
