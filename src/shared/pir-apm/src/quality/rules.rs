@@ -539,6 +539,25 @@ fn service_rules(a: &mut Adder, svc: &ServiceView, view: &View, now: u64, p: &Po
         }
         http_rules(a, source_name, s, now, reorg_refusals);
         if matches!(s.role.as_str(), "archive-owner" | "display-worker") {
+            let mut observed = format!(
+                "{}; serving map {}; published map {}",
+                match s.ready {
+                    Some(true) => "ready",
+                    Some(false) => "not ready",
+                    None => "readiness unknown",
+                },
+                s.publication.as_deref().unwrap_or("unknown"),
+                publication.map_sha256.as_deref().unwrap_or("unknown"),
+            );
+            // Tells a reorg fence from a stuck worker. Display workers keep no count.
+            if let Some(refused) = s
+                .window(now)
+                .values
+                .counters
+                .get("transparent_shard_reorg_unavailable_total")
+            {
+                observed.push_str(&format!("; {refused:.0} reorg refusals in 5m"));
+            }
             a.add(
                 format!("ready_{source_name}"),
                 source_name,
@@ -548,7 +567,7 @@ fn service_rules(a: &mut Adder, svc: &ServiceView, view: &View, now: u64, p: &Po
                 "critical",
                 60,
                 s.sampled_at,
-                "Worker readiness on the published map",
+                observed,
                 "not ready on the published map for 60s",
             );
         }
@@ -612,7 +631,9 @@ fn service_rules(a: &mut Adder, svc: &ServiceView, view: &View, now: u64, p: &Po
 
 /// Server errors and latency of the outer HTTP layer (or the edge's Caddy).
 ///
-/// Wallets retry reorg refusals, so those 503s are not server errors. The edge
+/// Reorg refusals are deliberate and end once the worker adopts the next
+/// publication (`ready_<worker>` pages a longer one), so those 503s are not
+/// server errors. The edge
 /// subtracts `reorg_refusals`, the service's workers' count in this window. A
 /// worker's outer HTTP layer also counts the refusals it answered, so a worker
 /// subtracts its own count. A
@@ -954,6 +975,15 @@ mod tests {
             .find(|c| c.key == format!("quality.{service}.{key}"))
             .unwrap_or_else(|| panic!("missing {key}"))
             .firing
+    }
+    /// The Observed text the alert for `key` would send, panicking if the
+    /// service has no such condition.
+    fn observed<'a>(f: &'a Families, service: &str, key: &str) -> &'a str {
+        &f.services[service]
+            .iter()
+            .find(|c| c.key == format!("quality.{service}.{key}"))
+            .unwrap_or_else(|| panic!("missing {key}"))
+            .observed
     }
 
     #[test]
@@ -1726,9 +1756,44 @@ mod tests {
         let mut v = view(vec![svc], vec![("k8", worker)]);
         let f = conditions(&v, 105, &Policy::default());
         assert_eq!(firing(&f, "txid", "ready_k8"), Some(true));
+        assert_eq!(
+            observed(&f, "txid", "ready_k8"),
+            format!(
+                "ready; serving map {}; published map {map}",
+                "cd".repeat(32)
+            )
+        );
         v.sources.get_mut("k8").unwrap().publication = Some(map);
         let f = conditions(&v, 105, &Policy::default());
         assert_eq!(firing(&f, "txid", "ready_k8"), Some(false));
+    }
+
+    /// A fenced worker fails its readiness probe, so APM reads neither its flag
+    /// nor its map. The alert still names the reorg refusals it answered.
+    #[test]
+    fn fenced_worker_alert_shows_its_reorg_refusals() {
+        let map = "ab".repeat(32);
+        let mut svc = service("transparent", Kind::History);
+        svc.publication = publication::View {
+            sampled_at: 100,
+            map_sha256: Some(map.clone()),
+            ..Default::default()
+        };
+        let mut archive = source("transparent", "archive-owner", 100, &[]);
+        archive.recent.push_back(point(
+            &[("transparent_shard_reorg_unavailable_total", 29.)],
+            &[],
+        ));
+        let v = view(vec![svc], vec![("archive", archive)]);
+        let f = conditions(&v, 105, &Policy::default());
+        assert_eq!(firing(&f, "transparent", "ready_archive"), Some(true));
+        assert_eq!(
+            observed(&f, "transparent", "ready_archive"),
+            format!(
+                "readiness unknown; serving map unknown; published map {map}; \
+                 29 reorg refusals in 5m"
+            )
+        );
     }
 
     #[test]
