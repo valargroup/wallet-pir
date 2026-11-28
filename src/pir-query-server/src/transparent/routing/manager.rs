@@ -697,7 +697,7 @@ impl Consumer for HistorySync {
             )
             .await?
             {
-                return Err(superseded("candidate anchor is noncanonical"));
+                return Err("candidate anchor is noncanonical".into());
             }
             let keep: BTreeSet<String> = map
                 .shards

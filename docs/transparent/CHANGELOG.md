@@ -14,8 +14,8 @@ Covers the crates a wallet uses to recover transparent history over PIR:
   failed synchronization pass backed off 10 s, then 20 s, then 40 s, so on
   2026-11-28 the archive owner kept refusing for over a minute while the
   publisher published several replacements. A pass that a withdrawal, a newer
-  publication or a restarting publisher outran now retries after a second, for
-  up to 90 s, before the usual backoff.
+  publication or a restarting publisher outran now retries after a second, up
+  to 90 times in a row, before the usual backoff.
 
 - A restarted history publisher serves its restored publication under a newer
   distribution revision than the withdrawn record it offered while starting.
