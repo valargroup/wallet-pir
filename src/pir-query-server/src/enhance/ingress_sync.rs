@@ -755,7 +755,7 @@ async fn init(State(r): State<QueryIngress>) -> Response {
             .try_acquire_owned()
             .map_err(|_| overloaded("public reads full"))?;
         // A publisher restart withdraws authority for seconds; wait it out.
-        let (view, guard) = crate::hold::until(
+        let ((view, guard), held) = crate::hold::until(
             crate::hold::WINDOW,
             |(status, _): &ApiError| *status == StatusCode::SERVICE_UNAVAILABLE,
             || r.active(),
@@ -763,15 +763,13 @@ async fn init(State(r): State<QueryIngress>) -> Response {
         )
         .await?;
         let bytes = serde_json::to_vec(&view.manifest).map_err(unavailable)?;
-        Ok::<_, ApiError>(
-            (
-                [("content-type", "application/json")],
-                crate::enhance::response_body::guarded(bytes, (permit, view), move || {
-                    guard.check()
-                }),
-            )
-                .into_response(),
+        let mut response = (
+            [("content-type", "application/json")],
+            crate::enhance::response_body::guarded(bytes, (permit, view), move || guard.check()),
         )
+            .into_response();
+        held.attach(&mut response);
+        Ok::<_, ApiError>(response)
     }
     .await;
     result.unwrap_or_else(crate::enhance::query_serving::public_error)

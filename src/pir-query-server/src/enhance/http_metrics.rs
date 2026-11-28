@@ -207,10 +207,12 @@ pub(crate) async fn measure(
     ));
     let response = next.run(Request::from_parts(parts, body)).await;
     if let Some(start) = *completed.lock().unwrap() {
-        metrics
-            .processing
-            .with_label_values(&[endpoint])
-            .observe(start.elapsed().as_secs_f64());
+        metrics.processing.with_label_values(&[endpoint]).observe(
+            start
+                .elapsed()
+                .saturating_sub(pir_observability::HeldWait::of(&response))
+                .as_secs_f64(),
+        );
     }
     metrics
         .requests
@@ -339,6 +341,42 @@ mod tests {
         assert_eq!(metrics.download.with_label_values(&["init"]).get(), 8);
         assert_eq!(metrics.upload.with_label_values(&["init"]).get(), 0);
         assert!(!metrics.render().contains("private-id"));
+    }
+    #[tokio::test]
+    async fn init_latency_excludes_a_held_wait() {
+        let metrics = HttpMetrics::default();
+        metrics.endpoint("init");
+        let held = Duration::from_millis(300);
+        let app = crate::enhance::PUBLIC_ROUTES
+            .mount(
+                Router::new(),
+                [(
+                    "/init",
+                    get(move || async move {
+                        tokio::time::sleep(held).await;
+                        let mut response = Response::new(Body::from("manifest"));
+                        pir_observability::HeldWait(held).attach(&mut response);
+                        response
+                    }),
+                )],
+            )
+            .layer(axum::middleware::from_fn_with_state(
+                metrics.clone(),
+                measure,
+            ));
+        app.oneshot(
+            Request::get("/v1/enhance/init")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+        let histogram = metrics.processing.with_label_values(&["init"]);
+        assert_eq!(histogram.get_sample_count(), 1);
+        assert!(
+            histogram.get_sample_sum() < 0.25,
+            "held wait leaked into init latency"
+        );
     }
     #[tokio::test]
     async fn canonical_and_legacy_paths_share_one_bounded_label() {

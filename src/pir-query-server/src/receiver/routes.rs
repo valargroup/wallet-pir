@@ -170,7 +170,11 @@ fn wallet_routes() -> Router<Service> {
                 // Nothing is served for seconds after this server starts or the
                 // publisher restarts; the inventory names no view, so it waits.
                 match unavailable_held(|| s.publications.current()).await {
-                    Ok(p) => json(p.head_bytes().to_vec()),
+                    Ok((p, held)) => {
+                        let mut response = json(p.head_bytes().to_vec());
+                        held.attach(&mut response);
+                        response
+                    }
                     Err(status) => status.into_response(),
                 }
             }),
@@ -211,7 +215,11 @@ fn wallet_routes() -> Router<Service> {
         .route("/query", post(query))
         .route("/block-filters/head", get(|State(s): State<Service>| async move {
             match unavailable_held(|| s.publications.filters_in_epoch().map(|(window, _)| window)).await {
-                Ok(window) => ([(header::CACHE_CONTROL, "no-store")], Json(window.head().clone())).into_response(),
+                Ok((window, held)) => {
+                    let mut response = ([(header::CACHE_CONTROL, "no-store")], Json(window.head().clone())).into_response();
+                    held.attach(&mut response);
+                    response
+                }
                 Err(status) => status.into_response(),
             }
         }))
@@ -262,8 +270,11 @@ async fn with_hints<T: Send + 'static>(
         .map_err(IntoResponse::into_response)
 }
 
-/// `read`'s answer, re-read while it is 503 for up to [`crate::hold::WINDOW`].
-async fn unavailable_held<T>(read: impl Fn() -> Result<T, StatusCode>) -> Result<T, StatusCode> {
+/// `read`'s answer, re-read while it is 503 for up to [`crate::hold::WINDOW`], with
+/// the time slept for the response to carry.
+async fn unavailable_held<T>(
+    read: impl Fn() -> Result<T, StatusCode>,
+) -> Result<(T, pir_observability::HeldWait), StatusCode> {
     crate::hold::until(
         crate::hold::WINDOW,
         |status: &StatusCode| *status == StatusCode::SERVICE_UNAVAILABLE,

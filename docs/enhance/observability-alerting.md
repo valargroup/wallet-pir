@@ -11,6 +11,13 @@ once per minute from a separate region, and monitors APM task progress.
 - Init and query HTTP outcomes and processing latency come from the configured
   outer ingress; the coordinator serves no wallet routes.
   Router stage latency remains separate and describes successful matched work.
+- Reads that wait out a refusal the server expects to clear (`hold::until`:
+  Enhance and Status `init`, Receiver inventory and block-filter head) record
+  their latency without the time slept between retries when a retry succeeds.
+  The wait out of a publisher restart or reorganization withdrawal therefore does
+  not count toward latency; time spent in attempts still counts. A request whose
+  retries run out within the 15 s hold returns its last refusal (503, or 410 for a
+  revoked Status view) and keeps its full duration.
 - HTTP totals are per-source counter deltas, summed before calculating ratios.
   Histogram buckets are merged before quantiles. Missing bandwidth does not
   disable error monitoring. Missing counters, failed scrapes, and incompatible
@@ -92,9 +99,10 @@ When Status monitoring is configured, `status_init_5xx` and `status_query_5xx`
 alert on HTTP 5xx divided by completed responses in the rolling five-minute
 window (default >5%, at least ten completions). `status_init_latency` and
 `status_query_latency` warn when processing p99 exceeds 5s for 120 seconds, with
-at least twenty completions. `init` waits for a servable publication, and after a
-block that often takes 2-5 s for a few requests, enough to put a five-minute p99 in
-that bucket, so only longer waits count. Error ratio, sample minimums,
+at least twenty completions. `init` waits for a servable publication, which after a
+block often takes 2-5 s for a few requests. That wait is no longer recorded (see
+Sources and semantics), so the 5s budget can return to the shared one once every
+Status role reports it. Error ratio, sample minimums,
 and hold time use the shared policy; Status latency budgets can be set separately
 (up to 5s, the highest finite Status histogram boundary).
 These conditions use the same durable incident/outbox and shadow/active mode as

@@ -1,5 +1,5 @@
 //! Host-only Axum middleware and streamed-body observation for [`HttpMetrics`].
-use crate::{HttpMetrics, RequestGuard};
+use crate::{HeldWait, HttpMetrics, RequestGuard};
 use axum::{
     body::{Body, Bytes},
     extract::Request,
@@ -10,8 +10,25 @@ use http_body::{Body as HttpBody, Frame, SizeHint};
 use std::{
     pin::Pin,
     task::{Context, Poll},
-    time::Instant,
+    time::{Duration, Instant},
 };
+
+impl HeldWait {
+    /// Records a nonzero wait on `response` for the latency observer, leaving a
+    /// response that never waited without an extension.
+    pub fn attach(self, response: &mut Response) {
+        if !self.0.is_zero() {
+            response.extensions_mut().insert(self);
+        }
+    }
+    /// The wait `response` carries, or zero.
+    pub fn of(response: &Response) -> Duration {
+        response
+            .extensions()
+            .get::<Self>()
+            .map_or(Duration::ZERO, |held| held.0)
+    }
+}
 
 /// Product callbacks for streamed body observations. Completion includes the
 /// last successful frame when the inner body advertises end-of-stream.
@@ -144,6 +161,7 @@ pub async fn observe(
         endpoint,
         began: Instant::now(),
         code: None,
+        held: Duration::ZERO,
     };
     let (parts, body) = request.into_parts();
     let body = Body::new(ObservedBody::new(
@@ -156,6 +174,7 @@ pub async fn observe(
     ));
     let response = next.run(Request::from_parts(parts, body)).await;
     guard.code = Some(response.status().as_u16());
+    guard.held = HeldWait::of(&response);
     drop(guard);
     let (parts, body) = response.into_parts();
     Response::from_parts(
