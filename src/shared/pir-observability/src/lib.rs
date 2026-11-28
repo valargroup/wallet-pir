@@ -5,13 +5,21 @@
 use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex},
-    time::{Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 #[cfg(feature = "http")]
 mod http;
 #[cfg(feature = "http")]
 pub use http::{observe, BodyObserver, ObservedBody};
+
+/// Time a successful request slept between retries while it waited out a
+/// refusal the server expects to clear, such as a publisher restart or a
+/// reorganization withdrawing the publication. Latency observers subtract it,
+/// so the wait does not count as slow work. A request that never succeeds
+/// carries none and keeps its full duration.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HeldWait(pub Duration);
 
 pub const BOUNDS: [f64; 16] = [
     0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1., 2., 5., 10., 30., 60., 120., 600.,
@@ -144,10 +152,11 @@ pub(crate) struct RequestGuard {
     pub(crate) endpoint: &'static str,
     pub(crate) began: Instant,
     pub(crate) code: Option<u16>,
+    pub(crate) held: Duration,
 }
 impl Drop for RequestGuard {
     fn drop(&mut self) {
-        let elapsed = self.began.elapsed().as_secs_f64();
+        let elapsed = self.began.elapsed().saturating_sub(self.held).as_secs_f64();
         let mut ops = self.metrics.inner.lock().unwrap();
         let op = ops.entry(self.endpoint).or_default();
         op.inflight = op.inflight.saturating_sub(1);
@@ -185,6 +194,7 @@ mod tests {
             endpoint: "init",
             began: Instant::now(),
             code: None,
+            held: Duration::ZERO,
         });
         assert!(metrics
             .render()

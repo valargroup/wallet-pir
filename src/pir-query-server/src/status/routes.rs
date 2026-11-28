@@ -8,6 +8,7 @@ use axum::{
     body::Bytes,
     extract::{DefaultBodyLimit, Path, State},
     http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
@@ -199,13 +200,13 @@ async fn worker_query(State(service): State<Service>, body: Bytes) -> Result<Vec
     controller.check(&generation)?;
     Ok(result)
 }
-async fn router_init(State(service): State<Service>) -> Result<Json<Manifest>, StatusCode> {
+async fn router_init(State(service): State<Service>) -> Result<Response, StatusCode> {
     if !service.role.answers_wallets() {
         return Err(StatusCode::NOT_FOUND);
     }
     // A publisher restart revokes the serving view (410) and withdraws authority
     // (503) for seconds. Init names no view, so it waits both out.
-    let manifest = crate::hold::until(
+    let (manifest, held) = crate::hold::until(
         crate::hold::WINDOW,
         |status: &StatusCode| matches!(*status, StatusCode::SERVICE_UNAVAILABLE | StatusCode::GONE),
         || async {
@@ -217,7 +218,9 @@ async fn router_init(State(service): State<Service>) -> Result<Json<Manifest>, S
         || StatusCode::SERVICE_UNAVAILABLE,
     )
     .await?;
-    Ok(Json(manifest))
+    let mut response = Json(manifest).into_response();
+    held.attach(&mut response);
+    Ok(response)
 }
 async fn router_session(
     State(service): State<Service>,

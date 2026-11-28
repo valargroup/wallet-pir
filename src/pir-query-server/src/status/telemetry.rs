@@ -27,7 +27,9 @@ pub async fn observe(role: &'static str, request: Request, next: Next) -> Respon
         response.status().as_u16(),
         upload,
         download,
-        start.elapsed(),
+        start
+            .elapsed()
+            .saturating_sub(pir_observability::HeldWait::of(&response)),
     );
     response
 }

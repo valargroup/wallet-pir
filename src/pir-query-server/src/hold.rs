@@ -6,6 +6,7 @@
 //! attempt, so it never answers from a view it could not answer from directly.
 //! Waiting is bounded in time and in the number of waiting requests, so a real
 //! outage still refuses, only later.
+use pir_observability::HeldWait;
 use std::{
     future::Future,
     sync::{Arc, LazyLock},
@@ -27,12 +28,16 @@ static WAITING: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::
 /// `window`. One that outlasts the window is dropped. The last refusal is
 /// returned, or `expired` when no attempt finished. A first refresh stuck
 /// behind the shared publisher client has no refusal yet.
+///
+/// An answer comes with the time slept between attempts, which the caller
+/// attaches to its successful response (see [`HeldWait`]). Attempts themselves,
+/// including slow refusals, are not part of it.
 pub async fn until<T, E, F, A>(
     window: Duration,
     retry: impl Fn(&E) -> bool,
     mut attempt: A,
     expired: impl FnOnce() -> E,
-) -> Result<T, E>
+) -> Result<(T, HeldWait), E>
 where
     A: FnMut() -> F,
     F: Future<Output = Result<T, E>>,
@@ -40,6 +45,7 @@ where
     let deadline = tokio::time::Instant::now() + window;
     let mut waiting = None;
     let mut last = None;
+    let mut slept = Duration::ZERO;
     loop {
         if tokio::time::Instant::now() >= deadline {
             break;
@@ -57,12 +63,13 @@ where
                 }
                 last = Some(error);
             }
-            Ok(done) => return done,
+            Ok(done) => return done.map(|value| (value, HeldWait(slept))),
         }
         if tokio::time::Instant::now() + RETRY >= deadline {
             break;
         }
         tokio::time::sleep(RETRY).await;
+        slept += RETRY;
     }
     Err(last.unwrap_or_else(expired))
 }
@@ -88,13 +95,13 @@ mod tests {
             || "expired",
         )
         .await;
-        assert_eq!(answer, Ok("answered"));
+        assert_eq!(answer, Ok(("answered", HeldWait(8 * RETRY))));
     }
 
     #[tokio::test(start_paused = true)]
     async fn a_refusal_that_lasts_still_refuses_after_the_window() {
         let started = tokio::time::Instant::now();
-        let answer: Result<(), _> = until(
+        let answer: Result<((), HeldWait), _> = until(
             WINDOW,
             |_: &&str| true,
             || async { Err("refused") },
@@ -110,7 +117,7 @@ mod tests {
     async fn a_retry_that_stalls_ends_with_the_window() {
         let calls = AtomicU32::new(0);
         let started = tokio::time::Instant::now();
-        let answer: Result<(), _> = until(
+        let answer: Result<((), HeldWait), _> = until(
             WINDOW,
             |_: &&str| true,
             || async {
@@ -130,7 +137,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_first_attempt_that_stalls_ends_with_the_window() {
         let started = tokio::time::Instant::now();
-        let answer: Result<(), _> =
+        let answer: Result<((), HeldWait), _> =
             until(WINDOW, |_: &&str| true, std::future::pending, || "expired").await;
         assert_eq!(answer, Err("expired"));
         assert!(started.elapsed() <= WINDOW);
@@ -140,7 +147,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn an_error_it_must_not_retry_returns_at_once() {
         let calls = AtomicU32::new(0);
-        let answer: Result<(), _> = until(
+        let answer: Result<((), HeldWait), _> = until(
             WINDOW,
             |error: &&str| *error == "refused",
             || async {

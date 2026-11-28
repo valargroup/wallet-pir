@@ -96,6 +96,7 @@ enhance = [
 status = [
     "dep:status-shared",
     "dep:pir-control",
+    "dep:pir-observability",
     "dep:pir-publication",
     "dep:hex",
     "dep:http",
