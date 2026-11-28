@@ -8,8 +8,8 @@
   three such inits out of 288 took 2.5-15 s and fired the 2 s warning, although
   every one returned 200. Enhance and Status `init` and Receiver reads that share
   this retry now record their latency without the time slept between retries.
-  Slow attempts still count, and a request that waits past 15 s still returns 503
-  and keeps its full duration.
+  Slow attempts still count, and a request whose retries run out within 15 s
+  still returns its last refusal and keeps its full duration.
 
 - Enhance ingress no longer falls behind during a burst of fast blocks. When
   the publisher committed again before ingress adopted the publication its

@@ -13,10 +13,11 @@ once per minute from a separate region, and monitors APM task progress.
   Router stage latency remains separate and describes successful matched work.
 - Reads that wait out a refusal the server expects to clear (`hold::until`:
   Enhance and Status `init`, Receiver inventory and block-filter head) record
-  their latency without the time slept between retries when they succeed. A
-  publisher restart or reorganization withdrawal that ends within the 15 s hold
-  therefore does not raise a latency alert; time spent in attempts still counts.
-  A request that outlasts the hold keeps its full duration and its 503.
+  their latency without the time slept between retries when a retry succeeds.
+  The wait out of a publisher restart or reorganization withdrawal therefore does
+  not count toward latency; time spent in attempts still counts. A request whose
+  retries run out within the 15 s hold returns its last refusal (503, or 410 for a
+  revoked Status view) and keeps its full duration.
 - HTTP totals are per-source counter deltas, summed before calculating ratios.
   Histogram buckets are merged before quantiles. Missing bandwidth does not
   disable error monitoring. Missing counters, failed scrapes, and incompatible
