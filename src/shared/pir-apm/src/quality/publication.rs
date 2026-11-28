@@ -2,9 +2,9 @@ use super::services::{Kind, Service};
 use serde::Serialize;
 use serde_json::Value;
 /// How long a worker may keep serving a replaced map, counted from when the
-/// sampling loop first saw its successor. Workers poll for publications,
-/// skipping any replaced meanwhile, and back off 10 s, then 20 s after a
-/// refused pass, so in a burst of blocks they trail the newest map.
+/// sampling loop first saw its successor. Workers poll for publications and
+/// skip any replaced meanwhile, so in a burst of blocks they trail the newest
+/// map, and a refused pass can back off 10 s, then 20 s.
 pub const WORKER_ADOPTION_SECONDS: u64 = 45;
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct View {

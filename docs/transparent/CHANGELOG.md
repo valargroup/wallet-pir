@@ -9,6 +9,14 @@ Covers the crates a wallet uses to recover transparent history over PIR:
 
 ## Unreleased
 
+- A history query server that a reorg fenced picks up the publisher's next
+  publication within seconds. It refuses every wallet read while fenced, but a
+  failed synchronization pass backed off 10 s, then 20 s, then 40 s, so on
+  2026-11-28 the archive owner kept refusing for over a minute while the
+  publisher published several replacements. A pass that a withdrawal, a newer
+  publication or a restarting publisher outran now retries after a second, for
+  up to 90 s, before the usual backoff.
+
 - A restarted history publisher serves its restored publication under a newer
   distribution revision than the withdrawn record it offered while starting.
   Query servers that saw that withdrawal refused the live record at the same

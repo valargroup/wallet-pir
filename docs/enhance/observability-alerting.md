@@ -851,11 +851,12 @@ txid display controller.
 | `oom_<source>_<unit>` | both | critical | new OOM kills of another unit the host sampler reports | – |
 
 A short reorg makes workers answer metadata reads 503 with `publication
-invalidated by reorg` until they adopt the next publication. Wallets do not
-retry these within a sync. The reference client (`zakura-pir-client`) treats a
-5xx on the map, filters or init as an outage, ends that recovery pass and
-catches up on a later sync. Each worker counts those refusals in
-`transparent_shard_reorg_unavailable_total`. The
+invalidated by reorg` until they adopt the next publication. A fenced history
+worker retries its synchronization every second, so the fence normally ends one
+publisher cycle after the reorg. Wallets do not retry these within a sync. The
+reference client (`zakura-pir-client`) treats a 5xx on the map, filters or init
+as an outage, ends that recovery pass and catches up on a later sync. Each
+worker counts those refusals in `transparent_shard_reorg_unavailable_total`. The
 edge's error ratio subtracts the service's total in the window, and each
 worker's subtracts its own, since its HTTP layer counts the same 503s. Workers keep
 serving `/metrics` while invalidated, so the refusals are observed. Long
